@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Secrets — never commit
+.env
+secrets.json
+
+# Runtime data & logs
+data/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+

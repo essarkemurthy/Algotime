@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Breeze Trading Dashboard</title>
+<style>
+  :root {
+    --bg:      #0d1117;
+    --bg2:     #161b22;
+    --bg3:     #21262d;
+    --border:  #30363d;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --yellow:  #d29922;
+    --blue:    #58a6ff;
+    --accent:  #1f6feb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, monospace;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .status-dot.on { background: var(--green); }
+  #clock { font-family: monospace; font-size: 13px; color: var(--muted); }
+  button {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg3);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    transition: background .15s;
+  }
+  button:hover { background: var(--accent); border-color: var(--blue); }
+  button.danger  { border-color: var(--red);    color: var(--red); }
+  button.danger:hover  { background: var(--red); color: #fff; }
+  button.success { border-color: var(--green);  color: var(--green); }
+  button.success:hover { background: var(--green); color: #000; }
+  button.primary { background: var(--accent); border-color: var(--blue); color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── Alert banner ── */
+  #alert-bar {
+    display: none;
+    background: #5a1d1d;
+    border-bottom: 1px solid var(--red);
+    padding: 7px 20px;
+    color: #ffa0a0;
+    font-size: 12px;
+  }
+
+  /* ── Connect panel ── */
+  #connect-panel {
+    max-width: 440px;
+    margin: 40px auto;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+  }
+  #connect-panel h2 { margin-bottom: 16px; font-size: 14px; }
+  .form-row { margin-bottom: 10px; }
+  label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  input, select {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--blue); }
+
+  /* ── Main grid ── */
+  #main { display: none; padding: 16px 20px; }
+  .grid3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  /* ── LTP tile ── */
+  .ltp-tile {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .ltp-tile .label  { color: var(--muted); font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
+  .ltp-tile .value  { font-size: 22px; font-weight: 700; font-family: monospace; }
+  .ltp-tile .change { font-size: 11px; margin-top: 2px; }
+  .up   { color: var(--green); }
+  .down { color: var(--red);   }
+
+  /* ── Section cards ── */
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .card h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  /* ── Two-col layout ── */
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+  /* ── Order form ── */
+  .inline-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .inline-row .form-row { flex: 1; min-width: 100px; margin-bottom: 0; }
+  .form-actions { margin-top: 10px; display: flex; gap: 8px; }
+  .field-sm { max-width: 110px; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { color: var(--muted); font-weight: 500; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 5px 8px; border-bottom: 1px solid #1c2128; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .pnl-pos { color: var(--green); }
+  .pnl-neg { color: var(--red);   }
+  .tag {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+  }
+  .tag-buy  { background: #1a3a1a; color: var(--green); }
+  .tag-sell { background: #3a1a1a; color: var(--red);   }
+
+  /* ── Risk bar ── */
+  .risk-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .risk-row span { color: var(--muted); font-size: 11px; }
+  .bar-bg { background: var(--bg3); border-radius: 4px; height: 6px; flex: 1; margin: 0 10px; }
+  .bar-fill { height: 6px; border-radius: 4px; background: var(--green); transition: width .3s; }
+  .bar-fill.warn  { background: var(--yellow); }
+  .bar-fill.danger { background: var(--red); }
+
+  /* ── Order log ── */
+  #order-log {
+    font-family: monospace; font-size: 11px;
+    max-height: 200px; overflow-y: auto;
+    color: var(--muted);
+  }
+  #order-log .entry { padding: 3px 0; border-bottom: 1px solid #1c2128; }
+  #order-log .entry .buy  { color: var(--green); }
+  #order-log .entry .sell { color: var(--red); }
+
+  /* ── Algo panel ── */
+  .algo-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .algo-row select { flex: 1; }
+  .algo-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 600;
+    background: #1a3a1a; color: var(--green);
+  }
+  .algo-badge.stopped { background: var(--bg3); color: var(--muted); }
+
+  /* ── Chain table ── */
+  #chain-section { margin-top: 0; }
+  .chain-table-wrap { max-height: 300px; overflow-y: auto; }
+  .chain-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tab {
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg3); color: var(--muted); cursor: pointer; font-size: 12px;
+  }
+  .tab.active { background: var(--accent); border-color: var(--blue); color: #fff; }
+
+  /* ── Trigger form ── */
+  #trigger-list { margin-top: 8px; }
+  .trigger-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted);
+  }
+
+  /* scrollbars */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Morning Brief ── */
+  .brief-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .brief-summary {
+    color: var(--muted); font-size: 12px; margin-bottom: 12px;
+    padding: 8px 10px; background: var(--bg3); border-radius: 6px;
+  }
+  .bias-badge {
+    display: inline-block; padding: 2px 10px; border-radius: 10px;
+    font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  }
+  .bias-bullish { background: #1a3a1a; color: var(--green); }
+  .bias-bearish { background: #3a1a1a; color: var(--red); }
+  .bias-neutral { background: var(--bg3); color: var(--muted); }
+
+  .trades-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 10px;
+  }
+  .trade-card {
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; background: var(--bg);
+    position: relative; transition: border-color .2s;
+  }
+  .trade-card.approved { border-color: var(--green); }
+  .trade-card.skipped  { opacity: .45; }
+  .trade-card-head {
+    display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;
+  }
+  .trade-card-head .tname { font-weight: 600; font-size: 13px; }
+  .conviction {
+    display: inline-block; padding: 1px 7px; border-radius: 8px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+  }
+  .conviction-high   { background: #3a1a1a; color: var(--red); }
+  .conviction-medium { background: #3a2a00; color: var(--yellow); }
+  .conviction-low    { background: #0d2036; color: var(--blue); }
+
+  .trade-meta {
+    font-size: 11px; color: var(--muted); margin-bottom: 6px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .trade-meta span b { color: var(--text); }
+  .trade-rationale {
+    font-size: 11px; color: var(--muted); font-style: italic; margin-bottom: 10px;
+    line-height: 1.4;
+  }
+  .trade-actions { display: flex; gap: 6px; }
+  .trade-status-label {
+    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 6px;
+  }
+  .status-approved { background: #1a3a1a; color: var(--green); }
+  .status-skipped  { background: var(--bg3); color: var(--muted); }
+
+  .brief-meta { font-size: 11px; color: var(--muted); }
+  .brief-collapsed .brief-body { display: none; }
+  .brief-toggle { cursor: pointer; user-select: none; }
+  .source-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; background: var(--bg3); color: var(--muted); margin-left: 6px;
+  }
+
+  /* ── Research calls ── */
+  .research-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .research-table th {
+    color: var(--muted); font-weight: 500; text-align: left;
+    padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+    background: var(--bg3); position: sticky; top: 0;
+  }
+  .research-table td { padding: 6px 8px; border-bottom: 1px solid #1c2128; vertical-align: top; }
+  .research-table tr:last-child td { border-bottom: none; }
+  .research-table tr.acted     { opacity: .5; }
+  .research-table tr.dismissed { display: none; }
+  .research-wrap { max-height: 380px; overflow-y: auto; }
+
+  .bias-arrow {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+  }
+  .bias-BULLISH { background: #1a3a1a; color: var(--green); }
+  .bias-BEARISH { background: #3a1a1a; color: var(--red); }
+  .bias-NEUTRAL { background: #1a2a3a; color: var(--blue); }
+  .bias-WAIT    { background: #2a2000; color: var(--yellow); }
+
+  .type-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; background: var(--bg3); color: var(--muted);
+    text-transform: uppercase;
+  }
+  .type-PUT   { background: #3a1a1a; color: var(--red); }
+  .type-CALL  { background: #1a3a1a; color: var(--green); }
+  .type-LONG  { background: #1a3a1a; color: var(--green); }
+  .type-SHORT { background: #3a1a1a; color: var(--red); }
+  .type-WATCH { background: #2a2000; color: var(--yellow); }
+
+  .horizon-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px;
+    background: var(--bg3); color: var(--muted);
+  }
+  .why-text { font-size: 11px; color: var(--muted); max-width: 220px; line-height: 1.4; }
+  .research-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px; margin-bottom: 10px;
+  }
+  .span2 { grid-column: span 2; }
+  .span3 { grid-column: span 3; }
+
+  /* ── Breeze Order Book ── */
+  .ob-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ob-table th {
+    color: var(--muted); font-weight: 500; text-align: left;
+    padding: 6px 8px; border-bottom: 1px solid var(--border);
+    background: var(--bg3); white-space: nowrap; position: sticky; top: 0;
+  }
+  .ob-table td { padding: 5px 8px; border-bottom: 1px solid #1c2128; vertical-align: middle; }
+  .ob-table tr:last-child td { border-bottom: none; }
+  .ob-wrap { max-height: 340px; overflow-y: auto; }
+
+  .status-badge {
+    display: inline-block; padding: 1px 7px; border-radius: 5px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+  }
+  .s-Executed, .s-Complete  { background: #1a3a1a; color: var(--green); }
+  .s-Pending, .s-Open       { background: #2a2000; color: var(--yellow); }
+  .s-Cancelled, .s-Rejected { background: #3a1a1a; color: var(--red); }
+  .s-Modified               { background: #1a2a3a; color: var(--blue); }
+
+  .ob-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .ob-tab {
+    padding: 5px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg3); color: var(--muted); cursor: pointer; font-size: 12px;
+  }
+  .ob-tab.active { background: var(--accent); border-color: var(--blue); color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <h1>⚡ Breeze Trading Dashboard</h1>
+  <div class="header-right">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text" style="color:var(--muted);font-size:12px">Disconnected</span>
+    <span id="clock"></span>
+    <button id="btn-disconnect" class="danger" style="display:none" onclick="apiDisconnect()">Disconnect</button>
+  </div>
+</header>
+
+<!-- Alert bar -->
+<div id="alert-bar"></div>
+
+<!-- Connect panel -->
+<div id="connect-panel">
+  <h2>Connect to Breeze</h2>
+  <div class="form-row">
+    <label>API Key</label>
+    <input id="api-key" type="text" placeholder="Your ICICI Breeze API Key">
+  </div>
+  <div class="form-row">
+    <label>API Secret</label>
+    <input id="api-secret" type="password" placeholder="API Secret">
+  </div>
+  <div class="form-row">
+    <label>Session Token</label>
+    <input id="session-token" type="text" placeholder="Session token from ICICI login">
+  </div>
+  <div style="margin-top:16px">
+    <button class="primary" onclick="apiConnect()" style="width:100%">Connect</button>
+  </div>
+  <p style="margin-top:10px;font-size:11px;color:var(--muted)">
+    Credentials are sent only to your local server. Never shared externally.
+  </p>
+</div>
+
+<!-- Main dashboard (hidden until connected) -->
+<div id="main">
+
+  <!-- LTP tiles -->
+  <div class="grid3" id="ltp-tiles">
+    <div class="ltp-tile" id="tile-NIFTY">
+      <div class="label">NIFTY SPOT</div>
+      <div class="value" id="ltp-NIFTY">—</div>
+      <div class="change" id="chg-NIFTY"></div>
+    </div>
+    <div class="ltp-tile" id="tile-INFY">
+      <div class="label">INFY</div>
+      <div class="value" id="ltp-INFY">—</div>
+      <div class="change" id="chg-INFY"></div>
+    </div>
+    <div class="ltp-tile" id="tile-ONGC">
+      <div class="label">ONGC</div>
+      <div class="value" id="ltp-ONGC">—</div>
+      <div class="change" id="chg-ONGC"></div>
+    </div>
+    <div class="ltp-tile" id="tile-MAXHEALTH">
+      <div class="label">MAXHEALTH</div>
+      <div class="value" id="ltp-MAXHEALTH">—</div>
+      <div class="change" id="chg-MAXHEALTH"></div>
+    </div>
+  </div>
+
+  <!-- Morning Brief -->
+  <div class="card" id="brief-card" style="margin-bottom:16px">
+    <div class="brief-header">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h3 style="margin:0;border:none;padding:0" class="brief-toggle" onclick="toggleBrief()">
+          ☀ Morning Brief <span id="brief-chevron">▼</span>
+        </h3>
+        <span id="brief-bias-badge" class="bias-badge bias-neutral">—</span>
+        <span id="brief-source" class="source-badge" style="display:none"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="brief-time" class="brief-meta"></span>
+        <button id="btn-brief-refresh" onclick="loadSuggestions(true)" class="primary" style="display:none">
+          ⟳ Refresh
+        </button>
+      </div>
+    </div>
+    <div id="brief-body" class="brief-body">
+      <div id="brief-summary" class="brief-summary" style="display:none"></div>
+      <div id="brief-loading" style="color:var(--muted);font-size:12px;padding:12px 0">
+        Connect to Breeze to generate morning suggestions…
+      </div>
+      <div id="trades-grid" class="trades-grid"></div>
+    </div>
+  </div>
+
+  <!-- Breeze Order Book -->
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0;border:none;padding:0">📂 Order Book &amp; Positions (Breeze)</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="ob-last-refresh" style="font-size:11px;color:var(--muted)"></span>
+        <button onclick="loadOrderBook()" id="btn-ob-refresh">⟳ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="ob-tabs">
+      <div class="ob-tab active" id="tab-orders"    onclick="switchObTab('orders')">
+        Orders <span id="badge-orders" style="font-size:10px;color:var(--muted)"></span>
+      </div>
+      <div class="ob-tab"        id="tab-positions" onclick="switchObTab('positions')">
+        Positions <span id="badge-positions" style="font-size:10px;color:var(--muted)"></span>
+      </div>
+    </div>
+
+    <!-- Orders pane -->
+    <div id="pane-orders" class="ob-wrap">
+      <table class="ob-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Stock</th>
+            <th>Exch</th>
+            <th>Product</th>
+            <th>Action</th>
+            <th>Type</th>
+            <th>Qty</th>
+            <th>Price ₹</th>
+            <th>Status</th>
+            <th>Order ID</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ob-orders-body">
+          <tr><td colspan="11" style="color:var(--muted);text-align:center;padding:20px">
+            Click ⟳ Refresh to load today's orders from Breeze
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Positions pane -->
+    <div id="pane-positions" class="ob-wrap" style="display:none">
+      <table class="ob-table">
+        <thead>
+          <tr>
+            <th>Stock</th>
+            <th>Exch</th>
+            <th>Product</th>
+            <th>Action</th>
+            <th>Qty</th>
+            <th>Avg Price ₹</th>
+            <th>LTP ₹</th>
+            <th>P&amp;L ₹</th>
+            <th>Cover Qty</th>
+          </tr>
+        </thead>
+        <tbody id="ob-positions-body">
+          <tr><td colspan="9" style="color:var(--muted);text-align:center;padding:20px">
+            Click ⟳ Refresh to load open positions from Breeze
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Research Calls -->
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="margin:0;border:none;padding:0">📋 ICICI Research Calls</h3>
+      <button onclick="toggleResearchForm()" id="btn-add-research">+ Add Call</button>
+    </div>
+
+    <!-- Add Research Form -->
+    <div id="research-form" style="display:none;background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:14px">
+      <div class="research-form-grid">
+
+        <div class="form-row" style="margin:0">
+          <label>Instrument</label>
+          <input id="rc-stock" placeholder="NIFTY / INFY / ONGC">
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Exchange</label>
+          <select id="rc-exchange">
+            <option value="NSE">NSE (Equity)</option>
+            <option value="NFO">NFO (F&O)</option>
+            <option value="BSE">BSE</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Bias</label>
+          <select id="rc-bias">
+            <option value="BULLISH">↑ Bullish</option>
+            <option value="BEARISH">↓ Bearish</option>
+            <option value="NEUTRAL">→ Neutral</option>
+            <option value="WAIT">⏸ Wait</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Trade Type</label>
+          <select id="rc-type" onchange="toggleRcOptionsFields()">
+            <option value="LONG">Long (equity)</option>
+            <option value="SHORT">Short (equity)</option>
+            <option value="CALL">Call Option</option>
+            <option value="PUT">Put Option</option>
+            <option value="WATCH">Watch / No trade</option>
+          </select>
+        </div>
+
+        <!-- Options fields -->
+        <div class="form-row" style="margin:0;display:none" id="rc-strike-row">
+          <label>Strike</label>
+          <input id="rc-strike" type="number" placeholder="23400" step="50">
+        </div>
+        <div class="form-row" style="margin:0;display:none" id="rc-expiry-row">
+          <label>Expiry</label>
+          <input id="rc-expiry" type="date">
+        </div>
+
+        <div class="form-row" style="margin:0">
+          <label>CMP ₹ (auto)</label>
+          <input id="rc-cmp" type="number" placeholder="auto-filled" step="0.5">
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Entry ₹</label>
+          <input id="rc-entry" type="number" placeholder="trigger level" step="0.5">
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Target ₹</label>
+          <input id="rc-target" type="number" placeholder="price target" step="0.5">
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Stop Loss ₹</label>
+          <input id="rc-stop" type="number" placeholder="stop loss" step="0.5">
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Qty / Lots</label>
+          <input id="rc-qty" type="number" value="75" min="1">
+        </div>
+        <div class="form-row" style="margin:0">
+          <label>Horizon</label>
+          <select id="rc-horizon">
+            <option value="intraday">Intraday</option>
+            <option value="short_term">Short Term</option>
+            <option value="long_term">Long Term</option>
+          </select>
+        </div>
+
+        <div class="form-row span2" style="margin:0">
+          <label>Entry Trigger (description)</label>
+          <input id="rc-trigger-text" placeholder="e.g. Bounce to 23,350–23,400 fails or breaks 53,000">
+        </div>
+        <div class="form-row span2" style="margin:0">
+          <label>Target (text, if range)</label>
+          <input id="rc-target-text" placeholder="e.g. ₹280–295 or ₹30–50 premium gain">
+        </div>
+        <div class="form-row span3" style="margin:0">
+          <label>Why / Rationale</label>
+          <input id="rc-why" placeholder="Reason for the call — key levels, catalyst, setup">
+        </div>
+        <div class="form-row span2" style="margin:0">
+          <label>Source / Analyst</label>
+          <input id="rc-source" value="ICICI Research">
+        </div>
+
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="primary" onclick="addResearchCall()">Add Research Call</button>
+        <button onclick="toggleResearchForm()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Research calls table -->
+    <div class="research-wrap">
+      <table class="research-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Instrument</th>
+            <th>Bias</th>
+            <th>Type</th>
+            <th>CMP ₹</th>
+            <th>Entry Trigger</th>
+            <th>Target</th>
+            <th>Stop ₹</th>
+            <th>R:R</th>
+            <th>Horizon</th>
+            <th>Why</th>
+            <th>Source</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="research-body">
+          <tr id="research-empty">
+            <td colspan="13" style="color:var(--muted);text-align:center;padding:24px">
+              No research calls yet — click <b>+ Add Call</b> to add from ICICI Direct research
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="cols2">
+
+    <!-- LEFT column -->
+    <div>
+
+      <!-- Manual Order -->
+      <div class="card">
+        <h3>Manual Order</h3>
+        <div class="inline-row">
+          <div class="form-row" style="flex:2">
+            <label>Stock</label>
+            <input id="o-stock" value="NIFTY" placeholder="NIFTY / INFY / ONGC">
+          </div>
+          <div class="form-row">
+            <label>Exchange</label>
+            <select id="o-exchange">
+              <option value="NFO">NFO</option>
+              <option value="NSE">NSE</option>
+              <option value="BSE">BSE</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Product</label>
+            <select id="o-product" onchange="toggleOptionsFields()">
+              <option value="options">Options</option>
+              <option value="cash">Cash / Equity</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="options-fields">
+          <div class="inline-row" style="margin-top:8px">
+            <div class="form-row">
+              <label>Right</label>
+              <select id="o-right">
+                <option value="PE">PE (Put)</option>
+                <option value="CE">CE (Call)</option>
+              </select>
+            </div>
+            <div class="form-row" style="flex:2">
+              <label>Strike</label>
+              <input id="o-strike" type="number" value="23400" step="50">
+            </div>
+            <div class="form-row" style="flex:2">
+              <label>Expiry (YYYY-MM-DD)</label>
+              <input id="o-expiry" type="date" value="">
+            </div>
+          </div>
+        </div>
+
+        <div class="inline-row" style="margin-top:8px">
+          <div class="form-row">
+            <label>Action</label>
+            <select id="o-action">
+              <option value="buy">BUY</option>
+              <option value="sell">SELL</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Qty (units)</label>
+            <input id="o-qty" type="number" value="75" min="1">
+          </div>
+          <div class="form-row">
+            <label>Order Type</label>
+            <select id="o-type" onchange="togglePrice()">
+              <option value="market">MARKET</option>
+              <option value="limit">LIMIT</option>
+            </select>
+          </div>
+          <div class="form-row" id="price-field" style="display:none">
+            <label>Price</label>
+            <input id="o-price" type="number" value="0" step="0.05">
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button class="primary" onclick="placeManualOrder()">Place Order</button>
+          <button onclick="fetchChain()">View Chain</button>
+        </div>
+      </div>
+
+      <!-- Trigger Order -->
+      <div class="card">
+        <h3>Trigger Order</h3>
+        <div class="inline-row">
+          <div class="form-row" style="flex:2">
+            <label>Watch Stock</label>
+            <input id="t-stock" value="NIFTY" placeholder="NIFTY">
+          </div>
+          <div class="form-row">
+            <label>Direction</label>
+            <select id="t-dir">
+              <option value="below">Bounces to (below→sell)</option>
+              <option value="above">Breaks above</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Trigger Price</label>
+            <input id="t-price" type="number" value="23550" step="10">
+          </div>
+          <div class="form-row">
+            <label>Valid (min)</label>
+            <input id="t-limit" type="number" value="60">
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin:6px 0">
+          Uses current Manual Order form settings as the order to place on trigger.
+        </p>
+        <div class="form-actions">
+          <button class="success" onclick="registerTrigger()">Set Trigger</button>
+        </div>
+        <div id="trigger-list"></div>
+      </div>
+
+      <!-- Option Chain -->
+      <div class="card" id="chain-section" style="display:none">
+        <div class="chain-header">
+          <h3 style="margin-bottom:0;border:none;padding:0">Option Chain</h3>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="chain-expiry" style="font-size:11px;color:var(--muted)"></span>
+            <button onclick="fetchChain()">Refresh</button>
+            <button onclick="document.getElementById('chain-section').style.display='none'">✕</button>
+          </div>
+        </div>
+        <div class="chain-table-wrap" style="margin-top:10px">
+          <table id="chain-table">
+            <thead>
+              <tr>
+                <th>CE LTP</th><th>CE OI</th>
+                <th style="text-align:center;color:var(--blue)">STRIKE</th>
+                <th>PE OI</th><th>PE LTP</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="chain-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /LEFT -->
+
+    <!-- RIGHT column -->
+    <div>
+
+      <!-- Algo Control -->
+      <div class="card">
+        <h3>Algo Control
+          <span id="algo-badge" class="algo-badge stopped" style="margin-left:8px">Stopped</span>
+        </h3>
+        <div class="inline-row">
+          <div class="form-row" style="flex:2">
+            <label>Strategy</label>
+            <select id="algo-strategy">
+              <option value="bull_put_spread">Bull Put Spread</option>
+              <option value="iron_condor">Iron Condor</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Underlying</label>
+            <input id="algo-under" value="NIFTY">
+          </div>
+          <div class="form-row">
+            <label>Expiry</label>
+            <select id="algo-expiry">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </div>
+        </div>
+        <div class="inline-row" style="margin-top:8px">
+          <div class="form-row">
+            <label>Lots</label>
+            <input id="algo-lots" type="number" value="1" min="1">
+          </div>
+          <div class="form-row">
+            <label>Lot Size</label>
+            <input id="algo-lotsize" type="number" value="75">
+          </div>
+          <div class="form-row">
+            <label>Spread Width</label>
+            <input id="algo-width" type="number" value="100" step="50">
+          </div>
+          <div class="form-row">
+            <label>Min IV Rank</label>
+            <input id="algo-ivrank" type="number" value="40" step="5">
+          </div>
+        </div>
+        <div class="form-actions" style="margin-top:10px">
+          <button class="success" id="btn-algo-start" onclick="startAlgo()">▶ Start Algo</button>
+          <button class="danger"  id="btn-algo-stop"  onclick="stopAlgo()" disabled>■ Stop Algo</button>
+        </div>
+      </div>
+
+      <!-- Open Positions -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0;border:none;padding:0">Open Positions</h3>
+          <button class="danger" onclick="flattenAll()">⚡ Flatten All</button>
+        </div>
+        <table id="positions-table">
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Side</th><th>Qty</th>
+              <th>Entry</th><th>LTP</th><th>P&amp;L</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="positions-body">
+            <tr><td colspan="7" style="color:var(--muted);text-align:center;padding:16px">No open positions</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Risk Summary -->
+      <div class="card">
+        <h3>Risk Summary</h3>
+        <div class="risk-row">
+          <span>Premium Deployed</span>
+          <div class="bar-bg"><div class="bar-fill" id="bar-premium"></div></div>
+          <span id="lbl-premium" style="min-width:120px;text-align:right">₹0 / ₹78,000</span>
+        </div>
+        <div class="risk-row">
+          <span>Daily P&amp;L</span>
+          <div class="bar-bg"><div class="bar-fill" id="bar-pnl"></div></div>
+          <span id="lbl-pnl" style="min-width:120px;text-align:right">₹0</span>
+        </div>
+        <div class="risk-row" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">
+          <span style="color:var(--muted)">Daily Stop Limit</span>
+          <span id="lbl-stop" style="color:var(--red)">₹40,000</span>
+        </div>
+      </div>
+
+      <!-- Order Log -->
+      <div class="card">
+        <h3>Order Log</h3>
+        <div id="order-log"><p style="color:var(--muted)">No orders yet.</p></div>
+      </div>
+
+    </div><!-- /RIGHT -->
+
+  </div><!-- /cols2 -->
+</div><!-- /main -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let ws = null;
+let ltpCache = {};
+let ltpPrev  = {};
+let triggerKeys = [];
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toLocaleTimeString('en-IN', {hour12: false});
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Set default expiry to nearest Thursday
+(function setDefaultExpiry() {
+  const d = new Date();
+  const day = d.getDay(); // 0=Sun ... 4=Thu
+  const daysToThur = (4 - day + 7) % 7 || 7;
+  d.setDate(d.getDate() + daysToThur);
+  document.getElementById('o-expiry').value = d.toISOString().split('T')[0];
+})();
+
+// ── Connect / Disconnect ───────────────────────────────────────────────────
+let _appConnected = false;   // guards against duplicate onConnected() calls
+
+async function apiConnect() {
+  const body = {
+    api_key:       document.getElementById('api-key').value.trim(),
+    api_secret:    document.getElementById('api-secret').value.trim(),
+    session_token: document.getElementById('session-token').value.trim(),
+  };
+  if (!body.api_key || !body.api_secret || !body.session_token) {
+    showAlert('Please fill in all credentials.'); return;
+  }
+  try {
+    const r = await fetch('/api/connect', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) { showAlert('Connection failed: ' + (d.detail || d.message)); return; }
+    onConnected();
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+async function apiDisconnect() {
+  await fetch('/api/disconnect', {method:'POST'});
+  onDisconnected();
+}
+
+function onConnected() {
+  if (_appConnected) return;   // already wired up — don't repeat
+  _appConnected = true;
+  document.getElementById('connect-panel').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  document.getElementById('status-dot').classList.add('on');
+  document.getElementById('status-text').textContent = 'Connected';
+  document.getElementById('btn-disconnect').style.display = 'inline-block';
+  connectWS();
+  loadResearchCalls();
+  loadOrderBook();
+  setTimeout(() => loadSuggestions(false), 3000);
+}
+
+function onDisconnected() {
+  _appConnected = false;
+  document.getElementById('connect-panel').style.display = 'block';
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('status-dot').classList.remove('on');
+  document.getElementById('status-text').textContent = 'Disconnected';
+  document.getElementById('btn-disconnect').style.display = 'none';
+  if (ws) { ws.close(); ws = null; }
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connectWS() {
+  if (ws && ws.readyState !== WebSocket.CLOSED) return;  // already open or connecting
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+  ws.onclose   = () => { ws = null; if (_appConnected) setTimeout(connectWS, 3000); };
+  ws.onerror   = () => { ws = null; };
+  setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 20000);
+}
+
+function handleMsg(msg) {
+  if (msg.type === 'init') {
+    // onConnected() already called from apiConnect(); only update data here
+    if (msg.ltp)    updateLTPs(msg.ltp);
+    if (msg.pnl)    updatePnl(msg.pnl);
+    if (msg.orders) msg.orders.forEach(appendOrderLog);
+  }
+  if (msg.type === 'ltp')    updateLTPs(msg.data);
+  if (msg.type === 'pnl')    updatePnl(msg.data);
+  if (msg.type === 'order')  appendOrderLog(msg.data);
+  if (msg.type === 'alert')    showAlert(msg.message);
+  if (msg.type === 'research') appendResearchRow(msg.data);
+  if (msg.type === 'status') {
+    if (msg.connected) onConnected(); else onDisconnected();
+  }
+}
+
+// ── LTP tiles ──────────────────────────────────────────────────────────────
+function updateLTPs(data) {
+  Object.entries(data).forEach(([sym, ltp]) => {
+    const prev = ltpCache[sym];
+    ltpPrev[sym]  = prev || ltp;
+    ltpCache[sym] = ltp;
+
+    const el = document.getElementById('ltp-' + sym);
+    const ch = document.getElementById('chg-' + sym);
+    if (!el) return;
+
+    el.textContent = ltp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+    if (prev !== undefined && prev !== ltp) {
+      const diff = ltp - prev;
+      const pct  = ((diff / prev) * 100).toFixed(2);
+      ch.textContent = `${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff).toFixed(2)} (${pct}%)`;
+      ch.className   = 'change ' + (diff >= 0 ? 'up' : 'down');
+      el.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
+      setTimeout(() => { el.style.color = 'var(--text)'; }, 800);
+    }
+  });
+}
+
+// ── P&L / positions ────────────────────────────────────────────────────────
+function updatePnl(data) {
+  const tbody = document.getElementById('positions-body');
+  const pnl   = data.total_pnl || 0;
+  const dep   = data.premium_deployed || 0;
+  const cap   = data.premium_cap || 78000;
+  const stop  = data.daily_stop || 40000;
+
+  // Positions table
+  const positions = (data.positions || []).filter(p => p.is_open);
+  if (positions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:16px">No open positions</td></tr>';
+  } else {
+    tbody.innerHTML = positions.map(p => {
+      const pnlCls = p.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const side   = `<span class="tag tag-${p.action}">${p.action.toUpperCase()}</span>`;
+      return `<tr>
+        <td style="font-family:monospace;font-size:11px">${p.symbol}</td>
+        <td>${side}</td>
+        <td>${p.qty}</td>
+        <td>₹${(p.entry_price||0).toFixed(2)}</td>
+        <td>₹${(p.ltp||0).toFixed(2)}</td>
+        <td class="${pnlCls}">₹${p.pnl.toLocaleString('en-IN')}</td>
+        <td><button class="danger" style="padding:2px 8px;font-size:11px" onclick="exitPosition('${p.order_id}')">Exit</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Risk bars
+  const premPct = Math.min((dep / cap) * 100, 100);
+  const pnlPct  = Math.min((Math.abs(pnl) / stop) * 100, 100);
+  const premBar = document.getElementById('bar-premium');
+  const pnlBar  = document.getElementById('bar-pnl');
+  premBar.style.width = premPct + '%';
+  premBar.className   = 'bar-fill' + (premPct > 80 ? ' danger' : premPct > 60 ? ' warn' : '');
+  pnlBar.style.width  = pnlPct + '%';
+  pnlBar.className    = 'bar-fill' + (pnl < -stop*0.8 ? ' danger' : pnl < -stop*0.5 ? ' warn' : '');
+
+  document.getElementById('lbl-premium').textContent =
+    `₹${dep.toLocaleString('en-IN')} / ₹${cap.toLocaleString('en-IN')}`;
+  document.getElementById('lbl-pnl').textContent =
+    (pnl >= 0 ? '+' : '') + `₹${pnl.toLocaleString('en-IN')}`;
+  document.getElementById('lbl-pnl').className =
+    pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+}
+
+// ── Order log ──────────────────────────────────────────────────────────────
+function appendOrderLog(entry) {
+  const log = document.getElementById('order-log');
+  if (log.querySelector('p')) log.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'entry';
+  const actionCls = entry.action === 'BUY' ? 'buy' : 'sell';
+  div.innerHTML = `<span style="color:var(--muted)">${entry.time}</span> ` +
+    `<span class="${actionCls}">${entry.action}</span> ` +
+    `<span>${entry.symbol}</span> ` +
+    `<span style="color:var(--blue)">×${entry.qty}</span> ` +
+    `<span style="color:var(--muted)">@ ₹${entry.price||0}</span> ` +
+    `<span style="color:var(--muted);font-size:10px">${entry.order_id}</span>`;
+  log.insertBefore(div, log.firstChild);
+}
+
+// ── Alert bar ──────────────────────────────────────────────────────────────
+let alertTimer = null;
+function showAlert(msg) {
+  const bar = document.getElementById('alert-bar');
+  bar.textContent = msg;
+  bar.style.display = 'block';
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => { bar.style.display = 'none'; }, 8000);
+}
+
+// ── Form helpers ───────────────────────────────────────────────────────────
+function toggleOptionsFields() {
+  const isOpt = document.getElementById('o-product').value === 'options';
+  document.getElementById('options-fields').style.display = isOpt ? 'block' : 'none';
+  document.getElementById('o-exchange').value = isOpt ? 'NFO' : 'NSE';
+}
+
+function togglePrice() {
+  const isLimit = document.getElementById('o-type').value === 'limit';
+  document.getElementById('price-field').style.display = isLimit ? 'block' : 'none';
+}
+
+// ── Manual order ───────────────────────────────────────────────────────────
+async function placeManualOrder() {
+  const product = document.getElementById('o-product').value;
+  const body = {
+    stock_code:    document.getElementById('o-stock').value.trim().toUpperCase(),
+    exchange_code: document.getElementById('o-exchange').value,
+    product,
+    action:        document.getElementById('o-action').value,
+    quantity:      parseInt(document.getElementById('o-qty').value),
+    order_type:    document.getElementById('o-type').value,
+    price:         parseFloat(document.getElementById('o-price').value) || 0,
+  };
+  if (product === 'options') {
+    body.right  = document.getElementById('o-right').value;
+    body.strike = parseInt(document.getElementById('o-strike').value);
+    body.expiry = document.getElementById('o-expiry').value;
+  }
+  try {
+    const r = await fetch('/api/order/manual', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) showAlert('Order failed: ' + (d.detail || JSON.stringify(d)));
+    else showAlert(`✓ Order placed: ${d.symbol} [${d.order_id}]`);
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+// ── Position actions ───────────────────────────────────────────────────────
+async function exitPosition(orderId) {
+  if (!confirm('Exit this position at market?')) return;
+  const r = await fetch('/api/position/exit', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({order_id: orderId})
+  });
+  const d = await r.json();
+  if (!r.ok) showAlert('Exit failed: ' + (d.detail || JSON.stringify(d)));
+  else showAlert('✓ Exit order placed: ' + d.order_id);
+}
+
+async function flattenAll() {
+  if (!confirm('Exit ALL open positions at market?')) return;
+  const r = await fetch('/api/position/flatten-all', {method:'POST'});
+  const d = await r.json();
+  showAlert(`Flattened ${d.flattened} position(s)`);
+}
+
+// ── Trigger order ──────────────────────────────────────────────────────────
+async function registerTrigger() {
+  const product = document.getElementById('o-product').value;
+  const orderBody = {
+    stock_code:    document.getElementById('o-stock').value.trim().toUpperCase(),
+    exchange_code: document.getElementById('o-exchange').value,
+    product,
+    action:        document.getElementById('o-action').value,
+    quantity:      parseInt(document.getElementById('o-qty').value),
+    order_type:    document.getElementById('o-type').value,
+    price:         parseFloat(document.getElementById('o-price').value) || 0,
+  };
+  if (product === 'options') {
+    orderBody.right  = document.getElementById('o-right').value;
+    orderBody.strike = parseInt(document.getElementById('o-strike').value);
+    orderBody.expiry = document.getElementById('o-expiry').value;
+  }
+  const body = {
+    watch_stock:        document.getElementById('t-stock').value.trim().toUpperCase(),
+    trigger_price:      parseFloat(document.getElementById('t-price').value),
+    trigger_direction:  document.getElementById('t-dir').value,
+    time_limit_minutes: parseInt(document.getElementById('t-limit').value),
+    order:              orderBody,
+  };
+  try {
+    const r = await fetch('/api/order/trigger', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) { showAlert('Trigger failed: ' + (d.detail||'')); return; }
+    triggerKeys.push(d.trigger_key);
+    showAlert(`✓ Trigger set: ${body.watch_stock} ${body.trigger_direction} ${body.trigger_price}`);
+    renderTriggers();
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+function renderTriggers() {
+  const el = document.getElementById('trigger-list');
+  if (triggerKeys.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = triggerKeys.map(k =>
+    `<div class="trigger-item">
+       <span style="color:var(--yellow)">⏳ ${k}</span>
+       <button onclick="cancelTrigger('${k}')" style="padding:2px 8px;font-size:10px">Cancel</button>
+     </div>`
+  ).join('');
+}
+
+async function cancelTrigger(key) {
+  await fetch(`/api/trigger/${encodeURIComponent(key)}`, {method:'DELETE'});
+  triggerKeys = triggerKeys.filter(k => k !== key);
+  renderTriggers();
+  showAlert('Trigger cancelled: ' + key);
+}
+
+// ── Algo ───────────────────────────────────────────────────────────────────
+async function startAlgo() {
+  const body = {
+    strategy:    document.getElementById('algo-strategy').value,
+    expiry_type: document.getElementById('algo-expiry').value,
+    underlying:  document.getElementById('algo-under').value.trim().toUpperCase(),
+    num_lots:    parseInt(document.getElementById('algo-lots').value),
+    lot_size:    parseInt(document.getElementById('algo-lotsize').value),
+    spread_width:parseInt(document.getElementById('algo-width').value),
+    min_iv_rank: parseFloat(document.getElementById('algo-ivrank').value),
+  };
+  const r = await fetch('/api/algo/start', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (!r.ok) { showAlert('Algo error: ' + (d.detail||'')); return; }
+  document.getElementById('algo-badge').textContent = 'Running';
+  document.getElementById('algo-badge').classList.remove('stopped');
+  document.getElementById('btn-algo-start').disabled = true;
+  document.getElementById('btn-algo-stop').disabled  = false;
+  showAlert('✓ Algo started: ' + body.strategy);
+}
+
+async function stopAlgo() {
+  await fetch('/api/algo/stop', {method:'POST'});
+  document.getElementById('algo-badge').textContent = 'Stopped';
+  document.getElementById('algo-badge').classList.add('stopped');
+  document.getElementById('btn-algo-start').disabled = false;
+  document.getElementById('btn-algo-stop').disabled  = true;
+  showAlert('Algo stopped.');
+}
+
+// ── Option Chain ───────────────────────────────────────────────────────────
+async function fetchChain() {
+  const stock = document.getElementById('o-stock').value.trim().toUpperCase();
+  try {
+    const r = await fetch(`/api/chain?stock=${stock}&expiry_type=monthly`);
+    const d = await r.json();
+    if (!r.ok) { showAlert('Chain error: ' + (d.detail||'')); return; }
+
+    document.getElementById('chain-expiry').textContent = 'Expiry: ' + d.expiry;
+    document.getElementById('chain-section').style.display = 'block';
+
+    // Build chain: group CE and PE by strike
+    const strikes = {};
+    d.chain.forEach(row => {
+      if (!strikes[row.strike_price]) strikes[row.strike_price] = {};
+      strikes[row.strike_price][row.right] = row;
+    });
+
+    const atmLtp = ltpCache[stock] || 0;
+    const sorted = Object.keys(strikes).map(Number).sort((a,b)=>a-b);
+    const tbody = document.getElementById('chain-body');
+    tbody.innerHTML = sorted.map(strike => {
+      const ce = strikes[strike]['call'] || {};
+      const pe = strikes[strike]['put']  || {};
+      const isAtm = Math.abs(strike - atmLtp) < 75;
+      const atmStyle = isAtm ? 'background:rgba(88,166,255,.07)' : '';
+      return `<tr style="${atmStyle}">
+        <td class="up">${(ce.ltp||0).toFixed(2)}</td>
+        <td style="color:var(--muted)">${formatOI(ce.open_interest)}</td>
+        <td style="text-align:center;font-weight:600;color:${isAtm?'var(--blue)':'var(--text)'}">${strike}</td>
+        <td style="color:var(--muted)">${formatOI(pe.open_interest)}</td>
+        <td class="down">${(pe.ltp||0).toFixed(2)}</td>
+        <td>
+          <button onclick="useStrike(${strike},'CE')" style="padding:1px 6px;font-size:10px">CE</button>
+          <button onclick="useStrike(${strike},'PE')" style="padding:1px 6px;font-size:10px">PE</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+function formatOI(v) {
+  if (!v) return '—';
+  return v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v;
+}
+
+function useStrike(strike, right) {
+  document.getElementById('o-strike').value = strike;
+  document.getElementById('o-right').value  = right;
+  showAlert(`Strike set to ${strike} ${right}`);
+}
+
+// ── Order Book & Positions ────────────────────────────────────────────────
+let obActiveTab = 'orders';
+
+function switchObTab(tab) {
+  obActiveTab = tab;
+  document.getElementById('pane-orders').style.display    = tab === 'orders'    ? 'block' : 'none';
+  document.getElementById('pane-positions').style.display = tab === 'positions' ? 'block' : 'none';
+  document.getElementById('tab-orders').classList.toggle('active',    tab === 'orders');
+  document.getElementById('tab-positions').classList.toggle('active', tab === 'positions');
+}
+
+async function loadOrderBook() {
+  document.getElementById('btn-ob-refresh').disabled = true;
+  document.getElementById('btn-ob-refresh').textContent = '…';
+  try {
+    const [ordRes, posRes] = await Promise.all([
+      fetch('/api/breeze/orders'),
+      fetch('/api/breeze/positions'),
+    ]);
+    if (ordRes.ok) {
+      const d = await ordRes.json();
+      renderOrders(d.orders || []);
+      if (d.warning) showObWarning(d.warning);
+    } else { renderObError('ob-orders-body', 11, await ordRes.json()); }
+
+    if (posRes.ok) {
+      const d = await posRes.json();
+      renderPositions(d.positions || []);
+      if (d.warning) showObWarning(d.warning);
+    } else { renderObError('ob-positions-body', 9, await posRes.json()); }
+    document.getElementById('ob-last-refresh').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
+  } catch(e) { showAlert('Order book error: ' + e.message); }
+  finally {
+    document.getElementById('btn-ob-refresh').disabled = false;
+    document.getElementById('btn-ob-refresh').textContent = '⟳ Refresh';
+  }
+}
+
+function showObWarning(msg) {
+  // Show inline below the tabs instead of the global alert bar
+  let el = document.getElementById('ob-warning');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'ob-warning';
+    el.style.cssText = 'font-size:12px;color:var(--yellow);padding:6px 0 4px;';
+    document.getElementById('pane-orders').parentNode.insertBefore(
+      el, document.getElementById('pane-orders'));
+  }
+  el.textContent = '⚠ ' + msg;
+}
+
+function renderObError(tbodyId, cols, d) {
+  document.getElementById(tbodyId).innerHTML =
+    `<tr><td colspan="${cols}" style="color:var(--red);text-align:center;padding:16px">
+      Error: ${d.detail || JSON.stringify(d)}</td></tr>`;
+}
+
+function statusClass(s) {
+  if (!s) return '';
+  const sl = s.toLowerCase();
+  if (sl.includes('execut') || sl.includes('complet')) return 's-Executed';
+  if (sl.includes('pending') || sl.includes('open'))   return 's-Pending';
+  if (sl.includes('cancel'))                           return 's-Cancelled';
+  if (sl.includes('reject'))                           return 's-Rejected';
+  if (sl.includes('modif'))                            return 's-Modified';
+  return '';
+}
+
+function renderOrders(orders) {
+  const tbody = document.getElementById('ob-orders-body');
+  document.getElementById('badge-orders').textContent = orders.length ? `(${orders.length})` : '';
+
+  if (!orders.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="color:var(--muted);text-align:center;padding:20px">No orders today</td></tr>';
+    return;
+  }
+
+  // Sort: most recent first
+  orders.sort((a, b) => (b.order_datetime || b.exchange_order_time || '').localeCompare(
+                          a.order_datetime || a.exchange_order_time || ''));
+
+  tbody.innerHTML = orders.map(o => {
+    const status    = o.status || o.order_status || '—';
+    const sCls      = statusClass(status);
+    const actionCls = (o.action || '').toLowerCase() === 'buy' ? 'up' : 'down';
+    const time      = (o.order_datetime || o.exchange_order_time || '').slice(11,19) || '—';
+    const isPending = status.toLowerCase().includes('pending') || status.toLowerCase().includes('open');
+
+    // Instrument label
+    let instr = o.stock_code || '—';
+    if (o.right && o.strike_price) instr += ` ${o.right} ${o.strike_price}`;
+    if (o.expiry_date)             instr += ` ${o.expiry_date.slice(0,10)}`;
+
+    const cancelBtn = isPending
+      ? `<button class="danger" style="padding:2px 8px;font-size:10px"
+           onclick="cancelBreezeOrder('${o.order_id}','${o._exchange||o.exchange_code||'NFO'}')">Cancel</button>`
+      : '';
+
+    return `<tr>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted)">${time}</td>
+      <td style="font-family:monospace;font-size:12px;font-weight:600">${instr}</td>
+      <td style="color:var(--muted);font-size:11px">${o._exchange || o.exchange_code || '—'}</td>
+      <td style="color:var(--muted);font-size:11px">${o.product || '—'}</td>
+      <td class="${actionCls}" style="font-weight:700;font-size:11px">${(o.action||'').toUpperCase()}</td>
+      <td style="font-size:11px">${o.order_type || '—'}</td>
+      <td style="font-family:monospace">${o.quantity || '—'}</td>
+      <td style="font-family:monospace">₹${parseFloat(o.price||0).toLocaleString('en-IN')}</td>
+      <td><span class="status-badge ${sCls}">${status}</span></td>
+      <td style="font-size:10px;color:var(--muted);font-family:monospace">${o.order_id || '—'}</td>
+      <td>${cancelBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPositions(positions) {
+  const tbody = document.getElementById('ob-positions-body');
+  document.getElementById('badge-positions').textContent = positions.length ? `(${positions.length})` : '';
+
+  if (!positions.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted);text-align:center;padding:20px">No open positions</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = positions.map(p => {
+    const pnl    = parseFloat(p.pnl || p.unrealised_pnl || 0);
+    const pnlCls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const actionCls = (p.action || '').toLowerCase() === 'buy' ? 'up' : 'down';
+
+    let instr = p.stock_code || '—';
+    if (p.right && p.strike_price) instr += ` ${p.right} ${p.strike_price}`;
+    if (p.expiry_date)             instr += ` ${p.expiry_date.slice(0,10)}`;
+
+    const ltp = parseFloat(p.ltp || 0);
+    const avg = parseFloat(p.average_price || p.price || 0);
+
+    return `<tr>
+      <td style="font-family:monospace;font-size:12px;font-weight:600">${instr}</td>
+      <td style="color:var(--muted);font-size:11px">${p.exchange_code || '—'}</td>
+      <td style="color:var(--muted);font-size:11px">${p.product || '—'}</td>
+      <td class="${actionCls}" style="font-weight:700;font-size:11px">${(p.action||'').toUpperCase()}</td>
+      <td style="font-family:monospace">${p.quantity || p.open_quantity || '—'}</td>
+      <td style="font-family:monospace">₹${avg.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+      <td style="font-family:monospace">₹${ltp.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+      <td class="${pnlCls}" style="font-family:monospace;font-weight:600">
+        ${pnl >= 0 ? '+' : ''}₹${pnl.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+      <td style="font-family:monospace;color:var(--muted)">${p.cover_quantity || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function cancelBreezeOrder(orderId, exchange) {
+  if (!confirm(`Cancel order ${orderId}?`)) return;
+  try {
+    const r = await fetch(`/api/breeze/orders/${orderId}/cancel?exchange_code=${exchange}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) { showAlert('Cancel failed: ' + (d.detail||'')); return; }
+    showAlert(`✓ Order ${orderId} cancelled`);
+    loadOrderBook();
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+// ── Research Calls ────────────────────────────────────────────────────────
+let researchFormOpen = false;
+
+function toggleResearchForm() {
+  researchFormOpen = !researchFormOpen;
+  document.getElementById('research-form').style.display = researchFormOpen ? 'block' : 'none';
+  document.getElementById('btn-add-research').textContent = researchFormOpen ? '✕ Cancel' : '+ Add Call';
+}
+
+function toggleRcOptionsFields() {
+  const t = document.getElementById('rc-type').value;
+  const isOpt = t === 'CALL' || t === 'PUT';
+  document.getElementById('rc-strike-row').style.display = isOpt ? 'block' : 'none';
+  document.getElementById('rc-expiry-row').style.display = isOpt ? 'block' : 'none';
+  // Auto-set exchange
+  document.getElementById('rc-exchange').value = isOpt ? 'NFO' : 'NSE';
+  // Auto-set bias to match type
+  if (t === 'CALL' || t === 'LONG')  document.getElementById('rc-bias').value = 'BULLISH';
+  if (t === 'PUT'  || t === 'SHORT') document.getElementById('rc-bias').value = 'BEARISH';
+  if (t === 'WATCH')                 document.getElementById('rc-bias').value = 'WAIT';
+  // Auto-fill CMP from cache
+  const stock = document.getElementById('rc-stock').value.trim().toUpperCase();
+  if (stock && ltpCache[stock]) document.getElementById('rc-cmp').value = ltpCache[stock];
+}
+
+async function addResearchCall() {
+  const tradeType = document.getElementById('rc-type').value;
+  const isOpt = tradeType === 'CALL' || tradeType === 'PUT';
+  const stock = document.getElementById('rc-stock').value.trim().toUpperCase();
+  if (!stock) { showAlert('Instrument is required'); return; }
+
+  const body = {
+    stock_code:    stock,
+    exchange_code: document.getElementById('rc-exchange').value,
+    bias:          document.getElementById('rc-bias').value,
+    trade_type:    tradeType,
+    product:       isOpt ? 'options' : 'cash',
+    cmp:           parseFloat(document.getElementById('rc-cmp').value) || ltpCache[stock] || 0,
+    entry_price:   parseFloat(document.getElementById('rc-entry').value) || 0,
+    entry_trigger: document.getElementById('rc-trigger-text').value,
+    target:        parseFloat(document.getElementById('rc-target').value) || 0,
+    target_text:   document.getElementById('rc-target-text').value,
+    stop_loss:     parseFloat(document.getElementById('rc-stop').value) || 0,
+    quantity:      parseInt(document.getElementById('rc-qty').value) || 75,
+    horizon:       document.getElementById('rc-horizon').value,
+    why:           document.getElementById('rc-why').value,
+    source:        document.getElementById('rc-source').value || 'ICICI Research',
+  };
+  if (isOpt) {
+    body.strike = parseInt(document.getElementById('rc-strike').value) || null;
+    body.expiry = document.getElementById('rc-expiry').value || null;
+    body.right  = tradeType === 'CALL' ? 'CE' : 'PE';
+  }
+
+  try {
+    const r = await fetch('/api/research', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) { showAlert('Error: ' + (d.detail || '')); return; }
+    appendResearchRow(d);
+    // Reset text fields
+    ['rc-stock','rc-cmp','rc-entry','rc-target','rc-stop',
+     'rc-trigger-text','rc-target-text','rc-why','rc-strike'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('rc-qty').value = '75';
+    toggleResearchForm();
+    showAlert(`✓ Research call added: ${d.stock_code} ${d.bias} ${d.trade_type}`);
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+function appendResearchRow(c) {
+  const empty = document.getElementById('research-empty');
+  if (empty) empty.remove();
+
+  // R:R
+  const rr = (c.target && c.entry_price && c.stop_loss &&
+              Math.abs(c.entry_price - c.stop_loss) > 0.01)
+    ? Math.abs((c.target - c.entry_price) / (c.entry_price - c.stop_loss)).toFixed(1) + 'x'
+    : '—';
+
+  // Bias arrow
+  const biasArrows = {BULLISH:'↑', BEARISH:'↓', NEUTRAL:'→', WAIT:'⏸'};
+  const biasArrow  = biasArrows[c.bias] || '→';
+  const biasCls    = 'bias-arrow bias-' + (c.bias || 'NEUTRAL');
+
+  // Type badge
+  const typeCls  = 'type-badge type-' + (c.trade_type || 'LONG');
+
+  // Instrument label
+  let instr = `<b>${c.stock_code}</b>`;
+  if (c.product === 'options' && c.right)
+    instr += `<br><span style="font-size:10px;color:var(--muted)">`
+           + `${c.right}${c.strike?' '+c.strike:''}${c.expiry?' '+c.expiry:''}</span>`;
+
+  // Horizon
+  const hLabel = {intraday:'Intraday',short_term:'Short Term',long_term:'Long Term'}[c.horizon] || c.horizon;
+
+  // Target display: prefer text, fallback to number
+  const targetDisplay = c.target_text ||
+    (c.target ? '₹' + c.target.toLocaleString('en-IN') : '—');
+
+  // Entry display: prefer text, fallback to number
+  const entryDisplay = c.entry_trigger ||
+    (c.entry_price ? '₹' + c.entry_price.toLocaleString('en-IN') : '—');
+
+  // CMP
+  const cmpDisplay = c.cmp ? '₹' + c.cmp.toLocaleString('en-IN') : '—';
+
+  // Action buttons
+  let actionHtml = '';
+  if (c.status === 'acted') {
+    actionHtml = '<span style="color:var(--green);font-size:11px;white-space:nowrap">✓ Triggered</span>';
+  } else if (c.trade_type !== 'WATCH') {
+    actionHtml = `
+      <button class="success" style="padding:3px 10px;font-size:11px;white-space:nowrap"
+              onclick="actOnResearch('${c.id}')">▶ Act</button>
+      <button class="danger"  style="padding:3px 8px;font-size:11px"
+              onclick="dismissResearch('${c.id}')">✕</button>`;
+  } else {
+    actionHtml = `<button class="danger" style="padding:3px 8px;font-size:11px"
+              onclick="dismissResearch('${c.id}')">✕</button>`;
+  }
+
+  const tbody = document.getElementById('research-body');
+  const tr    = document.createElement('tr');
+  tr.id        = 'rc-row-' + c.id;
+  tr.className = c.status !== 'pending' ? c.status : '';
+  tr.innerHTML = `
+    <td style="color:var(--muted);font-size:10px;white-space:nowrap">${c.added_at}</td>
+    <td style="font-family:monospace;font-size:12px">${instr}</td>
+    <td><span class="${biasCls}">${biasArrow} ${c.bias}</span></td>
+    <td><span class="${typeCls}">${c.trade_type}</span></td>
+    <td style="font-family:monospace">${cmpDisplay}</td>
+    <td style="font-size:11px;color:var(--muted);max-width:160px">${entryDisplay}</td>
+    <td style="color:var(--green);font-size:11px">${targetDisplay}</td>
+    <td style="color:var(--red);font-family:monospace">${c.stop_loss ? '₹'+c.stop_loss.toLocaleString('en-IN') : '—'}</td>
+    <td style="color:var(--blue)">${rr}</td>
+    <td><span class="horizon-badge">${hLabel}</span></td>
+    <td class="why-text">${c.why || '—'}</td>
+    <td style="color:var(--muted);font-size:11px;white-space:nowrap">${c.source}</td>
+    <td style="white-space:nowrap">${actionHtml}</td>`;
+  tbody.appendChild(tr);
+}
+
+async function actOnResearch(id) {
+  if (!confirm('Convert this research call into a live trigger order?')) return;
+  try {
+    const r = await fetch(`/api/research/${id}/act`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) { showAlert('Error: ' + (d.detail || '')); return; }
+    const row = document.getElementById('rc-row-' + id);
+    if (row) {
+      row.classList.add('acted');
+      row.querySelector('td:last-child').innerHTML =
+        '<span style="color:var(--green);font-size:11px">✓ Triggered</span>';
+    }
+    showAlert('✓ Trigger registered from research call');
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+async function dismissResearch(id) {
+  await fetch(`/api/research/${id}`, {method:'DELETE'});
+  const row = document.getElementById('rc-row-' + id);
+  if (row) row.remove();
+  if (!document.querySelector('#research-body tr:not(#research-empty)')) {
+    const tbody = document.getElementById('research-body');
+    tbody.innerHTML = `<tr id="research-empty"><td colspan="13"
+      style="color:var(--muted);text-align:center;padding:24px">
+      No research calls yet — click <b>+ Add Call</b> to add one</td></tr>`;
+  }
+}
+
+async function loadResearchCalls() {
+  try {
+    const r = await fetch('/api/research');
+    const d = await r.json();
+    d.calls.filter(c => c.status !== 'dismissed').forEach(appendResearchRow);
+  } catch(e) {}
+}
+
+// ── Morning Brief ─────────────────────────────────────────────────────────
+let briefCollapsed = false;
+
+function toggleBrief() {
+  briefCollapsed = !briefCollapsed;
+  document.getElementById('brief-body').style.display    = briefCollapsed ? 'none' : 'block';
+  document.getElementById('brief-chevron').textContent  = briefCollapsed ? '▶' : '▼';
+}
+
+async function loadSuggestions(refresh = false) {
+  const loadEl = document.getElementById('brief-loading');
+  loadEl.style.display = 'block';
+  loadEl.textContent   = refresh ? 'Refreshing suggestions…' : 'Generating morning brief…';
+  document.getElementById('trades-grid').innerHTML   = '';
+  document.getElementById('brief-summary').style.display = 'none';
+  try {
+    const r = await fetch('/api/suggestions' + (refresh ? '?refresh=true' : ''));
+    if (!r.ok) {
+      const d = await r.json();
+      loadEl.textContent = 'Failed: ' + (d.detail || r.statusText);
+      return;
+    }
+    const brief = await r.json();
+    renderBrief(brief);
+    loadEl.style.display = 'none';
+    document.getElementById('btn-brief-refresh').style.display = 'inline-block';
+  } catch(e) {
+    loadEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderBrief(brief) {
+  // Bias badge
+  const badge = document.getElementById('brief-bias-badge');
+  badge.textContent = brief.bias.toUpperCase();
+  badge.className   = 'bias-badge bias-' + brief.bias;
+
+  // Source badge
+  const srcEl = document.getElementById('brief-source');
+  srcEl.textContent   = brief.source === 'ai' ? 'AI' : 'Rule-based';
+  srcEl.style.display = 'inline-block';
+
+  // Time
+  document.getElementById('brief-time').textContent = 'Generated ' + brief.generated_at;
+
+  // Summary
+  const sumEl = document.getElementById('brief-summary');
+  sumEl.textContent   = brief.summary;
+  sumEl.style.display = 'block';
+
+  // Trade cards
+  const grid = document.getElementById('trades-grid');
+  grid.innerHTML = brief.trades.map(t => buildTradeCard(t)).join('');
+}
+
+function buildTradeCard(t) {
+  const instrParts = [t.watch_stock, t.exchange, t.product.toUpperCase()];
+  if (t.product === 'options' && t.right) instrParts.push(t.right);
+  if (t.strike)  instrParts.push(`${t.strike}`);
+  if (t.expiry)  instrParts.push(t.expiry);
+  const instr = instrParts.join(' · ');
+
+  const triggerLabel = t.trigger_direction === 'above'
+    ? `Fires if ${t.watch_stock} breaks above ₹${t.trigger_price.toLocaleString('en-IN')}`
+    : `Fires if ${t.watch_stock} drops below ₹${t.trigger_price.toLocaleString('en-IN')}`;
+
+  let statusHtml = '';
+  let cardCls    = 'trade-card';
+  if (t.status === 'approved') {
+    statusHtml = '<span class="trade-status-label status-approved">✓ Trigger Active</span>';
+    cardCls   += ' approved';
+  } else if (t.status === 'skipped') {
+    statusHtml = '<span class="trade-status-label status-skipped">Skipped</span>';
+    cardCls   += ' skipped';
+  } else {
+    statusHtml = `
+      <button class="success" style="padding:4px 14px;font-size:12px"
+              onclick="approveSuggestion('${t.id}')">✓ Approve</button>
+      <button style="padding:4px 10px;font-size:12px"
+              onclick="skipSuggestion('${t.id}')">Skip</button>`;
+  }
+
+  return `<div class="${cardCls}" id="trade-card-${t.id}">
+    <div class="trade-card-head">
+      <span class="tname">${t.name}</span>
+      <span class="conviction conviction-${t.conviction}">${t.conviction}</span>
+    </div>
+    <div style="font-family:monospace;font-size:11px;color:var(--blue);margin-bottom:6px">${instr}</div>
+    <div class="trade-meta">
+      <span><b>${t.action.toUpperCase()}</b> ×${t.quantity}</span>
+      <span title="Trigger">${triggerLabel}</span>
+      <span>Target <b style="color:var(--green)">₹${t.target.toLocaleString('en-IN')}</b></span>
+      <span>Stop <b style="color:var(--red)">₹${t.stop_loss.toLocaleString('en-IN')}</b></span>
+      <span>Max ₹${t.max_spend.toLocaleString('en-IN')}</span>
+    </div>
+    <div class="trade-rationale">${t.rationale}</div>
+    <div class="trade-actions">${statusHtml}</div>
+  </div>`;
+}
+
+async function approveSuggestion(id) {
+  try {
+    const r = await fetch(`/api/suggestions/${id}/approve`, {method: 'POST'});
+    const d = await r.json();
+    if (!r.ok) { showAlert('Approve failed: ' + (d.detail||'')); return; }
+    // Update card in-place
+    const card = document.getElementById('trade-card-' + id);
+    if (card) {
+      card.classList.add('approved');
+      card.querySelector('.trade-actions').innerHTML =
+        '<span class="trade-status-label status-approved">✓ Trigger Active</span>';
+      if (d.trigger_key) showAlert(`✓ Trigger registered: ${d.trigger_key}`);
+    }
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+async function skipSuggestion(id) {
+  try {
+    const r = await fetch(`/api/suggestions/${id}/skip`, {method: 'POST'});
+    if (!r.ok) { const d = await r.json(); showAlert('Error: ' + (d.detail||'')); return; }
+    const card = document.getElementById('trade-card-' + id);
+    if (card) {
+      card.classList.add('skipped');
+      card.querySelector('.trade-actions').innerHTML =
+        '<span class="trade-status-label status-skipped">Skipped</span>';
+    }
+  } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+// ── Init: check if already connected ──────────────────────────────────────
+(async function init() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    if (d.connected) onConnected();
+    else connectWS(); // still connect WS for future init message
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>
