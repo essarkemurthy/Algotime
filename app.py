@@ -34,6 +34,7 @@ from trade_engine.session import BreezeSession
 from trade_engine.symbols import SymbolBuilder, nearest_monthly_expiry, nearest_weekly_expiry
 
 from suggestions import SuggestionEngine
+from paper_engine import PaperTrader
 
 Path("logs").mkdir(exist_ok=True)
 Path("static").mkdir(exist_ok=True)
@@ -75,6 +76,8 @@ _suggestion_engine: Optional[SuggestionEngine] = None
 
 _research_calls: List[dict] = []   # manually entered ICICI Direct research calls
 _research_seq = 0
+
+_paper: PaperTrader = PaperTrader(starting_capital=1_000_000.0)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -969,6 +972,86 @@ async def skip_suggestion(trade_id: str):
     if not ok:
         raise HTTPException(404, f"Trade id '{trade_id}' not found.")
     return {"status": "skipped", "trade_id": trade_id}
+
+
+# ── Paper trading ────────────────────────────────────────────────────────────
+
+@app.get("/paper")
+async def paper_page():
+    return FileResponse("static/paper.html")
+
+
+class PaperOrderReq(BaseModel):
+    stock_code:    str
+    exchange_code: str           = "NSE"
+    product:       str           = "cash"
+    right:         Optional[str] = None
+    strike:        Optional[int] = None
+    expiry:        Optional[str] = None
+    action:        str           = "buy"
+    quantity:      int           = 75
+    order_type:    str           = "market"
+    price:         float         = 0.0
+
+
+@app.post("/api/paper/order")
+async def paper_place_order(req: PaperOrderReq):
+    try:
+        order = _paper.place_order(
+            stock=req.stock_code.upper(),
+            exchange=req.exchange_code,
+            product=req.product,
+            action=req.action,
+            qty=req.quantity,
+            order_type=req.order_type,
+            price=req.price,
+            ltp_cache=_ltp_cache,
+            right=req.right,
+            strike=req.strike,
+            expiry=req.expiry,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    summary = _paper.summary(_ltp_cache)
+    await broadcast({"type": "paper_update", "data": summary})
+    return {"order": _paper._order_dict(order), "summary": summary}
+
+
+@app.post("/api/paper/exit/{pos_id}")
+async def paper_exit_position(pos_id: str):
+    try:
+        order = _paper.exit_position(pos_id, _ltp_cache)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    summary = _paper.summary(_ltp_cache)
+    await broadcast({"type": "paper_update", "data": summary})
+    return {"order": _paper._order_dict(order), "summary": summary}
+
+
+@app.get("/api/paper/summary")
+async def paper_summary():
+    return _paper.summary(_ltp_cache)
+
+
+@app.post("/api/paper/reset")
+async def paper_reset(body: dict = {}):
+    capital = float(body.get("starting_capital", _paper.starting_capital))
+    _paper.starting_capital = capital
+    _paper.reset()
+    summary = _paper.summary(_ltp_cache)
+    await broadcast({"type": "paper_update", "data": summary})
+    return {"status": "reset", "starting_capital": capital}
+
+
+@app.post("/api/paper/capital")
+async def paper_set_capital(body: dict):
+    capital = float(body.get("starting_capital", 1_000_000))
+    if capital < 10_000:
+        raise HTTPException(400, "Minimum starting capital is ₹10,000")
+    _paper.starting_capital = capital
+    _paper.cash = capital
+    _paper.reset()
+    return {"status": "ok", "starting_capital": capital}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

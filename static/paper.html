@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paper Trading — Breeze Dashboard</title>
+<style>
+  :root {
+    --bg:      #0d1117;
+    --bg2:     #161b22;
+    --bg3:     #21262d;
+    --border:  #30363d;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --green:   #3fb950;
+    --red:     #f85149;
+    --yellow:  #d29922;
+    --blue:    #58a6ff;
+    --accent:  #1f6feb;
+    --paper:   #d97706;   /* amber — paper trading accent */
+    --paper-bg:#2a1800;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, monospace; font-size: 13px; min-height: 100vh; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; background: var(--paper-bg);
+    border-bottom: 2px solid var(--paper); position: sticky; top: 0; z-index: 100;
+  }
+  header h1 { font-size: 15px; font-weight: 700; color: var(--paper); letter-spacing: .5px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  #clock { font-family: monospace; font-size: 13px; color: var(--muted); }
+
+  /* Buttons */
+  button {
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg3); color: var(--text); cursor: pointer; font-size: 12px;
+    transition: background .15s;
+  }
+  button:hover { background: var(--accent); border-color: var(--blue); }
+  button.danger  { border-color: var(--red);   color: var(--red); }
+  button.danger:hover  { background: var(--red);   color: #fff; }
+  button.success { border-color: var(--green); color: var(--green); }
+  button.success:hover { background: var(--green); color: #000; }
+  button.primary { background: var(--paper); border-color: var(--paper); color: #000; font-weight: 700; }
+  button.primary:hover { background: #f59e0b; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+
+  /* Alert bar */
+  #alert-bar { display:none; background:#5a3d00; border-bottom:1px solid var(--paper);
+    padding:7px 20px; color:#ffd080; font-size:12px; }
+
+  /* Paper badge */
+  .paper-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 6px;
+    background: var(--paper-bg); border: 1px solid var(--paper);
+    color: var(--paper); font-size: 11px; font-weight: 700; letter-spacing: .5px;
+  }
+
+  /* Main layout */
+  main { padding: 16px 20px; }
+
+  /* Portfolio summary bar */
+  .portfolio-bar {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px; margin-bottom: 16px;
+  }
+  .pf-tile {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .pf-tile .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing:.4px; margin-bottom: 4px; }
+  .pf-tile .value { font-size: 20px; font-weight: 700; font-family: monospace; }
+  .pf-tile .sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .pnl-pos { color: var(--green); }
+  .pnl-neg { color: var(--red); }
+
+  /* Cards */
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing:.5px; color: var(--muted);
+    margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+
+  /* Form grid */
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .form-row { margin-bottom: 0; }
+  label { display:block; color:var(--muted); margin-bottom:4px; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  input, select {
+    width:100%; background:var(--bg3); border:1px solid var(--border);
+    border-radius:6px; color:var(--text); padding:6px 10px; font-size:13px;
+  }
+  input:focus, select:focus { outline:none; border-color:var(--paper); }
+  .span2 { grid-column: span 2; }
+  .form-actions { margin-top: 10px; display: flex; gap: 8px; }
+
+  /* Two-col */
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* Tables */
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { color:var(--muted); font-weight:500; text-align:left; padding:5px 8px;
+    border-bottom:1px solid var(--border); background:var(--bg3); white-space:nowrap; }
+  td { padding:5px 8px; border-bottom:1px solid #1c2128; vertical-align:middle; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; text-transform:uppercase; }
+  .tag-buy  { background:#1a3a1a; color:var(--green); }
+  .tag-sell { background:#3a1a1a; color:var(--red); }
+  .tbl-wrap { max-height: 300px; overflow-y: auto; }
+
+  /* LTP tiles */
+  .ltp-row { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+  .ltp-chip { background:var(--bg3); border:1px solid var(--border); border-radius:6px;
+    padding:6px 12px; font-family:monospace; font-size:12px; }
+  .ltp-chip .sym { color:var(--muted); font-size:10px; margin-right:6px; }
+
+  /* Order log */
+  #paper-log { font-family:monospace; font-size:11px; max-height:200px; overflow-y:auto; color:var(--muted); }
+  #paper-log .entry { padding:3px 0; border-bottom:1px solid #1c2128; }
+
+  ::-webkit-scrollbar { width:6px; }
+  ::-webkit-scrollbar-track { background:var(--bg); }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;gap:12px">
+    <h1>📄 Paper Trading Simulator</h1>
+    <span class="paper-badge">SIMULATED — No real orders</span>
+  </div>
+  <div class="header-right">
+    <span id="clock"></span>
+    <a href="/" style="text-decoration:none">
+      <button>← Live Dashboard</button>
+    </a>
+  </div>
+</header>
+
+<div id="alert-bar"></div>
+
+<main>
+
+  <!-- LTP strip -->
+  <div class="ltp-row" id="ltp-strip">
+    <div class="ltp-chip"><span class="sym">NIFTY</span><span id="ltp-NIFTY">—</span></div>
+    <div class="ltp-chip"><span class="sym">INFY</span><span id="ltp-INFY">—</span></div>
+    <div class="ltp-chip"><span class="sym">ONGC</span><span id="ltp-ONGC">—</span></div>
+    <div class="ltp-chip"><span class="sym">MAXHEALTH</span><span id="ltp-MAXHEALTH">—</span></div>
+    <div class="ltp-chip" style="color:var(--muted);font-size:11px" id="ltp-status">
+      ⚡ Live prices via WebSocket
+    </div>
+  </div>
+
+  <!-- Portfolio summary -->
+  <div class="portfolio-bar" id="portfolio-bar">
+    <div class="pf-tile">
+      <div class="label">Starting Capital</div>
+      <div class="value" id="pf-capital">₹10,00,000</div>
+      <div class="sub"><button style="padding:2px 8px;font-size:10px;margin-top:4px" onclick="showCapitalForm()">Change</button></div>
+    </div>
+    <div class="pf-tile">
+      <div class="label">Cash Available</div>
+      <div class="value" id="pf-cash">—</div>
+    </div>
+    <div class="pf-tile">
+      <div class="label">Invested</div>
+      <div class="value" id="pf-invested">—</div>
+    </div>
+    <div class="pf-tile">
+      <div class="label">Portfolio Value</div>
+      <div class="value" id="pf-equity">—</div>
+    </div>
+    <div class="pf-tile">
+      <div class="label">Unrealised P&L</div>
+      <div class="value" id="pf-unr">—</div>
+    </div>
+    <div class="pf-tile">
+      <div class="label">Realised P&L</div>
+      <div class="value" id="pf-real">—</div>
+    </div>
+    <div class="pf-tile">
+      <div class="label">Total Return</div>
+      <div class="value" id="pf-pct">—</div>
+    </div>
+    <div class="pf-tile" style="display:flex;align-items:center">
+      <button class="danger" onclick="confirmReset()" style="width:100%;padding:8px">
+        🔄 Reset Portfolio
+      </button>
+    </div>
+  </div>
+
+  <!-- Capital form (hidden) -->
+  <div id="capital-form" style="display:none;background:var(--bg2);border:1px solid var(--paper);border-radius:8px;padding:14px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <label style="margin:0;color:var(--muted)">Starting Capital ₹</label>
+      <input id="capital-input" type="number" value="1000000" min="10000" step="100000" style="max-width:180px">
+      <button class="primary" onclick="setCapital()">Set & Reset</button>
+      <button onclick="document.getElementById('capital-form').style.display='none'">Cancel</button>
+    </div>
+  </div>
+
+  <div class="cols2">
+
+    <!-- LEFT: Place Order -->
+    <div>
+      <div class="card">
+        <h3>Place Paper Order</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Stock / Index</label>
+            <input id="p-stock" placeholder="NIFTY / INFY / ONGC" oninput="autoFillCmp()">
+          </div>
+          <div class="form-row">
+            <label>Exchange</label>
+            <select id="p-exchange">
+              <option value="NSE">NSE</option>
+              <option value="NFO">NFO</option>
+              <option value="BSE">BSE</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Product</label>
+            <select id="p-product" onchange="togglePaperOptFields()">
+              <option value="cash">Cash / Equity</option>
+              <option value="options">Options</option>
+            </select>
+          </div>
+          <div class="form-row" id="p-right-row" style="display:none">
+            <label>Right</label>
+            <select id="p-right">
+              <option value="CE">CE (Call)</option>
+              <option value="PE">PE (Put)</option>
+            </select>
+          </div>
+          <div class="form-row" id="p-strike-row" style="display:none">
+            <label>Strike</label>
+            <input id="p-strike" type="number" step="50" placeholder="23400">
+          </div>
+          <div class="form-row" id="p-expiry-row" style="display:none">
+            <label>Expiry</label>
+            <input id="p-expiry" type="date">
+          </div>
+          <div class="form-row">
+            <label>Action</label>
+            <select id="p-action">
+              <option value="buy">BUY</option>
+              <option value="sell">SELL</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Quantity</label>
+            <input id="p-qty" type="number" value="75" min="1">
+          </div>
+          <div class="form-row">
+            <label>Order Type</label>
+            <select id="p-type" onchange="togglePaperPrice()">
+              <option value="market">MARKET</option>
+              <option value="limit">LIMIT</option>
+            </select>
+          </div>
+          <div class="form-row" id="p-price-row" style="display:none">
+            <label>Limit Price ₹</label>
+            <input id="p-price" type="number" step="0.05" value="0">
+          </div>
+        </div>
+        <div style="margin-top:10px;padding:8px 10px;background:var(--bg3);border-radius:6px;font-size:11px;color:var(--muted)">
+          Fill price: <b id="fill-price-preview">— (enter stock and select market)</b>
+        </div>
+        <div class="form-actions">
+          <button class="primary" onclick="paperPlaceOrder()">📄 Place Paper Order</button>
+          <button onclick="clearPaperForm()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Order log -->
+      <div class="card">
+        <h3>Order Log</h3>
+        <div id="paper-log"><p style="color:var(--muted)">No paper orders yet.</p></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Positions -->
+    <div>
+
+      <!-- Open positions -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0;border:none;padding:0">Open Positions</h3>
+          <button class="danger" onclick="exitAll()">Exit All</button>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Side</th><th>Qty</th>
+                <th>Avg ₹</th><th>LTP ₹</th><th>P&amp;L ₹</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="open-pos-body">
+              <tr><td colspan="7" style="color:var(--muted);text-align:center;padding:16px">No open positions</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Closed positions -->
+      <div class="card">
+        <h3>Closed Positions</h3>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Side</th><th>Qty</th><th>Avg ₹</th><th>P&amp;L ₹</th><th>Closed</th>
+              </tr>
+            </thead>
+            <tbody id="closed-pos-body">
+              <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:16px">No closed positions</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let ws = null;
+let ltpCache = {};
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function tick() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-IN', {hour12:false});
+}
+setInterval(tick, 1000); tick();
+
+// Default expiry to nearest Thursday
+(function() {
+  const d = new Date();
+  const days = (4 - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + days);
+  document.getElementById('p-expiry').value = d.toISOString().split('T')[0];
+})();
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connectWS() {
+  if (ws && ws.readyState !== WebSocket.CLOSED) return;
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'ltp')          updateLTPs(msg.data);
+    if (msg.type === 'init' && msg.ltp) updateLTPs(msg.ltp);
+    if (msg.type === 'paper_update') renderSummary(msg.data);
+    if (msg.type === 'pong') {}
+  };
+  ws.onclose = () => { ws = null; setTimeout(connectWS, 3000); };
+  ws.onerror = () => { ws = null; };
+  setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 20000);
+}
+connectWS();
+
+function updateLTPs(data) {
+  Object.entries(data).forEach(([sym, ltp]) => {
+    ltpCache[sym] = ltp;
+    const el = document.getElementById('ltp-' + sym);
+    if (el) el.textContent = ltp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+  });
+  updateFillPreview();
+}
+
+// ── Alert ──────────────────────────────────────────────────────────────────
+let alertTimer;
+function showAlert(msg, color) {
+  const bar = document.getElementById('alert-bar');
+  bar.textContent = msg;
+  bar.style.display = 'block';
+  bar.style.color = color || '#ffd080';
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => bar.style.display = 'none', 6000);
+}
+
+// ── Form helpers ───────────────────────────────────────────────────────────
+function togglePaperOptFields() {
+  const isOpt = document.getElementById('p-product').value === 'options';
+  ['p-right-row','p-strike-row','p-expiry-row'].forEach(id => {
+    document.getElementById(id).style.display = isOpt ? 'block' : 'none';
+  });
+  document.getElementById('p-exchange').value = isOpt ? 'NFO' : 'NSE';
+  updateFillPreview();
+}
+
+function togglePaperPrice() {
+  const isLim = document.getElementById('p-type').value === 'limit';
+  document.getElementById('p-price-row').style.display = isLim ? 'block' : 'none';
+  updateFillPreview();
+}
+
+function autoFillCmp() { updateFillPreview(); }
+
+function updateFillPreview() {
+  const stock   = document.getElementById('p-stock').value.trim().toUpperCase();
+  const product = document.getElementById('p-product').value;
+  const right   = document.getElementById('p-right').value;
+  const strike  = document.getElementById('p-strike').value;
+  const expiry  = document.getElementById('p-expiry').value;
+  const type    = document.getElementById('p-type').value;
+  const price   = parseFloat(document.getElementById('p-price').value) || 0;
+
+  const el = document.getElementById('fill-price-preview');
+  if (type === 'limit' && price > 0) {
+    el.textContent = `₹${price.toLocaleString('en-IN')} (limit)`;
+    return;
+  }
+
+  let key = stock;
+  if (product === 'options' && right && strike) key = `${stock}_${right}_${strike}_${expiry}`;
+  const ltp = ltpCache[key] || ltpCache[stock];
+  if (ltp) {
+    el.textContent = `₹${ltp.toLocaleString('en-IN',{minimumFractionDigits:2})} (live LTP)`;
+  } else {
+    el.textContent = stock ? `No LTP for "${stock}" — use Limit order` : '— (enter stock)';
+  }
+}
+
+function clearPaperForm() {
+  ['p-stock','p-strike','p-price'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('p-qty').value = '75';
+  document.getElementById('p-product').value = 'cash';
+  togglePaperOptFields();
+  document.getElementById('p-type').value = 'market';
+  togglePaperPrice();
+  updateFillPreview();
+}
+
+// ── Place order ────────────────────────────────────────────────────────────
+async function paperPlaceOrder() {
+  const product = document.getElementById('p-product').value;
+  const body = {
+    stock_code:    document.getElementById('p-stock').value.trim().toUpperCase(),
+    exchange_code: document.getElementById('p-exchange').value,
+    product,
+    action:        document.getElementById('p-action').value,
+    quantity:      parseInt(document.getElementById('p-qty').value),
+    order_type:    document.getElementById('p-type').value,
+    price:         parseFloat(document.getElementById('p-price').value) || 0,
+  };
+  if (!body.stock_code) { showAlert('Stock is required'); return; }
+  if (product === 'options') {
+    body.right  = document.getElementById('p-right').value;
+    body.strike = parseInt(document.getElementById('p-strike').value) || null;
+    body.expiry = document.getElementById('p-expiry').value || null;
+  }
+  try {
+    const r = await fetch('/api/paper/order', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) { showAlert('Order failed: ' + (d.detail||''), '#f87171'); return; }
+    showAlert(`✓ Paper ${body.action.toUpperCase()} ${body.stock_code} ×${body.quantity} @ ₹${d.order.fill_price.toLocaleString('en-IN')}`, '#86efac');
+    appendOrderLog(d.order);
+    renderSummary(d.summary);
+  } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
+}
+
+// ── Exit ───────────────────────────────────────────────────────────────────
+async function exitPaperPosition(posId) {
+  if (!confirm('Exit this paper position at market?')) return;
+  try {
+    const r = await fetch(`/api/paper/exit/${posId}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) { showAlert('Exit failed: ' + (d.detail||''), '#f87171'); return; }
+    showAlert('✓ Position exited', '#86efac');
+    renderSummary(d.summary);
+  } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
+}
+
+async function exitAll() {
+  const rows = document.querySelectorAll('#open-pos-body tr[data-id]');
+  if (!rows.length) { showAlert('No open positions to exit'); return; }
+  if (!confirm(`Exit all ${rows.length} open paper position(s)?`)) return;
+  for (const row of rows) {
+    await fetch(`/api/paper/exit/${row.dataset.id}`, {method:'POST'});
+  }
+  await loadSummary();
+  showAlert('✓ All positions exited', '#86efac');
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+function fmt(n) { return '₹' + Math.abs(n).toLocaleString('en-IN', {minimumFractionDigits:2}); }
+function pnlSpan(n) {
+  const cls = n >= 0 ? 'pnl-pos' : 'pnl-neg';
+  return `<span class="${cls}">${n >= 0 ? '+' : '−'}${fmt(n)}</span>`;
+}
+
+function renderSummary(s) {
+  const pnlCls = s.total_pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+  document.getElementById('pf-capital').textContent  = fmt(s.starting_capital);
+  document.getElementById('pf-cash').textContent     = fmt(s.cash);
+  document.getElementById('pf-invested').textContent = fmt(s.invested);
+  document.getElementById('pf-equity').textContent   = fmt(s.equity);
+  document.getElementById('pf-unr').innerHTML  = pnlSpan(s.unrealised_pnl);
+  document.getElementById('pf-real').innerHTML = pnlSpan(s.realised_pnl);
+  document.getElementById('pf-pct').innerHTML  =
+    `<span class="${pnlCls}">${s.pnl_pct >= 0 ? '+' : ''}${s.pnl_pct.toFixed(2)}%</span>`;
+
+  // Open positions
+  const openBody = document.getElementById('open-pos-body');
+  if (!s.open_positions.length) {
+    openBody.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:16px">No open positions</td></tr>';
+  } else {
+    openBody.innerHTML = s.open_positions.map(p => {
+      const dirTag = `<span class="tag tag-${p.direction}">${p.direction.toUpperCase()}</span>`;
+      return `<tr data-id="${p.id}">
+        <td style="font-family:monospace;font-size:11px">${p.symbol}</td>
+        <td>${dirTag}</td>
+        <td>${p.qty}</td>
+        <td style="font-family:monospace">₹${p.avg_price.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+        <td style="font-family:monospace">₹${(p.ltp||0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+        <td>${pnlSpan(p.unrealised)}</td>
+        <td><button class="danger" style="padding:2px 8px;font-size:11px"
+            onclick="exitPaperPosition('${p.id}')">Exit</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Closed positions
+  const closedBody = document.getElementById('closed-pos-body');
+  if (!s.closed_positions.length) {
+    closedBody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:16px">No closed positions</td></tr>';
+  } else {
+    closedBody.innerHTML = [...s.closed_positions].reverse().map(p => {
+      const dirTag = `<span class="tag tag-${p.direction}">${p.direction.toUpperCase()}</span>`;
+      return `<tr>
+        <td style="font-family:monospace;font-size:11px">${p.symbol}</td>
+        <td>${dirTag}</td>
+        <td>${p.qty}</td>
+        <td style="font-family:monospace">₹${p.avg_price.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+        <td>${pnlSpan(p.realised_pnl)}</td>
+        <td style="color:var(--muted);font-size:11px">${p.closed_at||'—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Order log
+  if (s.orders.length) {
+    const log = document.getElementById('paper-log');
+    if (log.querySelector('p')) log.innerHTML = '';
+    log.innerHTML = [...s.orders].reverse().map(o => {
+      const cls = o.action === 'buy' ? 'pnl-pos' : 'pnl-neg';
+      return `<div class="entry">
+        <span style="color:var(--muted)">${o.time}</span>
+        <span class="${cls}"> ${o.action.toUpperCase()}</span>
+        <span> ${o.symbol}</span>
+        <span style="color:var(--blue)"> ×${o.qty}</span>
+        <span style="color:var(--muted)"> @ ₹${o.fill_price.toLocaleString('en-IN')}</span>
+        <span style="color:var(--muted);font-size:10px"> [${o.id}]</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+function appendOrderLog(o) {
+  const log = document.getElementById('paper-log');
+  if (log.querySelector('p')) log.innerHTML = '';
+  const cls = o.action === 'buy' ? 'pnl-pos' : 'pnl-neg';
+  const div = document.createElement('div');
+  div.className = 'entry';
+  div.innerHTML = `<span style="color:var(--muted)">${o.time}</span>
+    <span class="${cls}"> ${o.action.toUpperCase()}</span>
+    <span> ${o.symbol}</span>
+    <span style="color:var(--blue)"> ×${o.qty}</span>
+    <span style="color:var(--muted)"> @ ₹${o.fill_price.toLocaleString('en-IN')}</span>
+    <span style="color:var(--muted);font-size:10px"> [${o.id}]</span>`;
+  log.insertBefore(div, log.firstChild);
+}
+
+// ── Capital ────────────────────────────────────────────────────────────────
+function showCapitalForm() {
+  document.getElementById('capital-form').style.display = 'block';
+  document.getElementById('capital-input').value = document.getElementById('pf-capital')
+    .textContent.replace(/[₹,]/g,'');
+}
+
+async function setCapital() {
+  const capital = parseFloat(document.getElementById('capital-input').value);
+  if (!capital || capital < 10000) { showAlert('Minimum ₹10,000'); return; }
+  if (!confirm(`Reset paper portfolio with ₹${capital.toLocaleString('en-IN')} starting capital?`)) return;
+  const r = await fetch('/api/paper/capital', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({starting_capital: capital})
+  });
+  if (r.ok) {
+    document.getElementById('capital-form').style.display = 'none';
+    await loadSummary();
+    showAlert(`✓ Portfolio reset with ₹${capital.toLocaleString('en-IN')}`, '#86efac');
+  }
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+async function confirmReset() {
+  if (!confirm('Reset all paper trades and start fresh? This cannot be undone.')) return;
+  const r = await fetch('/api/paper/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  const d = await r.json();
+  renderSummary(d);
+  document.getElementById('paper-log').innerHTML = '<p style="color:var(--muted)">No paper orders yet.</p>';
+  showAlert('✓ Paper portfolio reset', '#86efac');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function loadSummary() {
+  try {
+    const r = await fetch('/api/paper/summary');
+    if (r.ok) renderSummary(await r.json());
+  } catch(e) {}
+}
+
+loadSummary();
+</script>
+</body>
+</html>
