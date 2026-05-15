@@ -24,21 +24,30 @@ A locally-run web dashboard for NSE/NFO options trading via [ICICI Direct Breeze
 
 ```
 algo-trade/
-├── main.py                 Entry point — starts FastAPI server
-├── options_engine.py       Breeze session, order router, Greeks, strategies
+├── app.py                  FastAPI server — trading dashboard + WebSocket (run this)
+├── main.py                 CLI algo engine (headless, no browser)
+├── collect.py              Data collector — streams market data to PostgreSQL
+├── options_engine.py       Legacy Breeze engine (referenced by app.py)
 ├── suggestions.py          Morning Brief — AI (Claude Haiku) or rule-based
-├── collect.py              Data collector entry point
-├── trade_engine/           Algo engine package (strategies, Greeks, risk)
-├── collector/              Market data collection package
-├── data/                   IV history and collected data (auto-created)
-├── logs/                   Log output (auto-created)
+├── paper_engine.py         In-memory paper trading simulator
+├── static/
+│   ├── index.html          Main trading dashboard
+│   ├── charts.html         Chart workspace (OHLC + indicators)
+│   └── paper.html          Paper trading simulator
+├── trade_engine/           Packaged algo engine (strategies, Greeks, risk)
+├── collector/              Market data collection package (requires PostgreSQL)
+├── scripts/
+│   └── setup_db.py         One-time DB schema creation
+├── data/                   IV history CSV (auto-created, no DB needed)
+├── logs/                   Runtime logs (auto-created)
 ├── requirements.txt
-├── .env.example            Credential template
-├── .env                    Your credentials (never committed)
-└── .vscode/
-    ├── launch.json         F5 launch config (opens browser automatically)
-    └── settings.json       Python interpreter path
+├── .env.example            Credential template — copy to .env
+└── .env                    Your credentials (never committed)
 ```
+
+> **Two modes:**
+> - **Dashboard only** — run `app.py`, no PostgreSQL needed. Orders, charts, paper trading, live quotes all work via direct Breeze API calls.
+> - **With data collector** — also run `collect.py` to stream ticks, option chains, and futures into PostgreSQL for historical analysis.
 
 ---
 
@@ -84,15 +93,18 @@ copy .env.example .env   # Windows
 
 Edit `.env`:
 
-```
+```env
+# ── Required: Breeze API (ICICI Direct) ───────────────────────────────────────
 BREEZE_API_KEY=your_api_key_here
 BREEZE_API_SECRET=your_api_secret_here
 BREEZE_SESSION_TOKEN=your_session_token_here
 
-# PostgreSQL connection string (required for the data collector)
+# ── Optional: PostgreSQL (only needed for the data collector) ─────────────────
+# The dashboard (app.py) works fine without this.
+# Format: postgresql://username:password@host:port/database
 DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
 
-# Optional — enables AI-powered Morning Brief (Claude Haiku)
+# ── Optional: AI Morning Brief (Claude Haiku) ─────────────────────────────────
 ANTHROPIC_API_KEY=your_anthropic_key_here
 ```
 
@@ -114,22 +126,77 @@ Open the project folder in VS Code and press **F5**. The server starts and the b
 
 **Option B — Terminal:**
 ```powershell
-# Make sure your venv is active first
 .venv\Scripts\Activate.ps1        # Windows
 # source .venv/bin/activate        # macOS/Linux
 
-python main.py
+python app.py
 ```
 
 Then open `http://localhost:8000` in a browser.
+
+> The dashboard works **without PostgreSQL**. Charts fetch OHLC directly from Breeze. Orders, paper trading, and live quotes all work without a database.
 
 ---
 
 ## Prerequisites
 
 - Python 3.9 – 3.13
-- PostgreSQL (for the data collector — optional for dashboard-only use)
 - ICICI Direct Breeze API credentials — sign up at [api.icicidirect.com](https://api.icicidirect.com/)
+- PostgreSQL 17+ — **optional**, only needed if you want to run `collect.py` to store historical market data
+
+---
+
+## PostgreSQL Setup (Optional — Data Collector Only)
+
+The trading dashboard (`app.py`) works without PostgreSQL. Only `collect.py` requires it.
+
+### 1. Install PostgreSQL
+Download from [postgresql.org/download/windows](https://www.postgresql.org/download/windows/) and install with default settings (port 5432). Note the password you set for the `postgres` user.
+
+### 2. Start the PostgreSQL service
+Open **Services** (`Win + R` → `services.msc`), find **postgresql-x64-18**, right-click → **Start**.
+
+Or from an Administrator PowerShell:
+```powershell
+Start-Service postgresql-x64-18
+```
+
+### 3. Create the database
+```powershell
+$env:PGPASSWORD = "your_postgres_password"
+& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres -h localhost trading_data
+```
+
+### 4. Set DB_URL in `.env`
+```env
+DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
+```
+
+### 5. Create all tables
+```powershell
+.venv\Scripts\Activate.ps1
+python scripts/setup_db.py
+```
+
+You should see:
+```
+Tables ready:
+  [ok] candles
+  [ok] chain_snapshots
+  [ok] depth_snapshots
+  [ok] futures_candles
+  [ok] futures_ticks
+  [ok] iv_daily
+  [ok] pcr_snapshots
+  [ok] spot_ticks
+```
+
+### 6. Run the data collector (on trading days)
+```powershell
+python collect.py
+```
+
+The collector runs from 9:15 AM to 3:35 PM IST and self-terminates. It collects spot ticks, futures, full option chains, market depth, PCR, and historical OHLCV for NIFTY, BANKNIFTY, FINNIFTY and 5 large-cap equities.
 
 ---
 
@@ -139,7 +206,7 @@ Then open `http://localhost:8000` in a browser.
 08:45  Generate fresh session token on the Breeze portal
        Paste it as BREEZE_SESSION_TOKEN in .env
 
-09:00  Press F5 (VS Code) or: python main.py
+09:00  Press F5 (VS Code) or: python app.py
        Browser opens at http://localhost:8000
 
 09:15  Click [Connect] on the dashboard
