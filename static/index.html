@@ -377,6 +377,25 @@
   .quota-seg { display: flex; align-items: center; gap: 4px; }
   .quota-fill { height: 6px; border-radius: 3px; background: var(--accent); min-width: 4px; }
   .quota-track { height: 6px; border-radius: 3px; background: var(--border); width: 80px; overflow: hidden; }
+
+  /* ── Symbol autocomplete ── */
+  .sym-wrap { position: relative; display: inline-block; }
+  .sym-dropdown {
+    position: absolute; top: 100%; left: 0; z-index: 200;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    min-width: 280px; max-height: 240px; overflow-y: auto; box-shadow: 0 8px 24px #0008;
+    display: none;
+  }
+  .sym-dropdown.open { display: block; }
+  .sym-item {
+    padding: 6px 12px; cursor: pointer; display: flex; gap: 10px; align-items: baseline;
+    border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .sym-item:last-child { border-bottom: none; }
+  .sym-item:hover, .sym-item.active { background: var(--accent); }
+  .sym-code { font-weight: 600; min-width: 80px; }
+  .sym-name { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+  .sym-exch { font-size: 10px; color: var(--blue); min-width: 32px; }
 </style>
 </head>
 <body>
@@ -454,15 +473,20 @@
     </h3>
     <div id="tick-pane">
       <div class="tick-controls">
-        <select id="tick-symbol-select" onchange="tickSymbolChanged()">
-          <option value="">— select symbol —</option>
-          <option value="NIFTY">NIFTY</option>
-          <option value="INFY">INFY</option>
-          <option value="ONGC">ONGC</option>
-          <option value="MAXHEALTH">MAXHEALTH</option>
+        <div class="sym-wrap">
+          <input type="text" id="tick-symbol-input" placeholder="Symbol or company name…"
+                 style="width:200px" autocomplete="off"
+                 oninput="symSearch(this,'tick-sym-drop','tick')"
+                 onkeydown="symKeyNav(event,'tick-sym-drop','tick')"
+                 onfocus="symSearch(this,'tick-sym-drop','tick')">
+          <div class="sym-dropdown" id="tick-sym-drop"></div>
+        </div>
+        <select id="tick-exchange-filter" style="height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px">
+          <option value="">All</option>
+          <option value="NSE">NSE</option>
+          <option value="BSE">BSE</option>
+          <option value="NFO">NFO</option>
         </select>
-        <input type="text" id="tick-symbol-custom" placeholder="or type symbol…" style="width:140px"
-               onkeydown="if(event.key==='Enter')watchTicks()">
         <button class="primary" onclick="watchTicks()">Watch</button>
         <button onclick="stopTickWatch()" id="btn-tick-stop" style="display:none">Stop</button>
         <span id="tick-count" style="color:var(--muted);font-size:11px;margin-left:4px"></span>
@@ -741,7 +765,13 @@
         <div class="inline-row">
           <div class="form-row" style="flex:2">
             <label>Stock</label>
-            <input id="o-stock" value="NIFTY" placeholder="NIFTY / INFY / ONGC">
+            <div class="sym-wrap">
+              <input id="o-stock" value="NIFTY" placeholder="NIFTY / INFY / ONGC" autocomplete="off"
+                     oninput="symSearch(this,'order-sym-drop','order')"
+                     onkeydown="symKeyNav(event,'order-sym-drop','order')"
+                     onfocus="symSearch(this,'order-sym-drop','order')">
+              <div class="sym-dropdown" id="order-sym-drop"></div>
+            </div>
           </div>
           <div class="form-row">
             <label>Exchange</label>
@@ -1846,6 +1876,93 @@ async function skipSuggestion(id) {
   } catch(e) { showAlert('Error: ' + e.message); }
 }
 
+// ── Symbol autocomplete ───────────────────────────────────────────────────
+let _symDebounce = null;
+let _symActiveIdx = -1;
+
+async function symSearch(input, dropId, context) {
+  clearTimeout(_symDebounce);
+  _symDebounce = setTimeout(async () => {
+    const q  = input.value.trim();
+    const ex = context === 'tick'
+      ? (document.getElementById('tick-exchange-filter')?.value || '')
+      : (document.getElementById('o-exchange')?.value || '');
+    if (!q && !ex) { closeSymDrop(dropId); return; }
+    try {
+      const url = `/api/symbols?q=${encodeURIComponent(q)}&exchange=${ex}&limit=20`;
+      const r   = await fetch(url);
+      const d   = await r.json();
+      renderSymDrop(d.symbols || [], dropId, input, context);
+    } catch(e) { closeSymDrop(dropId); }
+  }, 180);
+}
+
+function renderSymDrop(symbols, dropId, input, context) {
+  const drop = document.getElementById(dropId);
+  if (!symbols.length) { drop.classList.remove('open'); return; }
+  _symActiveIdx = -1;
+  drop.innerHTML = symbols.map((s, i) =>
+    `<div class="sym-item" data-code="${s.stock_code}" data-exch="${s.exchange}"
+          onmousedown="pickSym('${s.stock_code}','${s.exchange}','${dropId}','${context}')">
+      <span class="sym-code">${s.stock_code}</span>
+      <span class="sym-name">${s.company_name}</span>
+      <span class="sym-exch">${s.exchange}</span>
+    </div>`
+  ).join('');
+  drop.classList.add('open');
+}
+
+function pickSym(code, exchange, dropId, context) {
+  if (context === 'tick') {
+    document.getElementById('tick-symbol-input').value = code;
+    const exSel = document.getElementById('tick-exchange-filter');
+    if (exSel && exchange) exSel.value = exchange;
+  } else {
+    document.getElementById('o-stock').value = code;
+    const exSel = document.getElementById('o-exchange');
+    if (exSel && exchange) {
+      // Map exchange to select option (NFO maps to NFO, NSE→NSE, BSE→BSE)
+      const opt = [...exSel.options].find(o => o.value === exchange);
+      if (opt) exSel.value = exchange;
+    }
+  }
+  closeSymDrop(dropId);
+}
+
+function closeSymDrop(dropId) {
+  const drop = document.getElementById(dropId);
+  if (drop) drop.classList.remove('open');
+}
+
+function symKeyNav(e, dropId, context) {
+  const drop  = document.getElementById(dropId);
+  const items = drop ? drop.querySelectorAll('.sym-item') : [];
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _symActiveIdx = Math.min(_symActiveIdx + 1, items.length - 1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _symActiveIdx = Math.max(_symActiveIdx - 1, 0);
+  } else if (e.key === 'Enter' && _symActiveIdx >= 0) {
+    e.preventDefault();
+    const item = items[_symActiveIdx];
+    if (item) pickSym(item.dataset.code, item.dataset.exch, dropId, context);
+    return;
+  } else if (e.key === 'Escape') {
+    closeSymDrop(dropId); return;
+  } else return;
+  items.forEach((it, i) => it.classList.toggle('active', i === _symActiveIdx));
+  items[_symActiveIdx]?.scrollIntoView({block:'nearest'});
+}
+
+// Close dropdowns when clicking elsewhere
+document.addEventListener('click', e => {
+  if (!e.target.closest('.sym-wrap')) {
+    document.querySelectorAll('.sym-dropdown').forEach(d => d.classList.remove('open'));
+  }
+});
+
 // ── Live Tick Pane ────────────────────────────────────────────────────────
 let _tickPaneOpen   = true;
 let _tickWatching   = '';
@@ -1857,16 +1974,11 @@ function toggleTickPane() {
   document.getElementById('tick-chevron').textContent = _tickPaneOpen ? '▼' : '►';
 }
 
-function tickSymbolChanged() {
-  const sel = document.getElementById('tick-symbol-select').value;
-  document.getElementById('tick-symbol-custom').value = sel ? '' : document.getElementById('tick-symbol-custom').value;
-}
 
 async function watchTicks() {
-  const sel    = document.getElementById('tick-symbol-select').value;
-  const custom = document.getElementById('tick-symbol-custom').value.trim().toUpperCase();
-  const symbol = custom || sel;
-  if (!symbol) { showAlert('Select or type a symbol to watch.'); return; }
+  const symbol = (document.getElementById('tick-symbol-input').value || '').trim().toUpperCase();
+  if (!symbol) { showAlert('Type or select a symbol to watch.'); return; }
+  closeSymDrop('tick-sym-drop');
 
   document.getElementById('tick-tbody').innerHTML = '';
   document.getElementById('tick-count').textContent = '';
@@ -1909,6 +2021,9 @@ async function stopTickWatch() {
   });
   document.getElementById('tick-watching-badge').textContent = '';
   document.getElementById('btn-tick-stop').style.display = 'none';
+  document.getElementById('tick-symbol-input').value = '';
+  document.getElementById('tick-tbody').innerHTML = '';
+  document.getElementById('tick-count').textContent = '';
 }
 
 function prependTick(data) {

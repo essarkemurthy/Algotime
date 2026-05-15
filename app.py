@@ -120,6 +120,10 @@ _ltp_cache: Dict[str, float] = {}
 _tick_log:   Dict[str, deque] = {}
 _tick_watch: Optional[str]    = None   # symbol currently watched in the tick pane
 
+# Symbol index — built from SDK security master after connect
+_symbol_index: List[dict] = []   # [{stock_code, company_name, token, exchange}]
+_SYMBOL_CACHE  = Path("data/symbols.json")
+
 # Rate limiter — wraps all REST calls
 _limiter = BreezeRateLimiter(per_min=75, per_day=4500)
 
@@ -352,6 +356,59 @@ async def _broadcast_loop() -> None:
             })
 
 
+# ── Symbol index ──────────────────────────────────────────────────────────────
+
+# Exchange index within token_script_dict_list
+_EXCH_IDX = {0: "BSE", 1: "NSE", 2: "NDX", 3: "MCX", 4: "NFO", 5: "BFO"}
+
+
+def _build_symbol_index() -> None:
+    """Extract NSE + BSE (+ NFO/MCX) symbols from the SDK's in-memory security master.
+    Called after generate_session() which populates token_script_dict_list."""
+    global _symbol_index
+    if not (_session and _session._api):
+        return
+    entries: List[dict] = []
+    for idx, exchange in _EXCH_IDX.items():
+        try:
+            token_dict = _session.api.token_script_dict_list[idx]
+        except (IndexError, AttributeError):
+            continue
+        for token, parts in token_dict.items():
+            if not parts:
+                continue
+            stock_code   = parts[0] if len(parts) > 0 else ""
+            company_name = parts[1] if len(parts) > 1 else ""
+            entries.append({
+                "stock_code":   stock_code,
+                "company_name": company_name,
+                "token":        token,
+                "exchange":     exchange,
+            })
+    _symbol_index = entries
+    log.info("Symbol index built: %d symbols across all exchanges.", len(entries))
+    try:
+        _SYMBOL_CACHE.parent.mkdir(exist_ok=True)
+        with open(_SYMBOL_CACHE, "w", encoding="utf-8") as f:
+            json.dump(entries, f)
+        log.info("Symbol index saved → %s", _SYMBOL_CACHE)
+    except Exception as exc:
+        log.warning("Could not save symbol index: %s", exc)
+
+
+def _load_symbol_index() -> None:
+    """Load the persisted symbol index from disk (survives server restarts)."""
+    global _symbol_index
+    if not _SYMBOL_CACHE.exists():
+        return
+    try:
+        with open(_SYMBOL_CACHE, encoding="utf-8") as f:
+            _symbol_index = json.load(f)
+        log.info("Symbol index loaded from disk: %d symbols.", len(_symbol_index))
+    except Exception as exc:
+        log.warning("Could not load symbol index: %s", exc)
+
+
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -359,6 +416,7 @@ async def lifespan(app: FastAPI):
     global _broadcast_task, _main_loop
     _main_loop      = asyncio.get_event_loop()
     _broadcast_task = asyncio.create_task(_broadcast_loop())
+    _load_symbol_index()   # load cached master from previous session if available
     log.info("Dashboard running → http://localhost:8000")
     yield
     if _broadcast_task:
@@ -447,6 +505,7 @@ async def connect(req: ConnectReq):
         _session = BreezeSession(cfg)
         await asyncio.to_thread(_session.connect)
         await asyncio.to_thread(_setup_ws_feeds)
+        await asyncio.to_thread(_build_symbol_index)   # extract from SDK security master
     except Exception as exc:
         _session = None
         raise HTTPException(500, f"Connection failed: {exc}")
@@ -1172,6 +1231,43 @@ async def paper_set_capital(body: dict):
     _paper.cash = capital
     _paper.reset()
     return {"status": "ok", "starting_capital": capital}
+
+
+# ── Symbol search ─────────────────────────────────────────────────────────────
+
+@app.get("/api/symbols")
+async def search_symbols(q: str = "", exchange: str = "", limit: int = 30):
+    """Search symbols by stock_code prefix or company name substring."""
+    q_up = q.strip().upper()
+    ex   = exchange.strip().upper()
+
+    if not q_up and not ex:
+        return {"symbols": [], "total": 0, "hint": "Provide ?q= or ?exchange="}
+
+    def _match(s: dict) -> bool:
+        if ex and s["exchange"] != ex:
+            return False
+        if q_up:
+            return s["stock_code"].startswith(q_up) or q_up in s["company_name"].upper()
+        return True
+
+    matches = [s for s in _symbol_index if _match(s)]
+    # Sort: exact stock_code match first, then prefix matches, then name matches
+    matches.sort(key=lambda s: (
+        0 if s["stock_code"] == q_up else
+        1 if s["stock_code"].startswith(q_up) else 2,
+        s["stock_code"],
+    ))
+    return {"symbols": matches[:limit], "total": len(matches)}
+
+
+@app.post("/api/symbols/refresh")
+async def refresh_symbol_index():
+    """Re-download the security master from Breeze and rebuild the index."""
+    _require_session()
+    await asyncio.to_thread(_session.api.get_stock_script_list)
+    await asyncio.to_thread(_build_symbol_index)
+    return {"status": "refreshed", "total": len(_symbol_index)}
 
 
 # ── Tick pane & on-demand subscriptions ──────────────────────────────────────
