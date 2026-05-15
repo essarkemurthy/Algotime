@@ -1883,13 +1883,16 @@ let _symActiveIdx = -1;
 async function symSearch(input, dropId, context) {
   clearTimeout(_symDebounce);
   _symDebounce = setTimeout(async () => {
-    const q  = input.value.trim();
+    const q = input.value.trim();
+    // For the order form, only filter by exchange when input is very short (code prefix mode).
+    // For longer queries (company name search), search across all exchanges so results
+    // like "Reliance Futures (NFO)" appear even if NSE is selected.
     const ex = context === 'tick'
       ? (document.getElementById('tick-exchange-filter')?.value || '')
-      : (document.getElementById('o-exchange')?.value || '');
+      : (q.length <= 6 ? (document.getElementById('o-exchange')?.value || '') : '');
     if (!q && !ex) { closeSymDrop(dropId); return; }
     try {
-      const url = `/api/symbols?q=${encodeURIComponent(q)}&exchange=${ex}&limit=20`;
+      const url = `/api/symbols?q=${encodeURIComponent(q)}&exchange=${encodeURIComponent(ex)}&limit=25`;
       const r   = await fetch(url);
       const d   = await r.json();
       renderSymDrop(d.symbols || [], dropId, input, context);
@@ -1901,29 +1904,44 @@ function renderSymDrop(symbols, dropId, input, context) {
   const drop = document.getElementById(dropId);
   if (!symbols.length) { drop.classList.remove('open'); return; }
   _symActiveIdx = -1;
-  drop.innerHTML = symbols.map((s, i) =>
-    `<div class="sym-item" data-code="${s.stock_code}" data-exch="${s.exchange}"
-          onmousedown="pickSym('${s.stock_code}','${s.exchange}','${dropId}','${context}')">
-      <span class="sym-code">${s.stock_code}</span>
+  drop.innerHTML = symbols.map((s) => {
+    const prod = s.product_type || 'Equity';
+    const prodBadge = prod === 'Equity' ? '' :
+      `<span style="font-size:10px;color:var(--yellow);margin-left:4px">${prod}</span>`;
+    return `<div class="sym-item" data-code="${s.stock_code}" data-exch="${s.exchange}" data-prod="${prod}"
+          onmousedown="pickSym('${s.stock_code}','${s.exchange}','${prod}','${dropId}','${context}')">
+      <span class="sym-code">${s.stock_code}${prodBadge}</span>
       <span class="sym-name">${s.company_name}</span>
       <span class="sym-exch">${s.exchange}</span>
-    </div>`
-  ).join('');
+    </div>`;
+  }).join('');
   drop.classList.add('open');
 }
 
-function pickSym(code, exchange, dropId, context) {
+function pickSym(code, exchange, prodType, dropId, context) {
   if (context === 'tick') {
     document.getElementById('tick-symbol-input').value = code;
     const exSel = document.getElementById('tick-exchange-filter');
-    if (exSel && exchange) exSel.value = exchange;
+    if (exSel) {
+      const matchOpt = [...exSel.options].find(o => o.value === exchange);
+      exSel.value = matchOpt ? exchange : '';
+    }
   } else {
     document.getElementById('o-stock').value = code;
     const exSel = document.getElementById('o-exchange');
-    if (exSel && exchange) {
-      // Map exchange to select option (NFO maps to NFO, NSE→NSE, BSE→BSE)
-      const opt = [...exSel.options].find(o => o.value === exchange);
-      if (opt) exSel.value = exchange;
+    if (exSel) {
+      // For Futures/Options set exchange to NFO; for Equity use the actual exchange
+      const targetExch = (prodType === 'Futures' || prodType === 'Options') ? 'NFO' : exchange;
+      const matchOpt   = [...exSel.options].find(o => o.value === targetExch);
+      if (matchOpt) exSel.value = targetExch;
+    }
+    // Auto-switch product field if present
+    const prodSel = document.getElementById('o-product');
+    if (prodSel) {
+      if (prodType === 'Futures')       prodSel.value = 'futures';
+      else if (prodType === 'Options')  prodSel.value = 'options';
+      else                              prodSel.value = 'cash';
+      prodSel.dispatchEvent(new Event('change'));
     }
   }
   closeSymDrop(dropId);
@@ -1947,7 +1965,7 @@ function symKeyNav(e, dropId, context) {
   } else if (e.key === 'Enter' && _symActiveIdx >= 0) {
     e.preventDefault();
     const item = items[_symActiveIdx];
-    if (item) pickSym(item.dataset.code, item.dataset.exch, dropId, context);
+    if (item) pickSym(item.dataset.code, item.dataset.exch, item.dataset.prod || 'Equity', dropId, context);
     return;
   } else if (e.key === 'Escape') {
     closeSymDrop(dropId); return;

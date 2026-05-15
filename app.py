@@ -363,30 +363,65 @@ _EXCH_IDX = {0: "BSE", 1: "NSE", 2: "NDX", 3: "MCX", 4: "NFO", 5: "BFO"}
 
 
 def _build_symbol_index() -> None:
-    """Extract NSE + BSE (+ NFO/MCX) symbols from the SDK's in-memory security master.
-    Called after generate_session() which populates token_script_dict_list."""
+    """Extract symbols from the SDK's in-memory security master.
+
+    NSE/BSE equity  → one entry per stock_code, token preserved.
+    NFO/BFO/MCX/NDX → deduplicated to one entry per (underlying, exchange, product_type)
+                       so the dropdown shows 'RELIANCE Futures (NFO)' instead of
+                       thousands of individual strike/expiry contracts.
+    """
     global _symbol_index
     if not (_session and _session._api):
         return
+
     entries: List[dict] = []
+    seen_derivatives: set = set()
+
     for idx, exchange in _EXCH_IDX.items():
         try:
             token_dict = _session.api.token_script_dict_list[idx]
         except (IndexError, AttributeError):
             continue
+
         for token, parts in token_dict.items():
             if not parts:
                 continue
-            stock_code   = parts[0] if len(parts) > 0 else ""
-            company_name = parts[1] if len(parts) > 1 else ""
-            entries.append({
-                "stock_code":   stock_code,
-                "company_name": company_name,
-                "token":        token,
-                "exchange":     exchange,
-            })
+            stock_code   = (parts[0] if len(parts) > 0 else "").strip()
+            company_name = (parts[1] if len(parts) > 1 else "").strip()
+            if not stock_code:
+                continue
+
+            if exchange in ("NFO", "BFO", "MCX", "NDX"):
+                # Contract format: "FUT-UNDERLYING-EXPIRY" or "OPT-UNDERLYING-EXPIRY-STRIKE-CE/PE"
+                segs = stock_code.split("-", 2)
+                prod_tag   = segs[0] if len(segs) >= 1 else "?"
+                underlying = segs[1] if len(segs) >= 2 else stock_code
+                prod_label = "Futures" if prod_tag == "FUT" else "Options" if prod_tag == "OPT" else prod_tag
+
+                key = (underlying, exchange, prod_tag)
+                if key in seen_derivatives:
+                    continue
+                seen_derivatives.add(key)
+
+                entries.append({
+                    "stock_code":   underlying,
+                    "company_name": company_name or underlying,
+                    "token":        "",
+                    "exchange":     exchange,
+                    "product_type": prod_label,
+                })
+            else:
+                entries.append({
+                    "stock_code":   stock_code,
+                    "company_name": company_name,
+                    "token":        token,
+                    "exchange":     exchange,
+                    "product_type": "Equity",
+                })
+
     _symbol_index = entries
-    log.info("Symbol index built: %d symbols across all exchanges.", len(entries))
+    log.info("Symbol index built: %d entries (%d derivative underlyings).",
+             len(entries), len(seen_derivatives))
     try:
         _SYMBOL_CACHE.parent.mkdir(exist_ok=True)
         with open(_SYMBOL_CACHE, "w", encoding="utf-8") as f:
@@ -1237,27 +1272,45 @@ async def paper_set_capital(body: dict):
 
 @app.get("/api/symbols")
 async def search_symbols(q: str = "", exchange: str = "", limit: int = 30):
-    """Search symbols by stock_code prefix or company name substring."""
-    q_up = q.strip().upper()
-    ex   = exchange.strip().upper()
+    """Search symbols by stock code or company name.
+    Supports multi-word queries — all words must appear in the name or code."""
+    words = [w for w in q.strip().upper().split() if len(w) >= 2]
+    ex    = exchange.strip().upper()
 
-    if not q_up and not ex:
+    if not words and not ex:
         return {"symbols": [], "total": 0, "hint": "Provide ?q= or ?exchange="}
 
     def _match(s: dict) -> bool:
         if ex and s["exchange"] != ex:
             return False
-        if q_up:
-            return s["stock_code"].startswith(q_up) or q_up in s["company_name"].upper()
-        return True
+        if not words:
+            return True
+        code = s["stock_code"].upper()
+        name = s["company_name"].upper()
+        # Any word is a code prefix → match
+        if any(code.startswith(w) for w in words):
+            return True
+        # All words appear somewhere in the name → match
+        if all(w in name or w in code for w in words):
+            return True
+        # Single long word is a substring of the name → match
+        if len(words) == 1 and len(words[0]) >= 4 and words[0] in name:
+            return True
+        return False
+
+    def _score(s: dict) -> tuple:
+        code  = s["stock_code"].upper()
+        name  = s["company_name"].upper()
+        first = words[0] if words else ""
+        # Equity before derivatives in mixed results
+        exch_rank = 0 if s["exchange"] in ("NSE", "BSE") else 1
+        if code == first:                        return (exch_rank, 0, code)
+        if code.startswith(first):               return (exch_rank, 1, code)
+        if words and all(w in name for w in words): return (exch_rank, 2, name)
+        return (exch_rank, 3, name)
 
     matches = [s for s in _symbol_index if _match(s)]
-    # Sort: exact stock_code match first, then prefix matches, then name matches
-    matches.sort(key=lambda s: (
-        0 if s["stock_code"] == q_up else
-        1 if s["stock_code"].startswith(q_up) else 2,
-        s["stock_code"],
-    ))
+    matches.sort(key=_score)
     return {"symbols": matches[:limit], "total": len(matches)}
 
 
