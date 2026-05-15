@@ -167,6 +167,14 @@
       </div>
       <div class="tb-sep"></div>
 
+      <!-- Data source -->
+      <div class="tb-grp">
+        <span class="ind-lbl">Source:</span>
+        <button id="src-live" onclick="setSource('live')" title="Fetch from Breeze (requires Connect)">Live</button>
+        <button id="src-db"   onclick="setSource('db')"   title="Read from local PostgreSQL DB" class="on">DB</button>
+      </div>
+      <div class="tb-sep"></div>
+
       <!-- Timeframe -->
       <div class="tb-grp">
         <button id="tfbtn-1minute"  onclick="setTF('1minute')">1m</button>
@@ -267,6 +275,7 @@ let _watchlist = JSON.parse(localStorage.getItem('chartWatchlist') || '[]');
 // Currently charted symbol
 let _active = null;   // {stock, exchange, product}
 let _activeTF = '5minute';
+let _dataSource = 'db';   // 'db' | 'live'
 
 // OHLC data: array of {time(epoch_sec), open, high, low, close, volume}
 let _candles  = [];
@@ -583,6 +592,13 @@ function setTF(tf) {
   if (_active) loadStock(_active);
 }
 
+function setSource(src) {
+  _dataSource = src;
+  document.getElementById('src-live').classList.toggle('on', src === 'live');
+  document.getElementById('src-db').classList.toggle('on',   src === 'db');
+  if (_active) loadStock(_active);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // LOAD STOCK + HISTORICAL DATA
 // ════════════════════════════════════════════════════════════════════════════
@@ -610,12 +626,22 @@ async function loadStock(w) {
     } catch(e) {}
   }
 
-  // Fetch historical OHLC
+  // Fetch historical OHLC — from DB or live Breeze depending on source toggle
   try {
-    const days = _activeTF === '1day' ? 365 : _activeTF === '30minute' ? 5 : _activeTF === '5minute' ? 2 : 1;
-    const url  = `/api/ohlc?stock=${encodeURIComponent(w.stock)}&exchange=${encodeURIComponent(w.exchange)}&product=${encodeURIComponent(w.product||'cash')}&interval=${_activeTF}&days=${days}`;
-    const r    = await fetch(url);
-    const d    = await r.json();
+    const days = _activeTF === '1day' ? 730 : _activeTF === '30minute' ? 90 : _activeTF === '5minute' ? 90 : 68;
+    let url;
+    if (_dataSource === 'db') {
+      url = `/api/ohlc/db?symbol=${encodeURIComponent(w.stock)}&interval=${_activeTF}&days=${days}`;
+    } else {
+      url = `/api/ohlc?stock=${encodeURIComponent(w.stock)}&exchange=${encodeURIComponent(w.exchange)}&product=${encodeURIComponent(w.product||'cash')}&interval=${_activeTF}&days=${days}`;
+    }
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.warning) {
+      document.getElementById('chart-loading').style.display = 'none';
+      document.getElementById('chart-loading').textContent = d.warning || 'No data';
+      document.getElementById('chart-loading').style.display = 'block';
+    }
     if (d.candles && d.candles.length) {
       _candles = d.candles.map(c => ({
         time:   _dtToEpoch(c.datetime),

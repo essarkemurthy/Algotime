@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -134,15 +134,42 @@ _TOTAL_PREMIUM_CAP: float = float(os.getenv("TOTAL_PREMIUM_CAP", "78000"))
 # ── Historical download state ─────────────────────────────────────────────────
 _download_running: bool      = False
 _download_log:     List[str] = []
-_download_status:  dict      = {"status": "idle", "current": "", "error": ""}
+_download_status:  dict      = {
+    "status":      "idle",
+    "current":     "",
+    "error":       "",
+    "done_items":  0,
+    "total_items": 0,
+    "start_ts":    0.0,
+    "eta_sec":     None,
+}
+
+_DONE_PATTERNS = (
+    ": +",       # "Spot NIFTY [1m]: +123 candles."
+    "up to date",  # "Spot NIFTY 1m up to date."
+)
 
 
 class _DownloadLogHandler(logging.Handler):
-    """Captures log records from the backfill and appends to _download_log."""
+    """Captures log records from the backfill; counts completions for ETA."""
     def emit(self, record: logging.LogRecord) -> None:
-        _download_log.append(self.format(record))
+        msg = self.format(record)
+        _download_log.append(msg)
         if len(_download_log) > 500:
             del _download_log[0]
+
+        # Count one symbol+interval done whenever the backfill logs a result line
+        if any(p in msg for p in _DONE_PATTERNS):
+            _download_status["done_items"] += 1
+            done  = _download_status["done_items"]
+            total = _download_status["total_items"]
+            elapsed = time.monotonic() - _download_status["start_ts"]
+            if done > 0 and elapsed > 0 and total > done:
+                rate = done / elapsed           # items per second
+                _download_status["eta_sec"] = int((total - done) / rate)
+            else:
+                _download_status["eta_sec"] = None
+            _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
     {"stock": "NIFTY",     "exchange": "NSE", "label": "NIFTY"},
@@ -1489,6 +1516,96 @@ async def get_quota():
     }
 
 
+# ── DB-backed OHLC (no Breeze session needed) ────────────────────────────────
+
+_BREEZE_TO_DB = {
+    "1minute": "1m", "5minute": "5m", "15minute": "15m",
+    "30minute": "30m", "1day": "1d",
+}
+
+
+@app.get("/api/ohlc/db/available")
+async def get_db_available():
+    """Return which symbols + intervals are stored in PostgreSQL."""
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        return {"data": [], "error": "DB_URL not configured"}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT symbol, "interval", COUNT(*) AS rows,
+                   MIN(ts)::date AS from_date, MAX(ts)::date AS to_date
+            FROM candles
+            GROUP BY symbol, "interval"
+            ORDER BY symbol, "interval"
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        return {
+            "data": [
+                {"symbol": r[0], "interval": r[1], "rows": r[2],
+                 "from": str(r[3]), "to": str(r[4])}
+                for r in rows
+            ]
+        }
+    except Exception as exc:
+        return {"data": [], "error": str(exc)}
+
+
+@app.get("/api/ohlc/db")
+async def get_ohlc_db(
+    symbol:   str,
+    interval: str = "5minute",
+    days:     int = 90,
+):
+    """Serve OHLC data from PostgreSQL — no Breeze session required."""
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        raise HTTPException(400, "DB_URL not configured in .env")
+
+    db_interval = _BREEZE_TO_DB.get(interval, interval)
+    from_dt = datetime.now() - timedelta(days=max(days, 1))
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT ts, open, high, low, close, volume
+            FROM candles
+            WHERE symbol = %s AND "interval" = %s AND ts >= %s
+            ORDER BY ts
+        """, (symbol.upper(), db_interval, from_dt))
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+    if not rows:
+        return {
+            "candles": [],
+            "count":   0,
+            "source":  "db",
+            "warning": f"No data in DB for {symbol.upper()} [{db_interval}]. "
+                       f"Available symbols: NIFTY, MARUTI, TCS, WIPRO, NTPC, ONGC",
+        }
+
+    candles = [
+        {
+            "datetime": r[0].strftime("%Y-%m-%d %H:%M:%S"),
+            "open":     str(r[1]),
+            "high":     str(r[2]),
+            "low":      str(r[3]),
+            "close":    str(r[4]),
+            "volume":   str(r[5]),
+        }
+        for r in rows
+    ]
+    return {"candles": candles, "count": len(candles), "source": "db"}
+
+
 # ── Historical data download ──────────────────────────────────────────────────
 
 @app.post("/api/data/download")
@@ -1522,9 +1639,24 @@ async def start_data_download(body: dict = {}):
     backfill_days       = int(body.get("backfill_days",       90))
     backfill_days_daily = int(body.get("backfill_days_daily", 730))
 
+    # Pre-calculate total work items so ETA is available from the first poll
+    from collector.config import CollectorConfig as _Cfg
+    _tmp = _Cfg(
+        api_key=api_key, api_secret=api_secret,
+        session_token=session_token, db_url=db_url,
+        backfill_days=backfill_days, backfill_days_daily=backfill_days_daily,
+    )
+    _spot_items    = len(_tmp.all_spot_symbols)  * len(_tmp.historical_intervals)
+    _futures_items = len(_tmp.futures_symbols)   * _tmp.futures_num_expiries * len(_tmp.historical_intervals)
+    _total_items   = _spot_items + _futures_items
+
     _download_running = True
     _download_log.clear()
-    _download_status.update(status="running", current="Initialising…", error="")
+    _download_status.update(
+        status="running", current="Initialising…", error="",
+        done_items=0, total_items=_total_items,
+        start_ts=time.monotonic(), eta_sec=None,
+    )
 
     def _run_download():
         global _download_running, _download_status
