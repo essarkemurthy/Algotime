@@ -74,7 +74,7 @@
 
   /* ── Connect panel ── */
   #connect-panel {
-    max-width: 440px;
+    max-width: 520px;
     margin: 40px auto;
     background: var(--bg2);
     border: 1px solid var(--border);
@@ -476,11 +476,40 @@
     <input id="session-token" type="text" placeholder="Session token from ICICI login">
   </div>
   <div style="margin-top:16px">
-    <button class="primary" onclick="apiConnect()" style="width:100%">Connect</button>
+    <button class="primary" onclick="apiConnect()" style="width:100%">Connect to Live Dashboard</button>
   </div>
   <p style="margin-top:10px;font-size:11px;color:var(--muted)">
     Credentials are sent only to your local server. Never shared externally.
   </p>
+
+  <!-- ── Download Historical Data ── -->
+  <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
+  <h2 style="margin-bottom:4px">Download Historical Data</h2>
+  <p style="font-size:11px;color:var(--muted);margin-bottom:14px">
+    Fetches OHLCV candles for all symbols and stores into PostgreSQL. Uses the credentials above.
+    Runs independently — no need to click Connect first.
+  </p>
+  <div style="display:flex;gap:10px;margin-bottom:10px">
+    <div class="form-row" style="flex:1;margin-bottom:0">
+      <label>Intraday history (days)</label>
+      <input id="dl-days" type="number" value="90" min="1" max="365" title="1m/5m/15m/30m candles">
+    </div>
+    <div class="form-row" style="flex:1;margin-bottom:0">
+      <label>Daily history (days)</label>
+      <input id="dl-days-daily" type="number" value="730" min="30" max="1825" title="1d candles (~2 years)">
+    </div>
+  </div>
+  <button id="btn-download" class="success" onclick="startDownload()" style="width:100%">
+    Download Historical Data
+  </button>
+
+  <!-- Progress area -->
+  <div id="dl-progress" style="display:none;margin-top:12px">
+    <div id="dl-status-line" style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--blue)"></div>
+    <div id="dl-log-wrap" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow-y:auto;font-family:monospace">
+      <div id="dl-log"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Main dashboard (hidden until connected) -->
@@ -1158,6 +1187,100 @@ async function apiConnect() {
 async function apiDisconnect() {
   await fetch('/api/disconnect', {method:'POST'});
   onDisconnected();
+}
+
+// ── Download Historical Data ───────────────────────────────────────────────
+let _dlPoll = null;
+
+async function startDownload() {
+  const key    = document.getElementById('api-key').value.trim();
+  const secret = document.getElementById('api-secret').value.trim();
+  const token  = document.getElementById('session-token').value.trim();
+  if (!key || !secret || !token) {
+    showAlert('Fill in API Key, API Secret, and Session Token first.'); return;
+  }
+  const days      = parseInt(document.getElementById('dl-days').value)      || 90;
+  const daysDaily = parseInt(document.getElementById('dl-days-daily').value) || 730;
+
+  const btn = document.getElementById('btn-download');
+  btn.disabled = true;
+  btn.textContent = 'Downloading…';
+
+  const prog = document.getElementById('dl-progress');
+  prog.style.display = 'block';
+  document.getElementById('dl-log').innerHTML = '';
+  const statusLine = document.getElementById('dl-status-line');
+  statusLine.style.color = 'var(--blue)';
+  statusLine.textContent = 'Starting download…';
+
+  try {
+    const r = await fetch('/api/data/download', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        api_key: key, api_secret: secret, session_token: token,
+        backfill_days: days, backfill_days_daily: daysDaily,
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      statusLine.style.color = 'var(--red)';
+      statusLine.textContent = 'Error: ' + (err.detail || 'Failed to start');
+      btn.disabled = false;
+      btn.textContent = 'Download Historical Data';
+      return;
+    }
+  } catch(e) {
+    statusLine.style.color = 'var(--red)';
+    statusLine.textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = 'Download Historical Data';
+    return;
+  }
+
+  // Poll for progress every 2 seconds
+  if (_dlPoll) clearInterval(_dlPoll);
+  _dlPoll = setInterval(pollDownload, 2000);
+}
+
+async function pollDownload() {
+  let d;
+  try {
+    const r = await fetch('/api/data/status');
+    d = await r.json();
+  } catch(e) { return; }
+
+  const statusLine = document.getElementById('dl-status-line');
+  const logEl      = document.getElementById('dl-log');
+  const wrap       = document.getElementById('dl-log-wrap');
+
+  if (d.current) statusLine.textContent = d.current;
+
+  if (d.log && d.log.length) {
+    logEl.innerHTML = d.log.map(l =>
+      `<div style="font-size:11px;color:var(--muted);padding:1px 0;white-space:pre-wrap">${escHtml(l)}</div>`
+    ).join('');
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  if (d.status !== 'running') {
+    clearInterval(_dlPoll);
+    _dlPoll = null;
+    const btn = document.getElementById('btn-download');
+    btn.disabled = false;
+    btn.textContent = 'Download Historical Data';
+    if (d.status === 'complete') {
+      statusLine.style.color = 'var(--green)';
+      statusLine.textContent = 'Download complete!';
+    } else if (d.status === 'error') {
+      statusLine.style.color = 'var(--red)';
+      statusLine.textContent = 'Error: ' + (d.error || 'unknown');
+    }
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function onConnected() {

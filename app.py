@@ -131,6 +131,19 @@ _limiter = BreezeRateLimiter(per_min=75, per_day=4500)
 _MAX_DAILY_LOSS:    float = float(os.getenv("MAX_DAILY_LOSS",    "40000"))
 _TOTAL_PREMIUM_CAP: float = float(os.getenv("TOTAL_PREMIUM_CAP", "78000"))
 
+# ── Historical download state ─────────────────────────────────────────────────
+_download_running: bool      = False
+_download_log:     List[str] = []
+_download_status:  dict      = {"status": "idle", "current": "", "error": ""}
+
+
+class _DownloadLogHandler(logging.Handler):
+    """Captures log records from the backfill and appends to _download_log."""
+    def emit(self, record: logging.LogRecord) -> None:
+        _download_log.append(self.format(record))
+        if len(_download_log) > 500:
+            del _download_log[0]
+
 WATCHLIST = [
     {"stock": "NIFTY",     "exchange": "NSE", "label": "NIFTY"},
     {"stock": "INFY",      "exchange": "NSE", "label": "INFY"},
@@ -1473,6 +1486,101 @@ async def get_quota():
         **_limiter.stats,
         "subscribed_symbols": sorted(_ws_subscriptions),
         "tick_watch":         _tick_watch,
+    }
+
+
+# ── Historical data download ──────────────────────────────────────────────────
+
+@app.post("/api/data/download")
+async def start_data_download(body: dict = {}):
+    global _download_running, _download_log, _download_status
+
+    if _download_running:
+        raise HTTPException(409, "Download already in progress — wait for it to finish.")
+
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        raise HTTPException(
+            400,
+            "DB_URL not set in .env — PostgreSQL is required to store downloaded data. "
+            "See README for setup instructions.",
+        )
+
+    api_key       = (body.get("api_key")       or "").strip()
+    api_secret    = (body.get("api_secret")     or "").strip()
+    session_token = (body.get("session_token")  or "").strip()
+
+    # Fall back to active session credentials if not provided
+    if not api_key and _session:
+        api_key       = _session.cfg.api_key
+        api_secret    = _session.cfg.api_secret
+        session_token = _session.cfg.session_token
+
+    if not all([api_key, api_secret, session_token]):
+        raise HTTPException(400, "Breeze credentials (api_key, api_secret, session_token) are required.")
+
+    backfill_days       = int(body.get("backfill_days",       90))
+    backfill_days_daily = int(body.get("backfill_days_daily", 730))
+
+    _download_running = True
+    _download_log.clear()
+    _download_status.update(status="running", current="Initialising…", error="")
+
+    def _run_download():
+        global _download_running, _download_status
+
+        # Attach a log handler so we capture backfill progress
+        handler = _DownloadLogHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s — %(message)s"))
+        backfill_logger = logging.getLogger("collector.historical")
+        backfill_logger.addHandler(handler)
+
+        try:
+            from breeze_connect import BreezeConnect
+            from collector.config import CollectorConfig
+            from collector.historical import HistoricalBackfill
+            from collector.store import DataStore
+
+            _download_status["current"] = "Connecting to Breeze…"
+            api = BreezeConnect(api_key=api_key)
+            api.generate_session(api_secret=api_secret, session_token=session_token)
+
+            _download_status["current"] = "Connecting to PostgreSQL…"
+            store = DataStore(db_url)
+
+            cfg = CollectorConfig(
+                api_key=api_key,
+                api_secret=api_secret,
+                session_token=session_token,
+                db_url=db_url,
+                backfill_days=backfill_days,
+                backfill_days_daily=backfill_days_daily,
+            )
+
+            _download_status["current"] = "Running backfill…"
+            backfill = HistoricalBackfill(api, cfg, store)
+            backfill.run()
+
+            _download_status.update(status="complete", current="Done!", error="")
+            log.info("Historical data download complete.")
+
+        except Exception as exc:
+            log.error("Historical download error: %s", exc, exc_info=True)
+            _download_status.update(status="error", current="", error=str(exc))
+        finally:
+            backfill_logger.removeHandler(handler)
+            _download_running = False
+
+    threading.Thread(target=_run_download, daemon=True, name="data-download").start()
+    return {"status": "started"}
+
+
+@app.get("/api/data/status")
+async def get_data_status():
+    return {
+        **_download_status,
+        "running": _download_running,
+        "log":     list(_download_log[-100:]),   # last 100 lines
     }
 
 
