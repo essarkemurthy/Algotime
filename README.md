@@ -23,20 +23,18 @@ A locally-run web dashboard for NSE/NFO options trading via [ICICI Direct Breeze
 ## Architecture
 
 ```
-d:\self_trading\
-├── app.py                  FastAPI server + WebSocket broadcaster
+algo-trade/
+├── main.py                 Entry point — starts FastAPI server
 ├── options_engine.py       Breeze session, order router, Greeks, strategies
-├── paper_engine.py         In-memory paper trading simulator
 ├── suggestions.py          Morning Brief — AI (Claude Haiku) or rule-based
-├── config.py               Env vars, risk limits, timing constants
-├── market_data.py          Background LTP polling loop
-├── trade_engine.py         Manual + trigger orders, algo runner
-├── risk_manager.py         Portfolio P&L tracking, daily stop alerts
-├── static/
-│   ├── index.html          Main trading dashboard
-│   └── paper.html          Paper trading simulator page
+├── collect.py              Data collector entry point
+├── trade_engine/           Algo engine package (strategies, Greeks, risk)
+├── collector/              Market data collection package
+├── data/                   IV history and collected data (auto-created)
+├── logs/                   Log output (auto-created)
 ├── requirements.txt
-├── .env                    Credentials (never committed)
+├── .env.example            Credential template
+├── .env                    Your credentials (never committed)
 └── .vscode/
     ├── launch.json         F5 launch config (opens browser automatically)
     └── settings.json       Python interpreter path
@@ -44,69 +42,94 @@ d:\self_trading\
 
 ---
 
-## Setup
+## Quick Start
 
-### 1. Prerequisites
-
-- Python 3.9 – 3.13
-- ICICI Direct Breeze API credentials — sign up at [api.icicidirect.com](https://api.icicidirect.com/)
-- A fresh **session token** each trading morning
-
-### 2. Create virtual environment
+### 1. Clone the repository
 
 ```powershell
-cd d:\self_trading
+git clone https://github.com/essarkemurthy/algo-trade.git
+cd algo-trade
+```
+
+### 2. Create and activate a virtual environment
+
+**Windows (PowerShell):**
+```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
+```
+
+**macOS / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+> If PowerShell blocks script execution, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+
+### 3. Install dependencies
+
+```powershell
 pip install -r requirements.txt
 ```
 
-### 3. Configure credentials
+### 4. Configure credentials
 
-Create a `.env` file in `d:\self_trading\` (copy from the example below):
+Copy the example env file and fill in your details:
+
+```powershell
+copy .env.example .env   # Windows
+# cp .env.example .env   # macOS/Linux
+```
+
+Edit `.env`:
 
 ```
 BREEZE_API_KEY=your_api_key_here
 BREEZE_API_SECRET=your_api_secret_here
 BREEZE_SESSION_TOKEN=your_session_token_here
 
-# Optional — AI Morning Brief (Claude Haiku). Leave blank to use rule-based fallback.
-ANTHROPIC_API_KEY=your_anthropic_key_here
+# PostgreSQL connection string (required for the data collector)
+DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
 
-# Optional — override defaults
-MAX_DAILY_LOSS=40000
-MAX_PREMIUM_PER_TRADE=20000
-TOTAL_PREMIUM_CAP=100000
+# Optional — enables AI-powered Morning Brief (Claude Haiku)
+ANTHROPIC_API_KEY=your_anthropic_key_here
 ```
 
 > **The `.env` file is listed in `.gitignore` and will never be committed to git.**
 
-### 4. Get your session token (daily)
+### 5. Get your Breeze session token (required daily)
 
 1. Go to [api.icicidirect.com](https://api.icicidirect.com/)
 2. Log in with your ICICI Direct credentials
-3. The page redirects — copy the `apisession` token from the URL
+3. After the redirect, copy the `apisession` value from the URL
 4. Paste it as `BREEZE_SESSION_TOKEN` in your `.env`
 
-The token expires at the end of each trading day. Repeat every morning before 9:15 AM.
+The token expires at the end of each trading day. Repeat every morning before 9:15 AM IST.
 
----
+### 6. Run the dashboard
 
-## Running the Dashboard
+**Option A — VS Code (recommended):**
+Open the project folder in VS Code and press **F5**. The server starts and the browser opens automatically at `http://localhost:8000`.
 
-### Option A — Press F5 in VS Code (recommended)
-
-Open `d:\self_trading` in VS Code, then press **F5**. The server starts and the browser opens automatically at `http://localhost:8000`.
-
-### Option B — Terminal
-
+**Option B — Terminal:**
 ```powershell
-cd d:\self_trading
-.venv\Scripts\Activate.ps1
-python app.py
+# Make sure your venv is active first
+.venv\Scripts\Activate.ps1        # Windows
+# source .venv/bin/activate        # macOS/Linux
+
+python main.py
 ```
 
 Then open `http://localhost:8000` in a browser.
+
+---
+
+## Prerequisites
+
+- Python 3.9 – 3.13
+- PostgreSQL (for the data collector — optional for dashboard-only use)
+- ICICI Direct Breeze API credentials — sign up at [api.icicidirect.com](https://api.icicidirect.com/)
 
 ---
 
@@ -116,7 +139,7 @@ Then open `http://localhost:8000` in a browser.
 08:45  Generate fresh session token on the Breeze portal
        Paste it as BREEZE_SESSION_TOKEN in .env
 
-09:00  Press F5 (VS Code) or: python app.py
+09:00  Press F5 (VS Code) or: python main.py
        Browser opens at http://localhost:8000
 
 09:15  Click [Connect] on the dashboard
@@ -318,18 +341,24 @@ Exit triggers (both strategies):
 ## Project Structure
 
 ```
-d:\self_trading\
-├── app.py                  FastAPI entry point; all REST + WebSocket routes
+algo-trade/
+├── main.py                 FastAPI entry point; all REST + WebSocket routes
 ├── options_engine.py       Original algo engine (BreezeSession, OrderRouter, Greeks, strategies)
-├── paper_engine.py         In-memory paper trading (PaperTrader, PaperOrder, PaperPosition)
 ├── suggestions.py          Morning Brief generator (SuggestionEngine, MorningBrief, TradeIdea)
-├── config.py               Env var loading + risk/timing constants
-├── market_data.py          Background LTP polling (PollingService, ORBTracker)
-├── trade_engine.py         Manual order, trigger order, algo runner
-├── risk_manager.py         Portfolio P&L, daily stop tracking, alert bus
-├── static/
-│   ├── index.html          Main dashboard (vanilla JS, dark theme)
-│   └── paper.html          Paper trading page (amber accent theme)
+├── collect.py              Data collector runner
+├── trade_engine/           Refactored engine package
+│   ├── config.py           Env var loading + risk/timing constants
+│   ├── models.py           Leg, Position data structures
+│   ├── session.py          BreezeSession lifecycle
+│   ├── chain.py            OptionChainFetcher
+│   ├── greeks.py           GreeksEngine + IVRankCalc
+│   ├── router.py           OrderRouter
+│   ├── risk.py             StopLossManager
+│   ├── engine.py           OptionsAlgoEngine orchestrator
+│   └── strategies/         BullPutSpread, IronCondor
+├── collector/              Market data collection (candles, spot, IV EOD)
+├── data/                   iv_history.csv and collected DB data
+├── logs/                   Runtime logs
 ├── requirements.txt        Python dependencies
 ├── .env                    Credentials — NEVER commit this file
 ├── .env.example            Template for .env
