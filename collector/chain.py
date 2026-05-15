@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import List, Optional
@@ -7,11 +8,7 @@ import numpy as np
 import pandas as pd
 
 from trade_engine.greeks import GreeksEngine
-from trade_engine.symbols import (
-    SymbolBuilder,
-    monthly_expiries,
-    weekly_expiries,
-)
+from trade_engine.symbols import SymbolBuilder, all_expiries, monthly_expiries
 
 from .config import CollectorConfig
 from .store import DataStore
@@ -23,10 +20,15 @@ class ChainSnapshotCollector:
     """
     Polls the Breeze REST API every chain_interval_sec (driven by runner schedule).
 
-    For each symbol:
-      - Fetches option chain for all near expiries (weekly or monthly, configurable N)
-      - Stores full chain (all strikes) with Greeks and bid/ask
-      - Computes and stores PCR (put-call ratio) per expiry
+    For each index symbol:
+      - Fetches the full option chain for ALL upcoming expiries
+        (8 weekly Thursdays + extra monthly expiries beyond that window)
+      - Stores full chain with bid/ask and enriched Greeks
+      - Computes and stores PCR per expiry
+
+    For each equity option symbol:
+      - Fetches monthly option chain (3 nearest monthly expiries)
+      - Same storage as index chains
     """
 
     def __init__(self, api, cfg: CollectorConfig, store: DataStore) -> None:
@@ -37,25 +39,45 @@ class ChainSnapshotCollector:
 
     def run_once(self) -> None:
         ts = datetime.now().astimezone()
+
+        # Index option chains — all upcoming expiries
         for symbol in self._cfg.symbols:
-            expiries = _pick_expiries(
+            expiries = all_expiries(
                 expiry_type=self._cfg.expiry_type(symbol),
-                n=self._cfg.chain_expiries(symbol),
+                weekly_n=self._cfg.chain_weekly_count,
+                monthly_n=self._cfg.chain_monthly_count,
             )
             for expiry in expiries:
                 try:
-                    self._snapshot(symbol, expiry, ts)
+                    self._snapshot(symbol, expiry, ts,
+                                   is_index=True,
+                                   exchange=self._cfg.nfo_exchange)
+                    time.sleep(0.3)   # gentle rate limiting between REST calls
                 except Exception as exc:
                     log.error("Chain snapshot failed %s %s: %s",
                               symbol, expiry, exc, exc_info=True)
 
+        # Equity option chains — 3 monthly expiries each
+        for symbol in self._cfg.equity_option_symbols:
+            expiries = monthly_expiries(3)
+            for expiry in expiries:
+                try:
+                    self._snapshot(symbol, expiry, ts,
+                                   is_index=False,
+                                   exchange=self._cfg.nfo_exchange)
+                    time.sleep(0.3)
+                except Exception as exc:
+                    log.error("Equity chain snapshot failed %s %s: %s",
+                              symbol, expiry, exc, exc_info=True)
+
     # ── internals ─────────────────────────────────────────────────────────────
 
-    def _snapshot(self, symbol: str, expiry: date, ts: datetime) -> None:
-        spot  = self._get_spot(symbol)
-        chain = self._fetch_chain(symbol, expiry)
+    def _snapshot(self, symbol: str, expiry: date, ts: datetime,
+                  is_index: bool, exchange: str) -> None:
+        spot  = self._get_spot(symbol, exchange if not is_index else self._cfg.nse_exchange)
+        chain = self._fetch_chain(symbol, expiry, exchange)
         if chain.empty:
-            log.warning("Empty chain for %s %s", symbol, expiry)
+            log.debug("Empty chain for %s %s — expiry may not be listed.", symbol, expiry)
             return
 
         # Optionally restrict to ATM ± depth
@@ -64,49 +86,52 @@ class ChainSnapshotCollector:
             step  = self._cfg.strike_step(symbol)
             depth = self._cfg.chain_atm_depth
             lo, hi = atm - depth * step, atm + depth * step
-            chain = chain[(chain["strike_price"] >= lo) & (chain["strike_price"] <= hi)].copy()
+            chain = chain[(chain["strike_price"] >= lo) &
+                          (chain["strike_price"] <= hi)].copy()
 
         enriched = self._ge.enrich_chain(chain, spot, expiry)
         rows     = _build_rows(enriched, symbol, expiry, ts)
-        self._store.insert_chain_snapshots(rows)
+        if rows:
+            self._store.insert_chain_snapshots(rows)
 
-        # PCR from total OI across all strikes
         self._record_pcr(symbol, expiry, ts, chain)
 
         atm = _nearest_strike(spot, chain)
         log.info("Chain: %-12s  expiry=%s  rows=%d  atm=%d  spot=%.2f",
                  symbol, expiry, len(rows), atm, spot)
 
-    def _get_spot(self, symbol: str) -> float:
+    def _get_spot(self, symbol: str, exchange: str) -> float:
         resp = self._api.get_quotes(
             stock_code=symbol,
-            exchange_code=self._cfg.nse_exchange,
+            exchange_code=exchange,
             expiry_date="",
             product_type="cash",
             right="",
             strike_price="",
         )
-        if resp.get("Status") != 200:
+        if resp.get("Status") != 200 or not resp.get("Success"):
             raise RuntimeError(f"Spot fetch failed for {symbol}: {resp}")
         return float(resp["Success"][0]["ltp"])
 
-    def _fetch_chain(self, symbol: str, expiry: date) -> pd.DataFrame:
+    def _fetch_chain(self, symbol: str, expiry: date, exchange: str) -> pd.DataFrame:
         resp = self._api.get_option_chain_quotes(
             stock_code=symbol,
-            exchange_code=self._cfg.nfo_exchange,
+            exchange_code=exchange,
             product_type="options",
             expiry_date=SymbolBuilder.breeze_dt(expiry),
             right="others",
             strike_price="0",
         )
         if resp.get("Status") != 200:
-            raise RuntimeError(f"Chain fetch failed for {symbol}: {resp}")
-        df = pd.DataFrame(resp["Success"])
-        df["strike_price"]  = df["strike_price"].astype(float).astype(int)
-        df["ltp"]           = pd.to_numeric(df["ltp"],           errors="coerce")
-        df["open_interest"] = pd.to_numeric(df["open_interest"], errors="coerce")
-        df["volume"]        = pd.to_numeric(df["volume"],        errors="coerce")
-        # bid / ask — Breeze field names
+            return pd.DataFrame()
+        success = resp.get("Success") or []
+        if not success:
+            return pd.DataFrame()
+        df = pd.DataFrame(success)
+        df["strike_price"]     = df["strike_price"].astype(float).astype(int)
+        df["ltp"]              = pd.to_numeric(df["ltp"],              errors="coerce")
+        df["open_interest"]    = pd.to_numeric(df["open_interest"],    errors="coerce")
+        df["volume"]           = pd.to_numeric(df["volume"],           errors="coerce")
         df["best_bid_price"]   = pd.to_numeric(df.get("best_bid_price",   0), errors="coerce")
         df["best_offer_price"] = pd.to_numeric(df.get("best_offer_price", 0), errors="coerce")
         df["right"]            = df["right"].str.lower().str.strip()
@@ -129,12 +154,6 @@ class ChainSnapshotCollector:
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-
-def _pick_expiries(expiry_type: str, n: int) -> List[date]:
-    if expiry_type == "weekly":
-        return weekly_expiries(n)
-    return monthly_expiries(n)
-
 
 def _nearest_strike(spot: float, chain: pd.DataFrame) -> int:
     available = chain["strike_price"].unique()

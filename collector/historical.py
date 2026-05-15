@@ -2,15 +2,18 @@
 Historical OHLCV backfill using the Breeze get_historical_data_v2 REST endpoint.
 
 Runs once on startup. For each symbol + interval combination, determines the
-last stored timestamp and fetches only the missing range, avoiding re-fetching
-data that already exists in the DB.
+last stored timestamp and fetches only the missing range (gap-fill).
 
-Rate limit: Breeze allows ~10 requests/second. We sleep 0.5s between calls.
+Intervals collected:
+  1m, 5m, 15m, 30m  — past backfill_days (default 90)
+  1d                 — past backfill_days_daily (default 730 = ~2 years)
+
+Rate limiting: 0.5 s sleep between REST calls (~120 calls/min, well within Breeze limits).
 """
 
 import logging
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from trade_engine.symbols import SymbolBuilder, monthly_expiries
@@ -20,8 +23,7 @@ from .store import DataStore
 
 log = logging.getLogger(__name__)
 
-# Map our interval names → Breeze API interval strings
-_INTERVAL_MAP = {
+_INTERVAL_TO_DB = {
     "1minute":  "1m",
     "5minute":  "5m",
     "15minute": "15m",
@@ -29,19 +31,14 @@ _INTERVAL_MAP = {
     "1day":     "1d",
 }
 
-_BREEZE_INTERVAL_MAP = {
-    "1m": "1minute",
-    "5m": "5minute",
-    "15m": "15minute",
-    "1d": "1day",
-}
+_INTRADAY_INTERVALS = {"1minute", "5minute", "15minute", "30minute"}
 
 
 class HistoricalBackfill:
     """
-    Fetches OHLCV history from Breeze REST API and inserts into:
-      - candles table (equity/index spot)
-      - futures_candles table (futures contracts)
+    Fetches OHLCV history from Breeze and inserts into:
+      - candles (equity/index spot, all intervals)
+      - futures_candles (futures contracts, all intervals)
     """
 
     def __init__(self, api, cfg: CollectorConfig, store: DataStore) -> None:
@@ -50,24 +47,33 @@ class HistoricalBackfill:
         self._store = store
 
     def run(self) -> None:
-        log.info("Starting historical backfill (past %d days)…", self._cfg.backfill_days)
-        from_dt = datetime.now() - timedelta(days=self._cfg.backfill_days)
-        to_dt   = datetime.now()
+        log.info("Starting historical backfill — intraday: %d days, daily: %d days",
+                 self._cfg.backfill_days, self._cfg.backfill_days_daily)
 
-        # Spot / index candles
+        now = datetime.now()
+
+        # Spot / index candles — all configured symbols
         for symbol in self._cfg.all_spot_symbols:
             for breeze_interval in self._cfg.historical_intervals:
-                db_interval = _INTERVAL_MAP.get(breeze_interval, breeze_interval)
-                self._backfill_spot(symbol, breeze_interval, db_interval, from_dt, to_dt)
+                db_interval = _INTERVAL_TO_DB.get(breeze_interval, breeze_interval)
+                days = (self._cfg.backfill_days_daily
+                        if breeze_interval == "1day"
+                        else self._cfg.backfill_days)
+                from_dt = now - timedelta(days=days)
+                self._backfill_spot(symbol, breeze_interval, db_interval, from_dt, now)
                 time.sleep(0.5)
 
-        # Futures candles — near-month + next-month
+        # Futures candles — all configured futures symbols × all expiries
         for symbol in self._cfg.futures_symbols:
             for expiry in monthly_expiries(self._cfg.futures_num_expiries):
                 for breeze_interval in self._cfg.historical_intervals:
-                    db_interval = _INTERVAL_MAP.get(breeze_interval, breeze_interval)
+                    db_interval = _INTERVAL_TO_DB.get(breeze_interval, breeze_interval)
+                    days = (self._cfg.backfill_days_daily
+                            if breeze_interval == "1day"
+                            else self._cfg.backfill_days)
+                    from_dt = now - timedelta(days=days)
                     self._backfill_futures(symbol, expiry, breeze_interval,
-                                          db_interval, from_dt, to_dt)
+                                           db_interval, from_dt, now)
                     time.sleep(0.5)
 
         log.info("Historical backfill complete.")
@@ -77,17 +83,16 @@ class HistoricalBackfill:
     def _backfill_spot(self, symbol: str, breeze_interval: str,
                        db_interval: str, from_dt: datetime, to_dt: datetime) -> None:
         last_ts = self._store.get_candle_last_ts(symbol, db_interval)
-        # Fetch only the gap
         fetch_from = (last_ts + timedelta(minutes=1)) if last_ts else from_dt
 
         if fetch_from >= to_dt:
-            log.debug("Spot %s %s already up to date.", symbol, db_interval)
+            log.debug("Spot %s %s up to date.", symbol, db_interval)
             return
 
-        log.info("Backfilling spot %s %s from %s…", symbol, db_interval,
-                 fetch_from.strftime("%Y-%m-%d"))
+        log.info("Backfilling spot %s [%s] from %s…",
+                 symbol, db_interval, fetch_from.strftime("%Y-%m-%d"))
 
-        rows = self._fetch_historical(
+        rows = self._fetch_in_chunks(
             stock_code=symbol,
             exchange_code=self._cfg.nse_exchange,
             product_type="cash",
@@ -95,14 +100,11 @@ class HistoricalBackfill:
             from_dt=fetch_from,
             to_dt=to_dt,
         )
-        candles = [_to_candle_row(r, symbol, db_interval) for r in rows if r]
+        candles = [_to_candle_row(r, symbol, db_interval) for r in rows]
         candles = [c for c in candles if c]
-
         if candles:
             self._store.insert_candles(candles)
-            log.info("Spot %s %s: inserted %d candles.", symbol, db_interval, len(candles))
-        else:
-            log.info("Spot %s %s: no data returned.", symbol, db_interval)
+            log.info("Spot %s [%s]: +%d candles.", symbol, db_interval, len(candles))
 
     # ── futures ───────────────────────────────────────────────────────────────
 
@@ -112,13 +114,13 @@ class HistoricalBackfill:
         fetch_from = (last_ts + timedelta(minutes=1)) if last_ts else from_dt
 
         if fetch_from >= to_dt:
-            log.debug("Futures %s %s %s already up to date.", symbol, expiry, db_interval)
+            log.debug("Futures %s %s [%s] up to date.", symbol, expiry, db_interval)
             return
 
-        log.info("Backfilling futures %s %s %s from %s…", symbol, expiry, db_interval,
-                 fetch_from.strftime("%Y-%m-%d"))
+        log.info("Backfilling futures %s %s [%s] from %s…",
+                 symbol, expiry, db_interval, fetch_from.strftime("%Y-%m-%d"))
 
-        rows = self._fetch_historical(
+        rows = self._fetch_in_chunks(
             stock_code=symbol,
             exchange_code=self._cfg.nfo_exchange,
             product_type="futures",
@@ -127,47 +129,57 @@ class HistoricalBackfill:
             to_dt=to_dt,
             expiry_date=SymbolBuilder.breeze_dt(expiry),
         )
-        candles = [_to_futures_candle_row(r, symbol, expiry, db_interval)
-                   for r in rows if r]
+        candles = [_to_futures_candle_row(r, symbol, expiry, db_interval) for r in rows]
         candles = [c for c in candles if c]
-
         if candles:
             self._store.insert_futures_candles(candles)
-            log.info("Futures %s %s %s: inserted %d candles.",
+            log.info("Futures %s %s [%s]: +%d candles.",
                      symbol, expiry, db_interval, len(candles))
-        else:
-            log.info("Futures %s %s %s: no data returned.", symbol, expiry, db_interval)
 
-    # ── Breeze REST call ──────────────────────────────────────────────────────
+    # ── Breeze REST — chunked to respect API date-range limits ───────────────
 
-    def _fetch_historical(self, stock_code: str, exchange_code: str,
-                          product_type: str, interval: str,
-                          from_dt: datetime, to_dt: datetime,
-                          expiry_date: str = "",
-                          right: str = "",
-                          strike_price: str = "") -> List[dict]:
-        try:
-            resp = self._api.get_historical_data_v2(
-                interval=interval,
-                from_date=_breeze_dt(from_dt),
-                to_date=_breeze_dt(to_dt),
-                stock_code=stock_code,
-                exchange_code=exchange_code,
-                product_type=product_type,
-                expiry_date=expiry_date,
-                right=right,
-                strike_price=strike_price,
-            )
-        except Exception as exc:
-            log.error("Historical fetch error %s %s: %s", stock_code, interval, exc)
-            return []
+    def _fetch_in_chunks(self, stock_code: str, exchange_code: str,
+                         product_type: str, interval: str,
+                         from_dt: datetime, to_dt: datetime,
+                         expiry_date: str = "",
+                         right: str = "",
+                         strike_price: str = "") -> List[dict]:
+        """
+        Breeze limits historical data to ~30 days per call for 1m data.
+        We chunk the range into 25-day windows and concatenate.
+        """
+        chunk_days = 25 if interval in _INTRADAY_INTERVALS else 365
+        all_rows: List[dict] = []
+        cursor = from_dt
 
-        if resp.get("Status") != 200:
-            log.warning("Historical fetch non-200 for %s %s: %s",
-                        stock_code, interval, resp.get("Error", ""))
-            return []
+        while cursor < to_dt:
+            end = min(cursor + timedelta(days=chunk_days), to_dt)
+            try:
+                resp = self._api.get_historical_data_v2(
+                    interval=interval,
+                    from_date=_breeze_dt(cursor),
+                    to_date=_breeze_dt(end),
+                    stock_code=stock_code,
+                    exchange_code=exchange_code,
+                    product_type=product_type,
+                    expiry_date=expiry_date,
+                    right=right,
+                    strike_price=strike_price,
+                )
+                if resp.get("Status") == 200:
+                    all_rows.extend(resp.get("Success") or [])
+                else:
+                    log.warning("Historical fetch non-200 for %s %s %s–%s: %s",
+                                stock_code, interval,
+                                cursor.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"),
+                                resp.get("Error", ""))
+            except Exception as exc:
+                log.error("Historical fetch error %s %s: %s", stock_code, interval, exc)
 
-        return resp.get("Success") or []
+            cursor = end + timedelta(minutes=1)
+            time.sleep(0.5)
+
+        return all_rows
 
 
 # ── row builders ──────────────────────────────────────────────────────────────

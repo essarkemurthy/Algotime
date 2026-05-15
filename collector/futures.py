@@ -171,10 +171,11 @@ class FuturesCollector:
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _build_expiry_map(self) -> List[Tuple[str, date]]:
-        """Returns [(symbol, expiry), ...] for all configured futures."""
+        """Returns [(symbol, expiry), ...] for all configured futures contracts."""
         result = []
+        expiries = monthly_expiries(self._cfg.futures_num_expiries)
         for symbol in self._cfg.futures_symbols:
-            for expiry in monthly_expiries(self._cfg.futures_num_expiries):
+            for expiry in expiries:
                 result.append((symbol, expiry))
         return result
 

@@ -95,3 +95,29 @@ def monthly_expiries(n: int = 2, today: Optional[date] = None) -> list:
             m = 1
             y += 1
     return result
+
+
+def all_expiries(expiry_type: str, weekly_n: int = 8,
+                 monthly_n: int = 3, today: Optional[date] = None) -> list:
+    """
+    All upcoming option expiries for a symbol, sorted and deduplicated.
+
+    For weekly-expiry symbols (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY):
+      Returns the next weekly_n Thursdays, plus any additional monthly
+      last-Thursdays that fall beyond the weekly window (up to monthly_n months
+      further out). Monthly expiries already within the weekly window are
+      included via the weekly set.
+
+    For monthly-expiry symbols:
+      Returns the next monthly_n monthly last-Thursdays.
+    """
+    if expiry_type == "monthly":
+        return monthly_expiries(max(2, monthly_n), today)
+
+    weeklies: set = set(weekly_expiries(weekly_n, today))
+    last_weekly    = max(weeklies) if weeklies else (today or date.today())
+    extra_monthlies = {
+        m for m in monthly_expiries(monthly_n + 3, today)
+        if m > last_weekly
+    }
+    return sorted(weeklies | extra_monthlies)
