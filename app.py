@@ -9,6 +9,9 @@ import asyncio
 import json
 import logging
 import os
+import threading
+import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -39,6 +42,54 @@ from paper_engine import PaperTrader
 Path("logs").mkdir(exist_ok=True)
 Path("static").mkdir(exist_ok=True)
 
+
+class BreezeRateLimiter:
+    """Thread-safe sliding-window rate limiter for Breeze REST calls.
+    Enforces 75 calls/minute and 4,500 calls/day (safe margins below ICICI limits)."""
+
+    def __init__(self, per_min: int = 75, per_day: int = 4500) -> None:
+        self._per_min   = per_min
+        self._per_day   = per_day
+        self._minute_q  = deque()
+        self._day_count = 0
+        self._day_reset = time.monotonic()
+        self._lock      = threading.Lock()
+
+    def acquire(self, label: str = "api") -> None:
+        with self._lock:
+            now = time.monotonic()
+            if now - self._day_reset > 86400:
+                self._day_count = 0
+                self._day_reset = now
+            while self._minute_q and now - self._minute_q[0] > 60:
+                self._minute_q.popleft()
+            if len(self._minute_q) >= self._per_min:
+                wait = 60 - (now - self._minute_q[0]) + 0.5
+                log.warning("Rate limit — waiting %.1fs before %s", wait, label)
+                time.sleep(wait)
+            if self._day_count >= self._per_day:
+                raise RuntimeError(
+                    f"Daily Breeze API limit exhausted ({self._day_count} calls used)"
+                )
+            self._minute_q.append(time.monotonic())
+            self._day_count += 1
+            log.debug("REST [%s] day=%d/%d min=%d/%d",
+                      label, self._day_count, self._per_day,
+                      len(self._minute_q), self._per_min)
+
+    @property
+    def stats(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            while self._minute_q and now - self._minute_q[0] > 60:
+                self._minute_q.popleft()
+            return {
+                "calls_today":      self._day_count,
+                "calls_this_min":   len(self._minute_q),
+                "day_limit":        self._per_day,
+                "min_limit":        self._per_min,
+            }
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -56,13 +107,21 @@ _algo_engine: Optional[OptionsAlgoEngine] = None
 _algo_task:  Optional[asyncio.Task]       = None
 _broadcast_task: Optional[asyncio.Task]   = None
 _trigger_tasks: Dict[str, asyncio.Task]   = {}
+_main_loop:  Optional[asyncio.AbstractEventLoop] = None
 
-_ws_subscriptions: set         = set()   # "stock|exchange|product|right|strike|expiry" keys
-_token_to_symbol:  Dict[str, str] = {}   # Breeze tick token → _ltp_cache key
+_ws_subscriptions: set            = set()   # "stock|exchange|product|right|strike|expiry" keys
+_token_to_symbol:  Dict[str, str] = {}      # Breeze tick token → _ltp_cache key
 
 _positions: List[dict] = []   # open + closed option/equity positions
 _order_log: List[dict] = []   # every order placed this session
 _ltp_cache: Dict[str, float] = {}
+
+# Tick log: per-symbol deque of the last 200 raw ticks for the tick pane
+_tick_log:   Dict[str, deque] = {}
+_tick_watch: Optional[str]    = None   # symbol currently watched in the tick pane
+
+# Rate limiter — wraps all REST calls
+_limiter = BreezeRateLimiter(per_min=75, per_day=4500)
 
 _MAX_DAILY_LOSS:    float = float(os.getenv("MAX_DAILY_LOSS",    "40000"))
 _TOTAL_PREMIUM_CAP: float = float(os.getenv("TOTAL_PREMIUM_CAP", "78000"))
@@ -172,8 +231,32 @@ def _on_tick(tick: dict) -> None:
     Runs in the SDK's socketio background thread — dict writes are GIL-safe."""
     token = tick.get("symbol", "")
     ltp   = tick.get("last")
-    if token and ltp is not None and token in _token_to_symbol:
-        _ltp_cache[_token_to_symbol[token]] = float(ltp)
+    if not (token and ltp is not None and token in _token_to_symbol):
+        return
+
+    cache_key = _token_to_symbol[token]
+    _ltp_cache[cache_key] = float(ltp)
+
+    # Build tick entry for the tick pane
+    entry = {
+        "t":      datetime.now().strftime("%H:%M:%S"),
+        "ltp":    float(ltp),
+        "change": float(tick.get("change", 0) or 0),
+        "bid":    float(tick.get("bPrice", 0) or 0),
+        "ask":    float(tick.get("sPrice", 0) or 0),
+        "ltq":    int(tick.get("ltq", 0) or 0),
+        "oi":     int(tick.get("OI", 0) or 0),
+    }
+    if cache_key not in _tick_log:
+        _tick_log[cache_key] = deque(maxlen=200)
+    _tick_log[cache_key].appendleft(entry)
+
+    # Push to UI clients watching this symbol in the tick pane
+    if cache_key == _tick_watch and _main_loop:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": "tick", "symbol": cache_key, "data": entry}),
+            _main_loop,
+        )
 
 
 def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
@@ -246,14 +329,19 @@ def _setup_ws_feeds() -> None:
 
 
 async def _broadcast_loop() -> None:
-    """Push LTP + P&L snapshots to all UI clients every second."""
+    """Push LTP + P&L snapshots to all UI clients every second.
+    Also broadcasts quota stats every 10 seconds."""
+    _tick = 0
     while True:
         await asyncio.sleep(1)
+        _tick += 1
         if not _ltp_cache:
             continue
         pnl_data = _compute_pnl()
         await broadcast({"type": "ltp", "data": _ltp_cache.copy()})
         await broadcast({"type": "pnl", "data": pnl_data})
+        if _tick % 10 == 0:
+            await broadcast({"type": "quota", "data": _limiter.stats})
         if pnl_data["total_pnl"] < -(_MAX_DAILY_LOSS * 0.80):
             await broadcast({
                 "type":    "alert",
@@ -268,7 +356,8 @@ async def _broadcast_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _broadcast_task
+    global _broadcast_task, _main_loop
+    _main_loop      = asyncio.get_event_loop()
     _broadcast_task = asyncio.create_task(_broadcast_loop())
     log.info("Dashboard running → http://localhost:8000")
     yield
@@ -399,15 +488,35 @@ async def place_manual_order(req: ManualOrderReq):
     expiry_obj = date.fromisoformat(req.expiry) if req.expiry else date.today()
     right_str  = ("call" if req.right == "CE" else "put") if req.right else ""
 
+    # SEBI rule: all orders must be LIMIT type.
+    # For "market" requests, compute a ±0.5% buffer price from latest LTP.
+    symbol_for_ltp = (
+        SymbolBuilder.build(req.stock_code, expiry_obj, req.strike, req.right, "monthly")
+        if req.product == "options" and req.strike and req.right
+        else req.stock_code
+    )
+    if req.order_type == "market":
+        ltp_now = _ltp_cache.get(symbol_for_ltp, _ltp_cache.get(req.stock_code, 0.0))
+        if ltp_now <= 0:
+            raise HTTPException(
+                400,
+                "No live LTP available for market-to-limit conversion. "
+                "Use a limit order and enter the price manually.",
+            )
+        buf      = 1.005 if req.action == "buy" else 0.995
+        limit_px = round(ltp_now * buf, 2)
+    else:
+        limit_px = req.price
+
     kwargs: dict = dict(
         stock_code         = req.stock_code,
         exchange_code      = req.exchange_code,
         product            = req.product,
         action             = req.action,
-        order_type         = req.order_type,
+        order_type         = "limit",   # always limit (SEBI mandate)
         stoploss           = "0",
         quantity           = str(req.quantity),
-        price              = str(req.price) if req.order_type == "limit" else "0",
+        price              = str(limit_px),
         validity           = "day",
         validity_date      = SymbolBuilder.breeze_dt(date.today()),
         disclosed_quantity = "0",
@@ -422,26 +531,19 @@ async def place_manual_order(req: ManualOrderReq):
         kwargs.update(expiry_date="", right="", strike_price="")
 
     try:
+        await asyncio.to_thread(_limiter.acquire, "place_order")
         resp = await asyncio.to_thread(_session.api.place_order, **kwargs)
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc))
     except Exception as exc:
         raise HTTPException(500, str(exc))
 
     if resp.get("Status") != 200:
         raise HTTPException(400, f"Breeze rejected order: {resp}")
 
-    order_id = resp["Success"]["order_id"]
-
-    symbol = (
-        SymbolBuilder.build(req.stock_code, expiry_obj, req.strike, req.right, "monthly")
-        if req.product == "options" and req.strike and req.right
-        else req.stock_code
-    )
-
-    # Use last known LTP as entry price for market orders
-    entry_price = (
-        req.price if req.order_type == "limit"
-        else _ltp_cache.get(symbol, _ltp_cache.get(req.stock_code, 0.0))
-    )
+    order_id    = resp["Success"]["order_id"]
+    symbol      = symbol_for_ltp   # already computed above
+    entry_price = limit_px         # always a limit price
 
     pos = {
         "symbol":      symbol,
@@ -477,6 +579,7 @@ async def place_manual_order(req: ManualOrderReq):
 @app.delete("/api/order/{order_id}")
 async def cancel_order(order_id: str, exchange_code: str = "NFO"):
     _require_session()
+    await asyncio.to_thread(_limiter.acquire, "cancel_order")
     resp = await asyncio.to_thread(
         _session.api.cancel_order,
         exchange_code=exchange_code,
@@ -718,6 +821,7 @@ async def get_breeze_orders():
     warning    = None
     for exch in ("NSE", "NFO"):
         try:
+            await asyncio.to_thread(_limiter.acquire, f"get_order_list_{exch}")
             resp = await asyncio.to_thread(
                 _session.api.get_order_list,
                 exchange_code=exch,
@@ -744,6 +848,7 @@ async def get_breeze_positions():
     """Fetch current portfolio positions from Breeze."""
     _require_session()
     try:
+        await asyncio.to_thread(_limiter.acquire, "get_portfolio_positions")
         resp = await asyncio.to_thread(_session.api.get_portfolio_positions)
     except Exception as exc:
         return {"positions": [], "warning": str(exc)}
@@ -756,6 +861,7 @@ async def get_breeze_positions():
 @app.post("/api/breeze/orders/{order_id}/cancel")
 async def cancel_breeze_order(order_id: str, exchange_code: str = "NFO"):
     _require_session()
+    await asyncio.to_thread(_limiter.acquire, "cancel_order")
     resp = await asyncio.to_thread(
         _session.api.cancel_order,
         exchange_code=exchange_code,
@@ -1066,6 +1172,63 @@ async def paper_set_capital(body: dict):
     _paper.cash = capital
     _paper.reset()
     return {"status": "ok", "starting_capital": capital}
+
+
+# ── Tick pane & on-demand subscriptions ──────────────────────────────────────
+
+class SubscribeReq(BaseModel):
+    stock_code:    str
+    exchange_code: str           = "NSE"
+    product_type:  str           = "cash"
+    right:         str           = ""
+    strike:        str           = ""
+    expiry_date:   str           = ""
+
+
+@app.post("/api/ticks/watch")
+async def set_tick_watch(body: dict):
+    """Set which symbol the tick pane is watching. Returns recent tick history."""
+    global _tick_watch
+    symbol = (body.get("symbol") or "").upper().strip()
+    _tick_watch = symbol or None
+    history = list(_tick_log.get(symbol, []))[:100]
+    return {"symbol": symbol, "watching": bool(symbol), "history": history}
+
+
+@app.get("/api/ticks/{symbol}")
+async def get_tick_history(symbol: str):
+    """Return the last 200 ticks stored for a subscribed symbol."""
+    key  = symbol.upper()
+    data = list(_tick_log.get(key, []))
+    return {"symbol": key, "count": len(data), "ticks": data}
+
+
+@app.post("/api/subscribe")
+async def subscribe_on_demand(req: SubscribeReq):
+    """Subscribe to a Breeze WebSocket feed for any symbol on demand."""
+    _require_session()
+    cache_key = req.stock_code.upper()
+    await asyncio.to_thread(
+        _ws_subscribe,
+        req.stock_code.upper(),
+        req.exchange_code,
+        req.product_type,
+        req.right.lower() if req.right else "",
+        req.strike,
+        req.expiry_date,
+        cache_key,
+    )
+    return {"subscribed": cache_key, "all": list(_ws_subscriptions)}
+
+
+@app.get("/api/quota")
+async def get_quota():
+    """Return Breeze REST call usage stats and current subscriptions."""
+    return {
+        **_limiter.stats,
+        "subscribed_symbols": sorted(_ws_subscriptions),
+        "tick_watch":         _tick_watch,
+    }
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

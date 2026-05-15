@@ -348,6 +348,35 @@
     background: var(--bg3); color: var(--muted); cursor: pointer; font-size: 12px;
   }
   .ob-tab.active { background: var(--accent); border-color: var(--blue); color: #fff; }
+
+  /* ── Tick Pane ── */
+  .tick-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .tick-controls select, .tick-controls input[type=text] {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; height: 28px;
+  }
+  #tick-table-wrap {
+    max-height: 280px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;
+  }
+  #tick-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #tick-table th {
+    background: var(--bg3); color: var(--muted); padding: 5px 8px;
+    text-align: right; position: sticky; top: 0; font-weight: 600;
+  }
+  #tick-table th:first-child { text-align: left; }
+  #tick-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+  #tick-table td:first-child { text-align: left; font-family: monospace; color: var(--muted); }
+  #tick-table tr:first-child td { background: rgba(31,111,235,.12); }
+  .tick-new { animation: tick-flash .4s ease; }
+  @keyframes tick-flash { from { background: rgba(88,166,255,.25); } to {} }
+  .quota-bar {
+    display: flex; align-items: center; gap: 12px; margin-top: 10px;
+    padding: 6px 10px; background: var(--bg3); border-radius: 6px; font-size: 11px;
+    color: var(--muted);
+  }
+  .quota-seg { display: flex; align-items: center; gap: 4px; }
+  .quota-fill { height: 6px; border-radius: 3px; background: var(--accent); min-width: 4px; }
+  .quota-track { height: 6px; border-radius: 3px; background: var(--border); width: 80px; overflow: hidden; }
 </style>
 </head>
 <body>
@@ -414,6 +443,56 @@
       <div class="label">MAXHEALTH</div>
       <div class="value" id="ltp-MAXHEALTH">—</div>
       <div class="change" id="chg-MAXHEALTH"></div>
+    </div>
+  </div>
+
+  <!-- Live Ticks -->
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="cursor:pointer;user-select:none" onclick="toggleTickPane()">
+      📊 Live Ticks <span id="tick-chevron">▼</span>
+      <span id="tick-watching-badge" style="font-size:11px;font-weight:400;color:var(--blue);margin-left:8px"></span>
+    </h3>
+    <div id="tick-pane">
+      <div class="tick-controls">
+        <select id="tick-symbol-select" onchange="tickSymbolChanged()">
+          <option value="">— select symbol —</option>
+          <option value="NIFTY">NIFTY</option>
+          <option value="INFY">INFY</option>
+          <option value="ONGC">ONGC</option>
+          <option value="MAXHEALTH">MAXHEALTH</option>
+        </select>
+        <input type="text" id="tick-symbol-custom" placeholder="or type symbol…" style="width:140px"
+               onkeydown="if(event.key==='Enter')watchTicks()">
+        <button class="primary" onclick="watchTicks()">Watch</button>
+        <button onclick="stopTickWatch()" id="btn-tick-stop" style="display:none">Stop</button>
+        <span id="tick-count" style="color:var(--muted);font-size:11px;margin-left:4px"></span>
+      </div>
+      <div id="tick-table-wrap">
+        <table id="tick-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>LTP</th>
+              <th>Change</th>
+              <th>Bid</th>
+              <th>Ask</th>
+              <th>LTQ</th>
+              <th>OI</th>
+            </tr>
+          </thead>
+          <tbody id="tick-tbody"></tbody>
+        </table>
+      </div>
+      <div class="quota-bar" id="quota-bar" style="display:none">
+        <span class="quota-seg">
+          REST today:&nbsp;<strong id="q-day">0</strong>&nbsp;/&nbsp;4500
+          <span class="quota-track"><span class="quota-fill" id="q-day-fill" style="width:0%"></span></span>
+        </span>
+        <span class="quota-seg">
+          /min:&nbsp;<strong id="q-min">0</strong>&nbsp;/&nbsp;75
+          <span class="quota-track"><span class="quota-fill" id="q-min-fill" style="width:0%"></span></span>
+        </span>
+      </div>
     </div>
   </div>
 
@@ -987,11 +1066,13 @@ function handleMsg(msg) {
     if (msg.pnl)    updatePnl(msg.pnl);
     if (msg.orders) msg.orders.forEach(appendOrderLog);
   }
-  if (msg.type === 'ltp')    updateLTPs(msg.data);
-  if (msg.type === 'pnl')    updatePnl(msg.data);
-  if (msg.type === 'order')  appendOrderLog(msg.data);
+  if (msg.type === 'ltp')      updateLTPs(msg.data);
+  if (msg.type === 'pnl')      updatePnl(msg.data);
+  if (msg.type === 'order')    appendOrderLog(msg.data);
   if (msg.type === 'alert')    showAlert(msg.message);
   if (msg.type === 'research') appendResearchRow(msg.data);
+  if (msg.type === 'tick')     prependTick(msg.data);
+  if (msg.type === 'quota')    updateQuota(msg.data);
   if (msg.type === 'status') {
     if (msg.connected) onConnected(); else onDisconnected();
   }
@@ -1763,6 +1844,111 @@ async function skipSuggestion(id) {
         '<span class="trade-status-label status-skipped">Skipped</span>';
     }
   } catch(e) { showAlert('Error: ' + e.message); }
+}
+
+// ── Live Tick Pane ────────────────────────────────────────────────────────
+let _tickPaneOpen   = true;
+let _tickWatching   = '';
+const MAX_TICK_ROWS = 100;
+
+function toggleTickPane() {
+  _tickPaneOpen = !_tickPaneOpen;
+  document.getElementById('tick-pane').style.display = _tickPaneOpen ? '' : 'none';
+  document.getElementById('tick-chevron').textContent = _tickPaneOpen ? '▼' : '►';
+}
+
+function tickSymbolChanged() {
+  const sel = document.getElementById('tick-symbol-select').value;
+  document.getElementById('tick-symbol-custom').value = sel ? '' : document.getElementById('tick-symbol-custom').value;
+}
+
+async function watchTicks() {
+  const sel    = document.getElementById('tick-symbol-select').value;
+  const custom = document.getElementById('tick-symbol-custom').value.trim().toUpperCase();
+  const symbol = custom || sel;
+  if (!symbol) { showAlert('Select or type a symbol to watch.'); return; }
+
+  document.getElementById('tick-tbody').innerHTML = '';
+  document.getElementById('tick-count').textContent = '';
+  _tickWatching = symbol;
+
+  try {
+    const r = await fetch('/api/ticks/watch', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({symbol}),
+    });
+    const d = await r.json();
+    document.getElementById('tick-watching-badge').textContent = `Watching: ${symbol}`;
+    document.getElementById('btn-tick-stop').style.display = '';
+    document.getElementById('quota-bar').style.display = '';
+
+    // If not yet subscribed, subscribe via WS feed
+    if (d.history.length === 0) {
+      await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({stock_code: symbol, exchange_code: 'NSE'}),
+      });
+    }
+
+    // Render history (most recent first)
+    if (d.history.length) {
+      d.history.forEach(tick => appendTickRow(tick, false));
+      document.getElementById('tick-count').textContent = `${d.history.length} ticks`;
+    }
+  } catch(e) { showAlert('Tick watch error: ' + e.message); }
+}
+
+async function stopTickWatch() {
+  _tickWatching = '';
+  await fetch('/api/ticks/watch', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: ''}),
+  });
+  document.getElementById('tick-watching-badge').textContent = '';
+  document.getElementById('btn-tick-stop').style.display = 'none';
+}
+
+function prependTick(data) {
+  if (!_tickWatching) return;
+  appendTickRow(data, true);
+}
+
+function appendTickRow(tick, highlight) {
+  const tbody = document.getElementById('tick-tbody');
+  // Remove oldest rows beyond MAX_TICK_ROWS
+  while (tbody.rows.length >= MAX_TICK_ROWS) tbody.deleteRow(tbody.rows.length - 1);
+
+  const chg    = tick.change || 0;
+  const chgCls = chg >= 0 ? 'color:var(--green)' : 'color:var(--red)';
+  const tr     = document.createElement('tr');
+  if (highlight) tr.className = 'tick-new';
+  tr.innerHTML = `
+    <td>${tick.t}</td>
+    <td style="font-weight:600">${tick.ltp.toFixed(2)}</td>
+    <td style="${chgCls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}</td>
+    <td style="color:var(--green)">${tick.bid.toFixed(2)}</td>
+    <td style="color:var(--red)">${tick.ask.toFixed(2)}</td>
+    <td>${tick.ltq.toLocaleString()}</td>
+    <td style="color:var(--muted)">${tick.oi ? tick.oi.toLocaleString() : '—'}</td>
+  `;
+  tbody.insertBefore(tr, tbody.firstChild);
+  const cnt = tbody.rows.length;
+  document.getElementById('tick-count').textContent = `${cnt} tick${cnt !== 1 ? 's' : ''}`;
+}
+
+function updateQuota(data) {
+  document.getElementById('quota-bar').style.display = '';
+  document.getElementById('q-day').textContent = data.calls_today || 0;
+  document.getElementById('q-min').textContent = data.calls_this_min || 0;
+  const dayPct = Math.min(100, ((data.calls_today || 0) / (data.day_limit || 4500)) * 100);
+  const minPct = Math.min(100, ((data.calls_this_min || 0) / (data.min_limit || 75)) * 100);
+  document.getElementById('q-day-fill').style.width = dayPct + '%';
+  document.getElementById('q-min-fill').style.width = minPct + '%';
+  document.getElementById('q-day-fill').style.background =
+    dayPct > 80 ? 'var(--red)' : dayPct > 50 ? 'var(--yellow)' : 'var(--accent)';
 }
 
 // ── Init: check if already connected ──────────────────────────────────────
