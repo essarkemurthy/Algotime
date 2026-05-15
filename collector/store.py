@@ -87,10 +87,10 @@ class DataStore:
 
     def insert_candle(self, row: Dict) -> None:
         self._exec(
-            """INSERT INTO candles (ts, symbol, interval, open, high, low, close, volume)
+            """INSERT INTO candles (ts, symbol, "interval", open, high, low, close, volume)
                VALUES (%(ts)s, %(symbol)s, %(interval)s,
                        %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
-               ON CONFLICT (symbol, interval, ts) DO UPDATE
+               ON CONFLICT (symbol, "interval", ts) DO UPDATE
                SET open   = EXCLUDED.open,
                    high   = GREATEST(candles.high, EXCLUDED.high),
                    low    = LEAST(candles.low,     EXCLUDED.low),
@@ -105,7 +105,7 @@ class DataStore:
 
     def get_candle_last_ts(self, symbol: str, interval: str) -> Optional[datetime]:
         row = self._queryone(
-            "SELECT MAX(ts) FROM candles WHERE symbol=%s AND interval=%s",
+            'SELECT MAX(ts) FROM candles WHERE symbol=%s AND "interval"=%s',
             (symbol, interval),
         )
         return row[0] if row else None
@@ -125,11 +125,11 @@ class DataStore:
     def insert_futures_candle(self, row: Dict) -> None:
         self._exec(
             """INSERT INTO futures_candles
-                   (ts, symbol, expiry, interval, open, high, low, close, volume)
+                   (ts, symbol, expiry, "interval", open, high, low, close, volume)
                VALUES
                    (%(ts)s, %(symbol)s, %(expiry)s, %(interval)s,
                     %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
-               ON CONFLICT (symbol, expiry, interval, ts) DO UPDATE
+               ON CONFLICT (symbol, expiry, "interval", ts) DO UPDATE
                SET open   = EXCLUDED.open,
                    high   = GREATEST(futures_candles.high, EXCLUDED.high),
                    low    = LEAST(futures_candles.low,     EXCLUDED.low),
@@ -145,8 +145,7 @@ class DataStore:
     def get_futures_candle_last_ts(self, symbol: str, expiry: date,
                                    interval: str) -> Optional[datetime]:
         row = self._queryone(
-            """SELECT MAX(ts) FROM futures_candles
-               WHERE symbol=%s AND expiry=%s AND interval=%s""",
+            'SELECT MAX(ts) FROM futures_candles WHERE symbol=%s AND expiry=%s AND "interval"=%s',
             (symbol, expiry, interval),
         )
         return row[0] if row else None
@@ -156,7 +155,7 @@ class DataStore:
     def insert_chain_snapshots(self, rows: List[Dict]) -> None:
         self._execmany(
             """INSERT INTO chain_snapshots
-                   (ts, symbol, expiry, strike, right,
+                   (ts, symbol, expiry, strike, "right",
                     ltp, bid, ask, oi, volume, iv, delta, gamma, theta, vega)
                VALUES
                    (%(ts)s, %(symbol)s, %(expiry)s, %(strike)s, %(right)s,
@@ -227,7 +226,7 @@ class DataStore:
             WHERE  cs.symbol = %s
               AND  cs.expiry = %s
               AND  cs.ts     = last_ts.max_ts
-              AND  cs.right  = 'CE'
+              AND  cs."right"  = 'CE'
               AND  cs.iv     IS NOT NULL
               AND  cs.delta  IS NOT NULL
             ORDER BY ABS(cs.delta - 0.5)

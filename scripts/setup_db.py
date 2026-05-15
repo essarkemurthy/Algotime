@@ -40,15 +40,15 @@ CREATE INDEX IF NOT EXISTS idx_spot_ticks_sym_ts ON spot_ticks (symbol, ts DESC)
 CREATE TABLE IF NOT EXISTS candles (
     ts       TIMESTAMPTZ   NOT NULL,
     symbol   TEXT          NOT NULL,
-    interval TEXT          NOT NULL,
+    "interval" TEXT        NOT NULL,
     open     NUMERIC(10,2),
     high     NUMERIC(10,2),
     low      NUMERIC(10,2),
     close    NUMERIC(10,2),
     volume   BIGINT,
-    PRIMARY KEY (symbol, interval, ts)
+    PRIMARY KEY (symbol, "interval", ts)
 );
-CREATE INDEX IF NOT EXISTS idx_candles_sym_iv_ts ON candles (symbol, interval, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_candles_sym_iv_ts ON candles (symbol, "interval", ts DESC);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Futures ticks: WebSocket price events for futures contracts
@@ -72,16 +72,16 @@ CREATE TABLE IF NOT EXISTS futures_candles (
     ts       TIMESTAMPTZ   NOT NULL,
     symbol   TEXT          NOT NULL,
     expiry   DATE          NOT NULL,
-    interval TEXT          NOT NULL,
+    "interval" TEXT        NOT NULL,
     open     NUMERIC(10,2),
     high     NUMERIC(10,2),
     low      NUMERIC(10,2),
     close    NUMERIC(10,2),
     volume   BIGINT,
-    PRIMARY KEY (symbol, expiry, interval, ts)
+    PRIMARY KEY (symbol, expiry, "interval", ts)
 );
 CREATE INDEX IF NOT EXISTS idx_fcandles_sym_exp_iv_ts
-    ON futures_candles (symbol, expiry, interval, ts DESC);
+    ON futures_candles (symbol, expiry, "interval", ts DESC);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Option chain snapshots: every 5 min, all strikes, all near expiries
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS chain_snapshots (
     symbol  TEXT          NOT NULL,
     expiry  DATE          NOT NULL,
     strike  INTEGER       NOT NULL,
-    right   CHAR(2)       NOT NULL,
+    "right" CHAR(2)       NOT NULL,
     ltp     NUMERIC(10,2),
     bid     NUMERIC(10,2),
     ask     NUMERIC(10,2),
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS chain_snapshots (
     gamma   NUMERIC(10,8),
     theta   NUMERIC(8,6),
     vega    NUMERIC(8,6),
-    PRIMARY KEY (ts, symbol, expiry, strike, right)
+    PRIMARY KEY (ts, symbol, expiry, strike, "right")
 );
 CREATE INDEX IF NOT EXISTS idx_chain_sym_expiry_strike
     ON chain_snapshots (symbol, expiry, strike, ts DESC);
@@ -176,7 +176,7 @@ def main() -> None:
             """)
             print("Tables ready:")
             for (name,) in cur.fetchall():
-                print(f"  ✓ {name}")
+                print(f"  [ok] {name}")
     finally:
         conn.close()
 
