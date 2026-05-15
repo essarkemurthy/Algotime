@@ -14,31 +14,35 @@ log = logging.getLogger(__name__)
 
 class SpotTickCollector:
     """
-    Subscribes to Breeze WebSocket feeds for all configured symbols (cash/spot).
-    Ticks are pushed into a thread-safe queue by the SDK callback, then drained
-    by a consumer thread that batches DB writes and builds 1-minute candles.
+    Subscribes to Breeze WebSocket feeds for all configured spot symbols.
+
+    ws_connect() and on_ticks assignment are handled by the runner's
+    TickMultiplexer — this class only subscribes to feeds and processes ticks.
+
+    Ticks are enqueued by enqueue_tick() (called from the multiplexer) and
+    drained by a consumer thread that batches DB writes and builds 1m candles.
     """
 
     def __init__(self, api, cfg: CollectorConfig, store: DataStore) -> None:
         self._api     = api
         self._cfg     = cfg
         self._store   = store
-        self._q: queue.Queue = queue.Queue(maxsize=50_000)
-        self._candles = CandleBuilder()
+        self._q: queue.Queue = queue.Queue(maxsize=100_000)
+        self._candles = CandleBuilder(interval="1m")
         self._running = False
         self._thread: threading.Thread | None = None
 
     # ── public ────────────────────────────────────────────────────────────────
 
     def start(self) -> None:
+        """Subscribe to Breeze feeds for all spot symbols and start consumer."""
         self._running = True
-        self._api.on_ticks = self._on_tick
-        self._api.ws_connect()
-        for symbol in self._cfg.symbols:
+        for symbol in self._cfg.all_spot_symbols:
+            exchange = self._cfg.nse_exchange
             try:
                 self._api.subscribe_feeds(
                     stock_code=symbol,
-                    exchange_code=self._cfg.nse_exchange,
+                    exchange_code=exchange,
                     product_type="cash",
                     get_exchange_quotes=True,
                     get_market_depth=False,
@@ -54,7 +58,7 @@ class SpotTickCollector:
 
     def stop(self) -> None:
         self._running = False
-        for symbol in self._cfg.symbols:
+        for symbol in self._cfg.all_spot_symbols:
             try:
                 self._api.unsubscribe_feeds(
                     stock_code=symbol,
@@ -65,19 +69,17 @@ class SpotTickCollector:
                 pass
         if self._thread:
             self._thread.join(timeout=5)
-        # flush any incomplete candles before shutdown
         leftovers = self._candles.flush_all()
         if leftovers:
             self._store.insert_candles(leftovers)
-            log.info("Flushed %d incomplete candles at shutdown.", len(leftovers))
+            log.info("Flushed %d incomplete spot candles at shutdown.", len(leftovers))
 
-    # ── WebSocket callback (runs in SDK thread) ───────────────────────────────
-
-    def _on_tick(self, tick: dict) -> None:
+    def enqueue_tick(self, tick: dict) -> None:
+        """Called by the TickMultiplexer for every WebSocket message."""
         try:
             self._q.put_nowait(tick)
         except queue.Full:
-            log.warning("Tick queue full — dropping tick.")
+            log.warning("Spot tick queue full — dropping tick.")
 
     # ── consumer thread ───────────────────────────────────────────────────────
 
@@ -93,7 +95,6 @@ class SpotTickCollector:
             if batch:
                 self._flush(batch)
 
-        # drain any remaining ticks after stop()
         remaining: List[dict] = []
         while not self._q.empty():
             try:
@@ -104,14 +105,17 @@ class SpotTickCollector:
             self._flush(remaining)
 
     def _flush(self, batch: List[dict]) -> None:
+        spot_symbols = set(self._cfg.all_spot_symbols)
         tick_rows: List[dict] = []
 
         for raw in batch:
             symbol = raw.get("stock_code", "")
-            if symbol not in self._cfg.symbols:
+            if symbol not in spot_symbols:
+                continue
+            # skip futures/options ticks that arrive on the shared callback
+            if raw.get("product_type", "cash") not in ("cash", ""):
                 continue
 
-            # Breeze field names vary slightly across versions — try both
             ltp    = raw.get("last", raw.get("ltp", None))
             volume = raw.get("total_quantity_traded", raw.get("volume", 0))
             ts_raw = raw.get("datetime", None)
@@ -130,12 +134,12 @@ class SpotTickCollector:
                 "ltp": ltp, "volume": int(volume or 0),
             })
 
-            completed = self._candles.update(symbol, ts, ltp, int(volume or 0))
+            completed = self._candles.update(symbol, symbol, ts, ltp, int(volume or 0))
             if completed:
                 try:
                     self._store.insert_candle(completed)
                 except Exception as exc:
-                    log.error("Candle insert error: %s", exc)
+                    log.error("Spot candle insert error: %s", exc)
 
         if tick_rows:
             try:

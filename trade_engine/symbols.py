@@ -73,3 +73,25 @@ def nearest_monthly_expiry(today: Optional[date] = None) -> date:
     m = (today.month % 12) + 1
     y = today.year + (1 if today.month == 12 else 0)
     return _last_thursday(y, m)
+
+
+def weekly_expiries(n: int = 2, today: Optional[date] = None) -> list:
+    """Returns n upcoming weekly option expiries (Thursdays)."""
+    first = nearest_weekly_expiry(today)
+    return [first + timedelta(weeks=i) for i in range(n)]
+
+
+def monthly_expiries(n: int = 2, today: Optional[date] = None) -> list:
+    """Returns n upcoming monthly expiries (last Thursdays of calendar months)."""
+    today = today or date.today()
+    result: list = []
+    y, m = today.year, today.month
+    while len(result) < n:
+        exp = _last_thursday(y, m)
+        if exp >= today:
+            result.append(exp)
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return result

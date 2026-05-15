@@ -4,32 +4,35 @@ from typing import Dict, Optional
 
 class CandleBuilder:
     """
-    Aggregates raw spot ticks into 1-minute OHLCV candles entirely in memory.
-    One open candle per symbol at any time.
-    Returns a completed candle dict when the minute rolls over.
+    Aggregates raw price ticks into OHLCV candles entirely in memory.
+    One open candle per key at any time. Returns a completed candle dict
+    when the minute rolls over.
+
+    The key is anything hashable: a symbol string for spot, or a
+    (symbol, expiry) tuple for futures.
     """
 
-    def __init__(self) -> None:
-        self._open: Dict[str, dict] = {}
+    def __init__(self, interval: str = "1m") -> None:
+        self._open: Dict = {}
+        self._interval   = interval
 
-    def update(
-        self, symbol: str, ts: datetime, ltp: float, volume: int
-    ) -> Optional[dict]:
+    def update(self, key, symbol: str, ts: datetime, ltp: float, volume: int,
+               extra: Optional[dict] = None) -> Optional[dict]:
         """
-        Feed a tick. Returns a completed candle if the minute just rolled over, else None.
-        The completed candle should be written to the DB by the caller.
+        Feed a tick. Returns a completed candle if the minute rolled over, else None.
+        extra: additional fields to include in the candle dict (e.g. expiry for futures).
         """
         candle_ts = ts.replace(second=0, microsecond=0)
 
-        if symbol not in self._open:
-            self._open[symbol] = _new_candle(symbol, candle_ts, ltp, volume)
+        if key not in self._open:
+            self._open[key] = _new_candle(symbol, candle_ts, ltp, volume, self._interval, extra)
             return None
 
-        current = self._open[symbol]
+        current = self._open[key]
 
         if candle_ts > current["ts"]:
             completed = current.copy()
-            self._open[symbol] = _new_candle(symbol, candle_ts, ltp, volume)
+            self._open[key] = _new_candle(symbol, candle_ts, ltp, volume, self._interval, extra)
             return completed
 
         current["high"]   = max(current["high"], ltp)
@@ -45,9 +48,12 @@ class CandleBuilder:
         return candles
 
 
-def _new_candle(symbol: str, ts: datetime, ltp: float, volume: int) -> dict:
-    return {
-        "symbol": symbol, "ts": ts,
-        "open": ltp, "high": ltp, "low": ltp, "close": ltp,
-        "volume": volume,
+def _new_candle(symbol: str, ts: datetime, ltp: float, volume: int,
+                interval: str, extra: Optional[dict]) -> dict:
+    candle = {
+        "symbol": symbol, "ts": ts, "interval": interval,
+        "open": ltp, "high": ltp, "low": ltp, "close": ltp, "volume": volume,
     }
+    if extra:
+        candle.update(extra)
+    return candle
