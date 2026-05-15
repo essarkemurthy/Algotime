@@ -100,8 +100,20 @@ class DataStore:
         )
 
     def insert_candles(self, rows: List[Dict]) -> None:
-        for row in rows:
-            self.insert_candle(row)
+        if not rows:
+            return
+        self._execmany(
+            """INSERT INTO candles (ts, symbol, "interval", open, high, low, close, volume)
+               VALUES (%(ts)s, %(symbol)s, %(interval)s,
+                       %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
+               ON CONFLICT (symbol, "interval", ts) DO UPDATE
+               SET open   = EXCLUDED.open,
+                   high   = GREATEST(candles.high, EXCLUDED.high),
+                   low    = LEAST(candles.low,     EXCLUDED.low),
+                   close  = EXCLUDED.close,
+                   volume = EXCLUDED.volume""",
+            rows,
+        )
 
     def get_candle_last_ts(self, symbol: str, interval: str) -> Optional[datetime]:
         row = self._queryone(
@@ -139,8 +151,22 @@ class DataStore:
         )
 
     def insert_futures_candles(self, rows: List[Dict]) -> None:
-        for row in rows:
-            self.insert_futures_candle(row)
+        if not rows:
+            return
+        self._execmany(
+            """INSERT INTO futures_candles
+                   (ts, symbol, expiry, "interval", open, high, low, close, volume)
+               VALUES
+                   (%(ts)s, %(symbol)s, %(expiry)s, %(interval)s,
+                    %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
+               ON CONFLICT (symbol, expiry, "interval", ts) DO UPDATE
+               SET open   = EXCLUDED.open,
+                   high   = GREATEST(futures_candles.high, EXCLUDED.high),
+                   low    = LEAST(futures_candles.low,     EXCLUDED.low),
+                   close  = EXCLUDED.close,
+                   volume = EXCLUDED.volume""",
+            rows,
+        )
 
     def get_futures_candle_last_ts(self, symbol: str, expiry: date,
                                    interval: str) -> Optional[datetime]:

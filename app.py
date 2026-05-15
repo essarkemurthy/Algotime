@@ -107,29 +107,48 @@ _session:    Optional[BreezeSession]      = None
 _algo_engine: Optional[OptionsAlgoEngine] = None
 _algo_task:  Optional[asyncio.Task]       = None
 _broadcast_task: Optional[asyncio.Task]   = None
+_chain_snap_task: Optional[asyncio.Task]  = None   # periodic chain/delta snapshots
 _trigger_tasks: Dict[str, asyncio.Task]   = {}
 _main_loop:  Optional[asyncio.AbstractEventLoop] = None
 
-_ws_subscriptions: set            = set()   # "stock|exchange|product|right|strike|expiry" keys
-_token_to_symbol:  Dict[str, str] = {}      # Breeze tick token → _ltp_cache key
+_ws_subscriptions: set            = set()
+_token_to_symbol:  Dict[str, str] = {}
 
-_positions: List[dict] = []   # open + closed option/equity positions
-_order_log: List[dict] = []   # every order placed this session
+_positions: List[dict] = []
+_order_log: List[dict] = []
 _ltp_cache: Dict[str, float] = {}
 
-# Tick log: per-symbol deque of the last 200 raw ticks for the tick pane
 _tick_log:   Dict[str, deque] = {}
-_tick_watch: Optional[str]    = None   # symbol currently watched in the tick pane
+_tick_watch: Optional[str]    = None
 
-# Symbol index — built from SDK security master after connect
-_symbol_index: List[dict] = []   # [{stock_code, company_name, token, exchange}]
+_symbol_index: List[dict] = []
 _SYMBOL_CACHE  = Path("data/symbols.json")
 
-# Rate limiter — wraps all REST calls
 _limiter = BreezeRateLimiter(per_min=75, per_day=4500)
 
 _MAX_DAILY_LOSS:    float = float(os.getenv("MAX_DAILY_LOSS",    "40000"))
 _TOTAL_PREMIUM_CAP: float = float(os.getenv("TOTAL_PREMIUM_CAP", "78000"))
+
+# ── DB store (optional — graceful degradation when PostgreSQL not configured) ──
+_db_store = None   # collector.store.DataStore | None
+
+def _init_db_store() -> None:
+    global _db_store
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        return
+    try:
+        from collector.store import DataStore
+        _db_store = DataStore(db_url)
+        log.info("DB store initialised — ticks and chain snapshots will be persisted.")
+    except Exception as exc:
+        log.warning("DB store unavailable (PostgreSQL not running?): %s", exc)
+        _db_store = None
+
+# ── Spot tick buffer — flushed to DB every 5 s by _tick_writer_thread ─────────
+_tick_buffer: List[dict] = []
+_tick_buffer_lock = threading.Lock()
+_TICK_FLUSH_SEC = 5
 
 # ── Historical download state ─────────────────────────────────────────────────
 _download_running: bool      = False
@@ -286,12 +305,25 @@ def _on_tick(tick: dict) -> None:
         return
 
     cache_key = _token_to_symbol[token]
-    _ltp_cache[cache_key] = float(ltp)
+    ltp_f     = float(ltp)
+    _ltp_cache[cache_key] = ltp_f
 
-    # Build tick entry for the tick pane
+    now = datetime.now()
+
+    # ── Buffer tick for DB persistence ────────────────────────────────────────
+    if _db_store is not None:
+        with _tick_buffer_lock:
+            _tick_buffer.append({
+                "ts":     now,
+                "symbol": cache_key,
+                "ltp":    ltp_f,
+                "volume": int(tick.get("ltq", 0) or 0),
+            })
+
+    # ── Build tick entry for the live tick pane ───────────────────────────────
     entry = {
-        "t":      datetime.now().strftime("%H:%M:%S"),
-        "ltp":    float(ltp),
+        "t":      now.strftime("%H:%M:%S"),
+        "ltp":    ltp_f,
         "change": float(tick.get("change", 0) or 0),
         "bid":    float(tick.get("bPrice", 0) or 0),
         "ask":    float(tick.get("sPrice", 0) or 0),
@@ -302,12 +334,29 @@ def _on_tick(tick: dict) -> None:
         _tick_log[cache_key] = deque(maxlen=200)
     _tick_log[cache_key].appendleft(entry)
 
-    # Push to UI clients watching this symbol in the tick pane
     if cache_key == _tick_watch and _main_loop:
         asyncio.run_coroutine_threadsafe(
             broadcast({"type": "tick", "symbol": cache_key, "data": entry}),
             _main_loop,
         )
+
+
+def _tick_writer_thread() -> None:
+    """Background daemon: flush buffered ticks to PostgreSQL every 5 seconds."""
+    while True:
+        time.sleep(_TICK_FLUSH_SEC)
+        if _db_store is None:
+            continue
+        with _tick_buffer_lock:
+            if not _tick_buffer:
+                continue
+            batch = list(_tick_buffer)
+            _tick_buffer.clear()
+        try:
+            _db_store.insert_spot_ticks(batch)
+            log.debug("Flushed %d spot ticks to DB.", len(batch))
+        except Exception as exc:
+            log.warning("Tick DB flush failed: %s", exc)
 
 
 def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
@@ -525,20 +574,64 @@ def _load_symbol_index() -> None:
         log.warning("Could not load symbol index: %s", exc)
 
 
+# ── Periodic chain/delta snapshot (runs when connected, stores to DB) ─────────
+
+_CHAIN_SNAP_INTERVAL_SEC = int(os.getenv("CHAIN_SNAP_SEC", "300"))  # default 5 min
+
+
+async def _chain_snapshot_loop() -> None:
+    """Every CHAIN_SNAP_SEC, fetch full option chains + PCR and persist to DB."""
+    await asyncio.sleep(60)   # give connection 60 s to settle before first run
+    while True:
+        if _session and _session._api and _db_store:
+            try:
+                from collector.chain import ChainSnapshotCollector
+                from collector.config import CollectorConfig
+                cfg = CollectorConfig(
+                    api_key=_session.cfg.api_key,
+                    api_secret=_session.cfg.api_secret,
+                    session_token=_session.cfg.session_token,
+                    db_url=os.getenv("DB_URL", ""),
+                )
+                collector = ChainSnapshotCollector(_session.api, cfg, _db_store)
+                await asyncio.to_thread(collector.run_once)
+                log.info("Chain + PCR snapshot stored to DB.")
+            except Exception as exc:
+                log.warning("Chain snapshot error: %s", exc)
+        await asyncio.sleep(_CHAIN_SNAP_INTERVAL_SEC)
+
+
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _broadcast_task, _main_loop
+    global _broadcast_task, _chain_snap_task, _main_loop
     _main_loop      = asyncio.get_event_loop()
     _broadcast_task = asyncio.create_task(_broadcast_loop())
-    _load_symbol_index()   # load cached master from previous session if available
+    _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
+    _load_symbol_index()
+    _init_db_store()   # connect to PostgreSQL if DB_URL is set
+    # Start background tick writer thread (no-op if DB unavailable)
+    threading.Thread(target=_tick_writer_thread, daemon=True, name="tick-writer").start()
     log.info("Dashboard running → http://localhost:8000")
     yield
     if _broadcast_task:
         _broadcast_task.cancel()
+    if _chain_snap_task:
+        _chain_snap_task.cancel()
     for t in _trigger_tasks.values():
         t.cancel()
+    # Flush remaining buffered ticks before exit
+    if _db_store and _tick_buffer:
+        with _tick_buffer_lock:
+            remaining = list(_tick_buffer)
+            _tick_buffer.clear()
+        if remaining:
+            try:
+                _db_store.insert_spot_ticks(remaining)
+            except Exception:
+                pass
+        _db_store.close()
     if _session:
         try:
             await asyncio.to_thread(_session.api.ws_disconnect)
