@@ -747,6 +747,40 @@ async def get_status():
     }
 
 
+@app.get("/api/db/status")
+async def get_db_status():
+    """DB health check — no session required, always available."""
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        return {"available": False, "mode": "memory",
+                "reason": "DB_URL not set in .env", "candles_count": 0}
+    if _db_store is None:
+        return {"available": False, "mode": "memory",
+                "reason": "PostgreSQL unreachable (check service + DB_URL)",
+                "candles_count": 0}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM candles")
+        candles_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM spot_ticks")
+        ticks_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT symbol) FROM candles")
+        symbols_count = cur.fetchone()[0]
+        conn.close()
+        return {
+            "available":     True,
+            "mode":          "db",
+            "candles_count": candles_count,
+            "ticks_count":   ticks_count,
+            "symbols_count": symbols_count,
+        }
+    except Exception as exc:
+        return {"available": False, "mode": "memory",
+                "reason": str(exc), "candles_count": 0}
+
+
 # ── Manual order ──────────────────────────────────────────────────────────────
 
 @app.post("/api/order/manual")

@@ -172,6 +172,7 @@
         <span class="ind-lbl">Source:</span>
         <button id="src-live" onclick="setSource('live')" title="Fetch from Breeze (requires Connect)">Live</button>
         <button id="src-db"   onclick="setSource('db')"   title="Read from local PostgreSQL DB" class="on">DB</button>
+        <span id="chart-db-dot" style="width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block;margin-left:2px;flex-shrink:0" title="Checking DB…"></span>
       </div>
       <div class="tb-sep"></div>
 
@@ -275,7 +276,9 @@ let _watchlist = JSON.parse(localStorage.getItem('chartWatchlist') || '[]');
 // Currently charted symbol
 let _active = null;   // {stock, exchange, product}
 let _activeTF = '5minute';
-let _dataSource = 'db';   // 'db' | 'live'
+let _dataSource  = 'db';    // 'db' | 'live'
+let _dbAvailable = false;   // set by checkDbStatus() on page load
+let _dbSymbols   = new Set(); // symbols that have data in PostgreSQL
 
 // OHLC data: array of {time(epoch_sec), open, high, low, close, volume}
 let _candles  = [];
@@ -308,6 +311,33 @@ setInterval(() => {
   document.getElementById('clock').textContent =
     n.toLocaleTimeString('en-IN', {hour12: false});
 }, 1000);
+
+// ── DB availability check (runs on page load) ─────────────────────────────
+async function checkDbStatus() {
+  try {
+    const r = await fetch('/api/db/status');
+    const d = await r.json();
+    _dbAvailable = d.available;
+
+    const dot    = document.getElementById('chart-db-dot');
+    const srcDb  = document.getElementById('src-db');
+
+    if (d.available) {
+      if (dot) { dot.style.background = 'var(--green)'; dot.title = `PostgreSQL: ${d.candles_count.toLocaleString()} candles`; }
+      // Preload which symbols exist in DB so loadStock can auto-pick source
+      try {
+        const r2 = await fetch('/api/ohlc/db/available');
+        const d2 = await r2.json();
+        _dbSymbols = new Set((d2.data || []).map(x => x.symbol.toUpperCase()));
+      } catch(e) {}
+      if (srcDb) srcDb.disabled = false;
+    } else {
+      if (dot) { dot.style.background = 'var(--red)'; dot.title = `DB: ${d.reason || 'unavailable'}`; }
+      if (srcDb) { srcDb.disabled = true; srcDb.title = 'No DB available'; }
+      setSource('live');   // force live mode
+    }
+  } catch(e) {}
+}
 
 function connectWS() {
   if (_ws && _ws.readyState < 2) return;
@@ -625,6 +655,10 @@ async function loadStock(w) {
       });
     } catch(e) {}
   }
+
+  // Auto-select source: use DB if available AND symbol has stored data, else live
+  const _preferredSrc = (_dbAvailable && _dbSymbols.has(w.stock.toUpperCase())) ? 'db' : 'live';
+  if (_preferredSrc !== _dataSource) setSource(_preferredSrc);
 
   // Fetch historical OHLC — from DB or live Breeze depending on source toggle
   try {
@@ -1021,6 +1055,7 @@ document.addEventListener('click', e => { if (!e.target.closest('.sym-wrap')) do
     if (d.connected) setConnected(true);
     else setConnected(false);
   } catch(e) {}
+  checkDbStatus();   // check PostgreSQL and preload symbol list
   connectWS();
   renderWatchlist();
   renderSavedFormulas();

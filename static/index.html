@@ -82,6 +82,23 @@
     padding: 24px;
   }
   #connect-panel h2 { margin-bottom: 16px; font-size: 14px; }
+
+  /* ── DB status bar ── */
+  #db-status-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 16px; padding: 8px 10px;
+    background: var(--bg3); border-radius: 6px;
+    font-size: 11px; color: var(--muted);
+  }
+  #db-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  #db-dot.ok  { background: var(--green); }
+  #db-dot.err { background: var(--red); }
+  #db-mode-badge {
+    margin-left: auto; padding: 1px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: .3px;
+  }
+  #db-mode-badge.full   { background: #1a3a1a; color: var(--green); }
+  #db-mode-badge.memory { background: #2a2000; color: var(--yellow); }
   .form-row { margin-bottom: 10px; }
   label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
   input, select {
@@ -463,6 +480,23 @@
 <!-- Connect panel -->
 <div id="connect-panel">
   <h2>Connect to Breeze</h2>
+
+  <!-- DB availability indicator (checked on page load, no Breeze needed) -->
+  <div id="db-status-bar">
+    <div id="db-dot"></div>
+    <span id="db-status-text" style="flex:1">Checking database…</span>
+    <span id="db-mode-badge"></span>
+  </div>
+  <!-- In-memory mode info (shown when DB unavailable) -->
+  <div id="db-memory-info" style="display:none;background:#1a1600;border:1px solid #3a2a00;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--yellow);line-height:1.7">
+    <b>In-Memory Mode</b> — PostgreSQL not available. All data is fetched live from Breeze and is not persisted across sessions.<br>
+    <span style="color:var(--muted)">
+      Available without DB: real-time ticks, on-demand OHLC charts (any symbol, up to 90 days intraday / 2 years daily),
+      option chains, manual &amp; algo orders, paper trading.<br>
+      Not available: historical storage, IV Rank/Percentile, PCR trends.
+    </span>
+  </div>
+
   <div class="form-row">
     <label>API Key</label>
     <input id="api-key" type="text" placeholder="Your ICICI Breeze API Key">
@@ -482,7 +516,8 @@
     Credentials are sent only to your local server. Never shared externally.
   </p>
 
-  <!-- ── Download Historical Data ── -->
+  <!-- ── Download Historical Data (hidden in memory mode) ── -->
+  <div id="dl-section">
   <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
   <h2 style="margin-bottom:4px">Download Historical Data</h2>
   <p style="font-size:11px;color:var(--muted);margin-bottom:14px">
@@ -504,12 +539,22 @@
   </button>
 
   <!-- Progress area -->
-  <div id="dl-progress" style="display:none;margin-top:12px">
+  <div id="dl-progress" style="display:none;margin-top:14px">
+    <!-- top row: items done / ETA -->
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+      <span id="dl-items-text" style="font-size:11px;color:var(--muted)"></span>
+      <span id="dl-eta-text"   style="font-size:11px;color:var(--yellow);font-weight:600"></span>
+    </div>
+    <!-- progress bar -->
+    <div style="background:var(--bg3);border-radius:4px;height:6px;margin-bottom:10px;overflow:hidden">
+      <div id="dl-bar" style="height:6px;border-radius:4px;background:var(--accent);width:0%;transition:width .5s"></div>
+    </div>
     <div id="dl-status-line" style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--blue)"></div>
-    <div id="dl-log-wrap" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow-y:auto;font-family:monospace">
+    <div id="dl-log-wrap" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;font-family:monospace">
       <div id="dl-log"></div>
     </div>
   </div>
+  </div><!-- /dl-section -->
 </div>
 
 <!-- Main dashboard (hidden until connected) -->
@@ -1161,6 +1206,44 @@ updateClock();
   document.getElementById('o-expiry').value = d.toISOString().split('T')[0];
 })();
 
+// ── DB availability (checked on page load, before any Breeze login) ───────
+let _dbAvailable = false;
+
+async function checkDbStatus() {
+  try {
+    const r = await fetch('/api/db/status');
+    const d = await r.json();
+    _dbAvailable = d.available;
+
+    const dot    = document.getElementById('db-dot');
+    const txt    = document.getElementById('db-status-text');
+    const badge  = document.getElementById('db-mode-badge');
+    const dlSec  = document.getElementById('dl-section');
+    const memInf = document.getElementById('db-memory-info');
+
+    if (d.available) {
+      dot.className = 'ok';
+      txt.textContent = `PostgreSQL connected — ${d.candles_count.toLocaleString()} candles, ${d.symbols_count} symbols`;
+      badge.textContent = 'Full Persistence';
+      badge.className = 'full';
+      dlSec.style.display = 'block';
+      memInf.style.display = 'none';
+    } else {
+      dot.className = 'err';
+      txt.textContent = d.reason || 'PostgreSQL not available';
+      badge.textContent = 'In-Memory Mode';
+      badge.className = 'memory';
+      dlSec.style.display = 'none';
+      memInf.style.display = 'block';
+    }
+  } catch(e) {
+    document.getElementById('db-status-text').textContent = 'Could not reach server';
+  }
+}
+
+// Run on page load — no Breeze credentials needed
+checkDbStatus();
+
 // ── Connect / Disconnect ───────────────────────────────────────────────────
 let _appConnected = false;   // guards against duplicate onConnected() calls
 
@@ -1253,8 +1336,36 @@ async function pollDownload() {
   const statusLine = document.getElementById('dl-status-line');
   const logEl      = document.getElementById('dl-log');
   const wrap       = document.getElementById('dl-log-wrap');
+  const bar        = document.getElementById('dl-bar');
+  const itemsText  = document.getElementById('dl-items-text');
+  const etaText    = document.getElementById('dl-eta-text');
 
-  if (d.current) statusLine.textContent = d.current;
+  // Progress bar + item counter
+  const done  = d.done_items  || 0;
+  const total = d.total_items || 0;
+  if (total > 0) {
+    const pct = Math.min(100, (done / total * 100)).toFixed(1);
+    bar.style.width = pct + '%';
+    itemsText.textContent = `${done} / ${total} symbol-intervals`;
+  }
+
+  // ETA
+  if (d.eta_sec != null && d.eta_sec > 0) {
+    const m = Math.floor(d.eta_sec / 60);
+    const s = d.eta_sec % 60;
+    etaText.textContent = m > 0
+      ? `~${m}m ${s}s remaining`
+      : `~${s}s remaining`;
+  } else if (done > 0 && done === total) {
+    etaText.textContent = '';
+  } else if (done === 0 && d.status === 'running') {
+    etaText.textContent = 'Estimating…';
+  }
+
+  if (d.current) {
+    statusLine.textContent = d.current;
+    statusLine.style.color = 'var(--blue)';
+  }
 
   if (d.log && d.log.length) {
     logEl.innerHTML = d.log.map(l =>
@@ -1269,12 +1380,15 @@ async function pollDownload() {
     const btn = document.getElementById('btn-download');
     btn.disabled = false;
     btn.textContent = 'Download Historical Data';
+    bar.style.width = d.status === 'complete' ? '100%' : bar.style.width;
+    etaText.textContent = '';
     if (d.status === 'complete') {
       statusLine.style.color = 'var(--green)';
-      statusLine.textContent = 'Download complete!';
+      statusLine.textContent = `Complete — ${done} symbol-intervals downloaded.`;
     } else if (d.status === 'error') {
       statusLine.style.color = 'var(--red)';
       statusLine.textContent = 'Error: ' + (d.error || 'unknown');
+      bar.style.background = 'var(--red)';
     }
   }
 }
