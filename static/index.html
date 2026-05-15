@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Breeze Trading Dashboard</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root {
     --bg:      #0d1117;
@@ -378,6 +379,49 @@
   .quota-fill { height: 6px; border-radius: 3px; background: var(--accent); min-width: 4px; }
   .quota-track { height: 6px; border-radius: 3px; background: var(--border); width: 80px; overflow: hidden; }
 
+  /* ── Chart toolbar ── */
+  .chart-toolbar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 6px 0; margin-top: 4px; border-top: 1px solid var(--border);
+  }
+  .chart-toolbar .sep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+  .vbtn, .tfbtn {
+    padding: 2px 8px; font-size: 11px; border-radius: 4px; cursor: pointer;
+    background: var(--bg3); border: 1px solid var(--border); color: var(--muted);
+    transition: background .12s;
+  }
+  .vbtn:hover, .tfbtn:hover { background: var(--bg2); color: var(--text); }
+  .vbtn.on, .tfbtn.on { background: var(--accent); border-color: var(--blue); color: #fff; }
+  .ind-toggle { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); cursor: pointer; }
+  .ind-toggle input { cursor: pointer; accent-color: var(--blue); }
+  #chart-wrap { margin-top: 6px; background: var(--bg); border-radius: 6px; overflow: hidden; display: none; }
+  #chart-main { width: 100%; height: 320px; }
+  #chart-rsi  { width: 100%; height: 90px; border-top: 1px solid var(--border); display: none; }
+
+  /* ── Strategy panel ── */
+  .strategy-panel {
+    margin-top: 8px; padding: 10px 12px;
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px;
+  }
+  .strategy-panel h4 { font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+  .sig-badge {
+    display: inline-block; padding: 1px 10px; border-radius: 10px;
+    font-weight: 700; font-size: 11px; letter-spacing: .5px;
+  }
+  .sig-buy    { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid var(--green); }
+  .sig-sell   { background: rgba(248,81,73,.15);  color: var(--red);   border: 1px solid var(--red); }
+  .sig-neutral{ background: var(--bg2); color: var(--muted); border: 1px solid var(--border); }
+  #ind-signals { font-size: 11px; color: var(--muted); margin: 4px 0 8px; min-height: 16px; line-height: 1.8; }
+  #formula-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  #formula-row input { flex: 1; font-family: monospace; font-size: 12px; }
+  #saved-strats { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .strat-chip {
+    padding: 2px 8px; font-size: 11px; border-radius: 10px;
+    background: var(--bg2); border: 1px solid var(--border); cursor: pointer; color: var(--muted);
+  }
+  .strat-chip:hover { border-color: var(--blue); color: var(--blue); }
+
   /* ── Symbol autocomplete ── */
   .sym-wrap { position: relative; display: inline-block; }
   .sym-dropdown {
@@ -404,6 +448,7 @@
 <header>
   <h1>⚡ Breeze Trading Dashboard</h1>
   <div class="header-right">
+    <a href="/charts" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)" title="Open Chart Workspace">📈 Charts</a>
     <a href="/paper" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)" title="Open Paper Trading Simulator">📄 Paper Trading</a>
     <div class="status-dot" id="status-dot"></div>
     <span id="status-text" style="color:var(--muted);font-size:12px">Disconnected</span>
@@ -472,6 +517,7 @@
       <span id="tick-watching-badge" style="font-size:11px;font-weight:400;color:var(--blue);margin-left:8px"></span>
     </h3>
     <div id="tick-pane">
+      <!-- Symbol + watch controls -->
       <div class="tick-controls">
         <div class="sym-wrap">
           <input type="text" id="tick-symbol-input" placeholder="Symbol or company name…"
@@ -491,22 +537,81 @@
         <button onclick="stopTickWatch()" id="btn-tick-stop" style="display:none">Stop</button>
         <span id="tick-count" style="color:var(--muted);font-size:11px;margin-left:4px"></span>
       </div>
+
+      <!-- Chart toolbar: view / timeframe / indicators -->
+      <div class="chart-toolbar">
+        <span style="color:var(--muted);font-size:11px">View:</span>
+        <button class="vbtn on"  id="vbtn-table"  onclick="setTickView('table')">Table</button>
+        <button class="vbtn"     id="vbtn-candle" onclick="setTickView('candle')">Candles</button>
+        <button class="vbtn"     id="vbtn-bar"    onclick="setTickView('bar')">Bars</button>
+        <div class="sep"></div>
+        <span style="color:var(--muted);font-size:11px">TF:</span>
+        <button class="tfbtn"    id="tfbtn-5s"  onclick="setTimeframe(5)">5s</button>
+        <button class="tfbtn"    id="tfbtn-15s" onclick="setTimeframe(15)">15s</button>
+        <button class="tfbtn on" id="tfbtn-1m"  onclick="setTimeframe(60)">1m</button>
+        <button class="tfbtn"    id="tfbtn-5m"  onclick="setTimeframe(300)">5m</button>
+        <button class="tfbtn"    id="tfbtn-15m" onclick="setTimeframe(900)">15m</button>
+        <div class="sep"></div>
+        <span style="color:var(--muted);font-size:11px">Overlay:</span>
+        <label class="ind-toggle"><input type="checkbox" id="ind-ema9"  onchange="toggleIndicator('ema9',  this.checked)"> EMA 9</label>
+        <label class="ind-toggle"><input type="checkbox" id="ind-ema21" onchange="toggleIndicator('ema21', this.checked)"> EMA 21</label>
+        <label class="ind-toggle"><input type="checkbox" id="ind-sma20" onchange="toggleIndicator('sma20', this.checked)"> SMA 20</label>
+        <label class="ind-toggle"><input type="checkbox" id="ind-bb"    onchange="toggleIndicator('bb',    this.checked)"> BB(20,2)</label>
+        <label class="ind-toggle"><input type="checkbox" id="ind-vwap"  onchange="toggleIndicator('vwap',  this.checked)"> VWAP</label>
+        <label class="ind-toggle"><input type="checkbox" id="ind-rsi"   onchange="toggleIndicator('rsi',   this.checked)"> RSI(14)</label>
+      </div>
+
+      <!-- Tick table (default view) -->
       <div id="tick-table-wrap">
         <table id="tick-table">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>LTP</th>
-              <th>Change</th>
-              <th>Bid</th>
-              <th>Ask</th>
-              <th>LTQ</th>
-              <th>OI</th>
+              <th>Time</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>LTQ</th><th>OI</th>
             </tr>
           </thead>
           <tbody id="tick-tbody"></tbody>
         </table>
       </div>
+
+      <!-- Chart view (candles / bars) -->
+      <div id="chart-wrap">
+        <div id="chart-main"></div>
+        <div id="chart-rsi"></div>
+      </div>
+
+      <!-- Strategy / signal panel -->
+      <div class="strategy-panel">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <h4 style="margin:0">Strategy Signal</h4>
+          <span id="sig-badge" class="sig-badge sig-neutral">—</span>
+          <span id="ind-signals">Watch a symbol and enable indicators to see signals.</span>
+          <button class="vbtn" style="margin-left:auto;padding:2px 10px"
+                  onclick="document.getElementById('formula-area').style.display = document.getElementById('formula-area').style.display==='none'?'':'none'">
+            ± Formula
+          </button>
+        </div>
+        <div id="formula-area" style="display:none;margin-top:8px;">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">
+            Variables: <code>close, ema9, ema21, sma20, rsi, vwap, bb_upper, bb_lower, bb_mid, open, high, low</code>
+          </div>
+          <div id="formula-row">
+            <input id="strategy-formula" type="text" placeholder="e.g.  close > ema9 && ema9 > ema21  →  BUY">
+            <button onclick="evalAndShowFormula()">Run</button>
+            <button onclick="saveCurrentStrategy()">Save</button>
+          </div>
+          <div id="saved-strats">
+            <!-- preset chips -->
+            <span class="strat-chip" onclick="loadStrat('close > ema9 && ema9 > ema21')">Golden Cross</span>
+            <span class="strat-chip" onclick="loadStrat('rsi < 30')">RSI Oversold</span>
+            <span class="strat-chip" onclick="loadStrat('rsi > 70')">RSI Overbought</span>
+            <span class="strat-chip" onclick="loadStrat('close > vwap && close > ema9')">VWAP Bounce</span>
+            <span class="strat-chip" onclick="loadStrat('close < bb_lower')">BB Breakdown</span>
+            <span class="strat-chip" onclick="loadStrat('close > bb_upper')">BB Breakout</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- REST quota bar -->
       <div class="quota-bar" id="quota-bar" style="display:none">
         <span class="quota-seg">
           REST today:&nbsp;<strong id="q-day">0</strong>&nbsp;/&nbsp;4500
@@ -1921,10 +2026,15 @@ function renderSymDrop(symbols, dropId, input, context) {
 function pickSym(code, exchange, prodType, dropId, context) {
   if (context === 'tick') {
     document.getElementById('tick-symbol-input').value = code;
+    // Store product type so watchTicks() can pass it to /api/subscribe
+    _tickProdType = (prodType === 'Futures') ? 'futures'
+                  : (prodType === 'Options') ? 'options'
+                  : 'cash';
     const exSel = document.getElementById('tick-exchange-filter');
     if (exSel) {
-      const matchOpt = [...exSel.options].find(o => o.value === exchange);
-      exSel.value = matchOpt ? exchange : '';
+      const targetExch = (prodType === 'Futures' || prodType === 'Options') ? 'NFO' : exchange;
+      const matchOpt = [...exSel.options].find(o => o.value === targetExch);
+      exSel.value = matchOpt ? targetExch : '';
     }
   } else {
     document.getElementById('o-stock').value = code;
@@ -1984,6 +2094,7 @@ document.addEventListener('click', e => {
 // ── Live Tick Pane ────────────────────────────────────────────────────────
 let _tickPaneOpen   = true;
 let _tickWatching   = '';
+let _tickProdType   = 'cash';   // product type for the currently watched symbol
 const MAX_TICK_ROWS = 100;
 
 function toggleTickPane() {
@@ -1998,40 +2109,60 @@ async function watchTicks() {
   if (!symbol) { showAlert('Type or select a symbol to watch.'); return; }
   closeSymDrop('tick-sym-drop');
 
+  if (!_appConnected) {
+    showAlert('Connect to Breeze first to receive live ticks.');
+    return;
+  }
+
+  const exchEl   = document.getElementById('tick-exchange-filter');
+  const exchange = (exchEl && exchEl.value) ? exchEl.value : 'NSE';
+
   document.getElementById('tick-tbody').innerHTML = '';
-  document.getElementById('tick-count').textContent = '';
+  document.getElementById('tick-count').textContent = 'Subscribing…';
   _tickWatching = symbol;
 
   try {
-    const r = await fetch('/api/ticks/watch', {
+    // Tell the server which symbol we are watching
+    const watchR = await fetch('/api/ticks/watch', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({symbol}),
     });
-    const d = await r.json();
-    document.getElementById('tick-watching-badge').textContent = `Watching: ${symbol}`;
+    const d = await watchR.json();
+    document.getElementById('tick-watching-badge').textContent = `Watching: ${symbol} (${exchange})`;
     document.getElementById('btn-tick-stop').style.display = '';
     document.getElementById('quota-bar').style.display = '';
 
-    // If not yet subscribed, subscribe via WS feed
-    if (d.history.length === 0) {
-      await fetch('/api/subscribe', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({stock_code: symbol, exchange_code: 'NSE'}),
-      });
+    // Always ensure a WS subscription is active for this symbol
+    const subResp = await fetch('/api/subscribe', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        stock_code:    symbol,
+        exchange_code: exchange,
+        product_type:  _tickProdType || 'cash',
+      }),
+    });
+    if (!subResp.ok) {
+      const err = await subResp.json().catch(() => ({}));
+      showAlert(`Subscribe failed: ${err.detail || subResp.status}. Check symbol/exchange.`);
+      document.getElementById('tick-count').textContent = 'Subscription failed';
+      return;
     }
 
-    // Render history (most recent first)
-    if (d.history.length) {
+    // Render any cached history (most recent first)
+    if (d.history && d.history.length) {
       d.history.forEach(tick => appendTickRow(tick, false));
-      document.getElementById('tick-count').textContent = `${d.history.length} ticks`;
+      document.getElementById('tick-count').textContent = `${d.history.length} cached ticks`;
+    } else {
+      document.getElementById('tick-count').textContent = 'Waiting for ticks…';
     }
   } catch(e) { showAlert('Tick watch error: ' + e.message); }
 }
 
 async function stopTickWatch() {
   _tickWatching = '';
+  _tickProdType = 'cash';
   await fetch('/api/ticks/watch', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -2082,6 +2213,440 @@ function updateQuota(data) {
   document.getElementById('q-min-fill').style.width = minPct + '%';
   document.getElementById('q-day-fill').style.background =
     dayPct > 80 ? 'var(--red)' : dayPct > 50 ? 'var(--yellow)' : 'var(--accent)';
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// CHART + INDICATOR + STRATEGY ENGINE
+// ════════════════════════════════════════════════════════════════════════
+
+// ── State ─────────────────────────────────────────────────────────────────
+let _tickView  = 'table';   // 'table' | 'candle' | 'bar'
+let _timeframe = 60;        // seconds per candle
+let _allCandles   = [];     // completed candles  [{time,open,high,low,close,volume}]
+let _curCandle    = null;   // in-progress candle
+let _vwapNum = 0, _vwapDen = 0;
+let _indEnabled   = {};     // { ema9: false, ema21: false, … }
+let _indValues    = {};     // latest computed values
+let _savedStrategies = [];
+
+// Lightweight Charts objects
+let _lwChart     = null;
+let _mainSeries  = null;   // CandlestickSeries or BarSeries
+let _rsiLwChart  = null;
+let _rsiSeries   = null;
+let _indSeries   = {};     // name → LineSeries
+
+// ── View / timeframe switching ─────────────────────────────────────────────
+function setTickView(v) {
+  _tickView = v;
+  ['table','candle','bar'].forEach(n => document.getElementById('vbtn-'+n).classList.toggle('on', n===v));
+  document.getElementById('tick-table-wrap').style.display = v === 'table' ? '' : 'none';
+  document.getElementById('chart-wrap').style.display      = v !== 'table' ? '' : 'none';
+  if (v !== 'table') { _initLWChart(); _refreshChartData(); }
+}
+
+function setTimeframe(tf) {
+  _timeframe = tf;
+  ['5s','15s','1m','5m','15m'].forEach(id => document.getElementById('tfbtn-'+id).classList.remove('on'));
+  const map = {5:'5s', 15:'15s', 60:'1m', 300:'5m', 900:'15m'};
+  document.getElementById('tfbtn-' + (map[tf] || '1m')).classList.add('on');
+  // Rebuild candles from raw tick history (ticks stored in _tick_log on server)
+  // For now: clear and let live ticks rebuild; reload history from server
+  _allCandles = []; _curCandle = null;
+  _vwapNum = 0; _vwapDen = 0;
+  if (_tickWatching) _loadTickHistory(_tickWatching);
+  else _refreshChartData();
+}
+
+async function _loadTickHistory(symbol) {
+  try {
+    const r = await fetch(`/api/ticks/${encodeURIComponent(symbol)}`);
+    const d = await r.json();
+    if (d.ticks && d.ticks.length) {
+      // ticks are newest-first; process oldest-first for correct OHLC
+      [...d.ticks].reverse().forEach(t => _processTick(t, false));
+    }
+    _refreshChartData();
+  } catch(e) {}
+}
+
+// ── Lightweight Charts initialisation ─────────────────────────────────────
+function _initLWChart() {
+  if (_lwChart) return;
+  const mainEl = document.getElementById('chart-main');
+  const rsiEl  = document.getElementById('chart-rsi');
+
+  const baseOpts = (el) => ({
+    width:  el.clientWidth,
+    height: el.clientHeight,
+    layout: { background: {color:'#0d1117'}, textColor:'#8b949e' },
+    grid:   { vertLines:{color:'#21262d'}, horzLines:{color:'#21262d'} },
+    timeScale: { timeVisible:true, secondsVisible:true, borderColor:'#30363d' },
+    rightPriceScale: { borderColor:'#30363d' },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+
+  _lwChart = LightweightCharts.createChart(mainEl, baseOpts(mainEl));
+  _rsiLwChart = LightweightCharts.createChart(rsiEl, {
+    ...baseOpts(rsiEl),
+    rightPriceScale: { borderColor:'#30363d', scaleMargins:{top:0.1,bottom:0.1} },
+  });
+  _rsiSeries = _rsiLwChart.addLineSeries({ color:'#d29922', lineWidth:1, priceLineVisible:false });
+
+  // Sync time scales between main and RSI
+  _lwChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (range) _rsiLwChart.timeScale().setVisibleLogicalRange(range);
+  });
+  _rsiLwChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (range) _lwChart.timeScale().setVisibleLogicalRange(range);
+  });
+
+  // Resize observer
+  const ro = new ResizeObserver(() => {
+    _lwChart.applyOptions({ width: mainEl.clientWidth });
+    _rsiLwChart.applyOptions({ width: rsiEl.clientWidth });
+  });
+  ro.observe(mainEl);
+}
+
+function _getSeries() {
+  // Return (and create if missing) the right series type for current view
+  if (_tickView === 'candle') {
+    if (!(_mainSeries && _mainSeries._type === 'candle')) {
+      if (_mainSeries) { try { _lwChart.removeSeries(_mainSeries); } catch(e){} }
+      _mainSeries = _lwChart.addCandlestickSeries({
+        upColor:'#3fb950', downColor:'#f85149',
+        borderUpColor:'#3fb950', borderDownColor:'#f85149',
+        wickUpColor:'#3fb950', wickDownColor:'#f85149',
+      });
+      _mainSeries._type = 'candle';
+    }
+  } else {
+    if (!(_mainSeries && _mainSeries._type === 'bar')) {
+      if (_mainSeries) { try { _lwChart.removeSeries(_mainSeries); } catch(e){} }
+      _mainSeries = _lwChart.addBarSeries({ upColor:'#3fb950', downColor:'#f85149' });
+      _mainSeries._type = 'bar';
+    }
+  }
+  return _mainSeries;
+}
+
+function _refreshChartData() {
+  if (!_lwChart) return;
+  const series = _getSeries();
+  const data = [..._allCandles, ...(_curCandle ? [{ ..._curCandle }] : [])];
+  if (data.length) series.setData(data);
+  _redrawIndicators();
+  _calcAndShowSignals();
+}
+
+// ── Candle aggregation ─────────────────────────────────────────────────────
+function _processTick(tick, liveUpdate = true) {
+  const ltp = tick.ltp;
+  const qty = tick.ltq || 0;
+  if (!ltp) return;
+
+  // Derive candle time from wall-clock (server time embedded in tick.t HH:MM:SS)
+  // Use current epoch floored to timeframe for live ticks; for history ticks use
+  // today's date + tick.t. Simpler: always use Date.now() for live, epoch for history.
+  let epochSec;
+  if (tick._ts) {
+    epochSec = tick._ts;
+  } else {
+    const now = new Date();
+    if (tick.t && tick.t.includes(':')) {
+      const [hh, mm, ss] = tick.t.split(':').map(Number);
+      epochSec = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, ss).getTime() / 1000);
+    } else {
+      epochSec = Math.floor(Date.now() / 1000);
+    }
+  }
+  const candleTime = Math.floor(epochSec / _timeframe) * _timeframe;
+
+  _vwapNum += ltp * qty;
+  _vwapDen += qty;
+
+  if (!_curCandle || _curCandle.time !== candleTime) {
+    if (_curCandle) {
+      _allCandles.push({ ..._curCandle });
+      if (_allCandles.length > 500) _allCandles.shift();
+    }
+    _curCandle = { time: candleTime, open: ltp, high: ltp, low: ltp, close: ltp, volume: qty };
+  } else {
+    _curCandle.high   = Math.max(_curCandle.high, ltp);
+    _curCandle.low    = Math.min(_curCandle.low, ltp);
+    _curCandle.close  = ltp;
+    _curCandle.volume += qty;
+  }
+
+  if (liveUpdate && _tickView !== 'table' && _lwChart) {
+    try { _getSeries().update({ ..._curCandle }); } catch(e) {}
+    _redrawIndicators();
+    _calcAndShowSignals();
+  }
+}
+
+// ── Indicator calculations ─────────────────────────────────────────────────
+function _ema(closes, period) {
+  if (closes.length < period) return [];
+  const k = 2 / (period + 1);
+  const out = [];
+  let v = closes.slice(0, period).reduce((a,b)=>a+b,0)/period;
+  out.push(v);
+  for (let i = period; i < closes.length; i++) { v = closes[i]*k + v*(1-k); out.push(v); }
+  return out;
+}
+
+function _sma(closes, period) {
+  const out = [];
+  for (let i = period-1; i < closes.length; i++) {
+    out.push(closes.slice(i-period+1, i+1).reduce((a,b)=>a+b,0)/period);
+  }
+  return out;
+}
+
+function _bb(closes, period=20, mult=2) {
+  const smas = _sma(closes, period);
+  return smas.map((mid, i) => {
+    const sl = closes.slice(i, i+period);
+    const variance = sl.reduce((s,x)=>s+(x-mid)**2,0)/period;
+    const sigma = Math.sqrt(variance);
+    return { mid, upper: mid+mult*sigma, lower: mid-mult*sigma };
+  });
+}
+
+function _rsiArr(closes, period=14) {
+  const out = [];
+  for (let i = period; i < closes.length; i++) {
+    let g=0, l=0;
+    for (let j = i-period+1; j <= i; j++) {
+      const d = closes[j]-closes[j-1]; if (d>0) g+=d; else l+=Math.abs(d);
+    }
+    out.push(l===0 ? 100 : 100 - 100/(1+(g/period)/(l/period)));
+  }
+  return out;
+}
+
+function _toSeries(times, startIdx, values) {
+  return values.map((v,i) => ({ time: times[startIdx+i], value: +v.toFixed(4) }));
+}
+
+function _redrawIndicators() {
+  if (!_lwChart) return;
+  const data   = [..._allCandles, ...(_curCandle ? [{..._curCandle}] : [])];
+  if (data.length < 2) return;
+  const closes = data.map(d=>d.close);
+  const times  = data.map(d=>d.time);
+
+  // Helper: ensure named line series exists with given color
+  const ensureSeries = (name, color, lineWidth=1) => {
+    if (!_indSeries[name]) {
+      _indSeries[name] = _lwChart.addLineSeries({
+        color, lineWidth, priceLineVisible:false, lastValueVisible:false,
+      });
+    }
+    return _indSeries[name];
+  };
+  const removeSeries = name => {
+    if (_indSeries[name]) {
+      try { _lwChart.removeSeries(_indSeries[name]); } catch(e){}
+      delete _indSeries[name];
+    }
+  };
+
+  // EMA 9
+  if (_indEnabled.ema9) {
+    const vals = _ema(closes, 9);
+    ensureSeries('ema9', '#58a6ff', 1).setData(_toSeries(times, closes.length - vals.length, vals));
+  } else removeSeries('ema9');
+
+  // EMA 21
+  if (_indEnabled.ema21) {
+    const vals = _ema(closes, 21);
+    ensureSeries('ema21', '#f0883e', 1).setData(_toSeries(times, closes.length - vals.length, vals));
+  } else removeSeries('ema21');
+
+  // SMA 20
+  if (_indEnabled.sma20) {
+    const vals = _sma(closes, 20);
+    ensureSeries('sma20', '#d29922', 1).setData(_toSeries(times, 19, vals));
+  } else { removeSeries('sma20'); }
+
+  // Bollinger Bands
+  if (_indEnabled.bb) {
+    const bands = _bb(closes, 20, 2);
+    const s = closes.length - bands.length;
+    ensureSeries('bb_u', '#8b949e', 1).setData(bands.map((b,i)=>({time:times[s+i], value:+b.upper.toFixed(4)})));
+    ensureSeries('bb_l', '#8b949e', 1).setData(bands.map((b,i)=>({time:times[s+i], value:+b.lower.toFixed(4)})));
+    ensureSeries('bb_m', '#444d56', 1).setData(bands.map((b,i)=>({time:times[s+i], value:+b.mid.toFixed(4)})));
+  } else { ['bb_u','bb_l','bb_m'].forEach(removeSeries); }
+
+  // VWAP
+  if (_indEnabled.vwap && _vwapDen > 0) {
+    const vwap = _vwapNum / _vwapDen;
+    ensureSeries('vwap', '#bc8cff', 1).setData(times.map(t=>({time:t, value:+vwap.toFixed(4)})));
+  } else removeSeries('vwap');
+
+  // RSI (sub-chart)
+  if (_indEnabled.rsi) {
+    document.getElementById('chart-rsi').style.display = '';
+    const rvals = _rsiArr(closes, 14);
+    _rsiSeries.setData(_toSeries(times, 14, rvals));
+  } else {
+    document.getElementById('chart-rsi').style.display = 'none';
+    _rsiSeries.setData([]);
+  }
+
+  // Store latest values for formula engine
+  const ema9arr  = _ema(closes, 9);
+  const ema21arr = _ema(closes, 21);
+  const sma20arr = _sma(closes, 20);
+  const rsiArr2  = _rsiArr(closes, 14);
+  const bbArr    = _bb(closes, 20, 2);
+  const last = closes[closes.length-1];
+  const lastC = data[data.length-1];
+  _indValues = {
+    close:    last,
+    open:     lastC.open,
+    high:     lastC.high,
+    low:      lastC.low,
+    ema9:     ema9arr.length  ? ema9arr[ema9arr.length-1]   : null,
+    ema21:    ema21arr.length ? ema21arr[ema21arr.length-1]  : null,
+    sma20:    sma20arr.length ? sma20arr[sma20arr.length-1]  : null,
+    rsi:      rsiArr2.length  ? rsiArr2[rsiArr2.length-1]    : null,
+    vwap:     _vwapDen > 0   ? _vwapNum / _vwapDen           : null,
+    bb_upper: bbArr.length    ? bbArr[bbArr.length-1].upper   : null,
+    bb_lower: bbArr.length    ? bbArr[bbArr.length-1].lower   : null,
+    bb_mid:   bbArr.length    ? bbArr[bbArr.length-1].mid     : null,
+  };
+}
+
+function toggleIndicator(name, on) {
+  _indEnabled[name] = on;
+  if (_lwChart) { _redrawIndicators(); _calcAndShowSignals(); }
+}
+
+// ── Signal display ─────────────────────────────────────────────────────────
+function _calcAndShowSignals() {
+  const v = _indValues;
+  if (!v.close) return;
+  const chips = [];
+  let bullish = 0, bearish = 0;
+
+  if (v.ema9 !== null && v.ema21 !== null) {
+    if (v.ema9 > v.ema21) { chips.push('<span style="color:var(--green)">EMA9▲EMA21</span>'); bullish++; }
+    else                   { chips.push('<span style="color:var(--red)">EMA9▼EMA21</span>');  bearish++; }
+  }
+  if (v.rsi !== null) {
+    const r = v.rsi.toFixed(1);
+    if (v.rsi < 30)      { chips.push(`<span style="color:var(--green)">RSI ${r} (Oversold)</span>`);  bullish++; }
+    else if (v.rsi > 70) { chips.push(`<span style="color:var(--red)">RSI ${r} (Overbought)</span>`); bearish++; }
+    else                  chips.push(`<span style="color:var(--muted)">RSI ${r}</span>`);
+  }
+  if (v.bb_upper !== null) {
+    if (v.close > v.bb_upper) { chips.push('<span style="color:var(--red)">BB↑Breakout</span>');  bearish++; }
+    else if (v.close < v.bb_lower) { chips.push('<span style="color:var(--green)">BB↓Breakdown</span>'); bullish++; }
+  }
+  if (v.vwap !== null) {
+    if (v.close > v.vwap) { chips.push('<span style="color:var(--green)">Above VWAP</span>'); bullish++; }
+    else                   { chips.push('<span style="color:var(--red)">Below VWAP</span>');  bearish++; }
+  }
+  if (v.ema9 !== null) chips.push(`<span style="color:var(--muted)">EMA9 ${v.ema9.toFixed(2)}</span>`);
+  if (v.sma20 !== null) chips.push(`<span style="color:var(--muted)">SMA20 ${v.sma20.toFixed(2)}</span>`);
+
+  const signalEl = document.getElementById('sig-badge');
+  const badge = bullish > bearish ? ['BUY','sig-buy'] : bearish > bullish ? ['SELL','sig-sell'] : ['NEUTRAL','sig-neutral'];
+  signalEl.textContent = badge[0];
+  signalEl.className   = 'sig-badge ' + badge[1];
+  document.getElementById('ind-signals').innerHTML =
+    chips.length ? chips.join(' &thinsp;·&thinsp; ') : 'Enable indicators to see signals.';
+
+  // Auto-run saved formula if any
+  _evalFormula();
+}
+
+// ── Formula / strategy engine ──────────────────────────────────────────────
+function loadStrat(expr) {
+  document.getElementById('strategy-formula').value = expr;
+  document.getElementById('formula-area').style.display = '';
+  evalAndShowFormula();
+}
+
+function evalAndShowFormula() {
+  const result = _evalFormula();
+  if (result !== null) {
+    const signalEl = document.getElementById('sig-badge');
+    signalEl.textContent = result ? 'BUY' : 'SELL';
+    signalEl.className   = 'sig-badge ' + (result ? 'sig-buy' : 'sig-sell');
+  }
+}
+
+function _evalFormula() {
+  const expr = (document.getElementById('strategy-formula')?.value || '').trim();
+  if (!expr || !_indValues.close) return null;
+  try {
+    const v = _indValues;
+    // Expose variables via destructuring so the user can write: ema9 > ema21
+    const fn = new Function(
+      'close','open','high','low','ema9','ema21','sma20','rsi','vwap',
+      'bb_upper','bb_lower','bb_mid',
+      `"use strict"; return !!(${expr});`
+    );
+    return fn(v.close, v.open, v.high, v.low,
+              v.ema9, v.ema21, v.sma20, v.rsi, v.vwap,
+              v.bb_upper, v.bb_lower, v.bb_mid);
+  } catch(e) {
+    return null;
+  }
+}
+
+function saveCurrentStrategy() {
+  const label = prompt('Name this strategy:');
+  if (!label) return;
+  const expr  = document.getElementById('strategy-formula').value.trim();
+  if (!expr) return;
+  _savedStrategies.push({ label, expr });
+  _renderSavedStrats();
+}
+
+function _renderSavedStrats() {
+  const wrap = document.getElementById('saved-strats');
+  // Keep preset chips, add user-saved after them
+  const presets = [...wrap.querySelectorAll('.strat-chip[data-preset]')];
+  // Remove non-preset user chips
+  [...wrap.querySelectorAll('.strat-chip:not([data-preset])')].forEach(el => el.remove());
+  _savedStrategies.forEach(s => {
+    const chip = document.createElement('span');
+    chip.className = 'strat-chip';
+    chip.textContent = s.label;
+    chip.onclick = () => loadStrat(s.expr);
+    wrap.appendChild(chip);
+  });
+}
+
+// Hook tick processing into prependTick (called from handleMsg for live ticks)
+const _origPrependTick = prependTick;
+function prependTick(data) {
+  _origPrependTick(data);        // existing table update
+  _processTick(data, true);      // candle aggregation + chart update
+}
+
+// Reset chart state when watch is stopped
+const _origStopTickWatch = stopTickWatch;
+async function stopTickWatch() {
+  await _origStopTickWatch();
+  _allCandles = []; _curCandle = null;
+  _vwapNum = 0; _vwapDen = 0;
+  _indValues = {};
+  if (_mainSeries)  { try { _lwChart?.removeSeries(_mainSeries);  } catch(e){} _mainSeries  = null; }
+  Object.keys(_indSeries).forEach(k => { try { _lwChart?.removeSeries(_indSeries[k]); } catch(e){} });
+  _indSeries = {};
+  _rsiSeries?.setData([]);
+  document.getElementById('sig-badge').textContent = '—';
+  document.getElementById('sig-badge').className   = 'sig-badge sig-neutral';
+  document.getElementById('ind-signals').textContent = 'Watch a symbol and enable indicators to see signals.';
+  // Reset to table view
+  setTickView('table');
 }
 
 // ── Init: check if already connected ──────────────────────────────────────

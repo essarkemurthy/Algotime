@@ -99,6 +99,7 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("dashboard")
+log.setLevel(logging.DEBUG)   # see subscribe/tick diagnostics in logs/dashboard.log
 
 # ── Global state ──────────────────────────────────────────────────────────────
 
@@ -235,7 +236,13 @@ def _on_tick(tick: dict) -> None:
     Runs in the SDK's socketio background thread — dict writes are GIL-safe."""
     token = tick.get("symbol", "")
     ltp   = tick.get("last")
-    if not (token and ltp is not None and token in _token_to_symbol):
+    if not token:
+        return
+    if token not in _token_to_symbol:
+        log.debug("Tick for unknown token %s (ltp=%s) — not in token map. Map: %s",
+                  token, ltp, list(_token_to_symbol.keys())[:10])
+        return
+    if ltp is None:
         return
 
     cache_key = _token_to_symbol[token]
@@ -265,12 +272,45 @@ def _on_tick(tick: dict) -> None:
 
 def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
                   right: str = "", strike: str = "", expiry: str = "",
-                  cache_key: str = "") -> None:
-    """Subscribe to a Breeze feed, mapping the returned token to cache_key."""
+                  cache_key: str = "") -> bool:
+    """Subscribe to a Breeze WS feed and map the actual tick token to cache_key.
+
+    The subscribe_feeds() response only echoes the stock_code, NOT the internal
+    tick token (e.g. "4.1!12345"). We call get_stock_token_value() first to
+    obtain that token so _on_tick can look it up in _token_to_symbol.
+    """
     sub_key = f"{stock}|{exchange}|{product}|{right}|{strike}|{expiry}"
     if sub_key in _ws_subscriptions or not (_session and _session._api):
-        return
+        return True   # already subscribed or no session
     try:
+        # get_stock_token_value reads self.interval which is only set after the
+        # first subscribe_feeds() call. Ensure it exists before calling directly.
+        if not hasattr(_session.api, "interval"):
+            _session.api.interval = ""
+
+        # Resolve the actual tick token that Breeze will stamp on each tick.
+        # get_stock_token_value returns ("4.1!12345", False) on success,
+        # or an Exception object (not raised) when the symbol isn't found.
+        token_result = _session.api.get_stock_token_value(
+            exchange_code=exchange,
+            stock_code=stock,
+            product_type=product,
+            expiry_date=expiry,
+            strike_price=str(strike) if strike else "",
+            right=right,
+            get_exchange_quotes=True,
+            get_market_depth=False,
+        )
+        if isinstance(token_result, Exception):
+            log.error("Token lookup failed for %s/%s: %s", stock, exchange, token_result)
+            return False
+        eq_token, _ = token_result
+        if not eq_token or not isinstance(eq_token, str) or "False" in eq_token:
+            log.error("No valid token for %s/%s (token=%r) — symbol may not exist in Breeze master",
+                      stock, exchange, eq_token)
+            return False
+
+        # Subscribe via WebSocket
         resp = _session.api.subscribe_feeds(
             stock_code=stock,
             exchange_code=exchange,
@@ -281,15 +321,16 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
             get_exchange_quotes=True,
             get_market_depth=False,
         )
-        # resp = {'message': 'Stock 4.1!2885 subscribed successfully'}
-        if resp and "message" in resp:
-            parts = resp["message"].split()
-            if len(parts) >= 2:
-                _token_to_symbol[parts[1]] = cache_key or stock
+        log.debug("subscribe_feeds response for %s: %s", stock, resp)
+
+        # Store token → cache_key mapping so _on_tick can route ticks correctly
+        _token_to_symbol[eq_token] = cache_key or stock
         _ws_subscriptions.add(sub_key)
-        log.info("WS subscribed: %s", cache_key or stock)
+        log.info("WS subscribed: %s → token %s", cache_key or stock, eq_token)
+        return True
     except Exception as exc:
-        log.error("WS subscribe failed for %s: %s", stock, exc)
+        log.error("WS subscribe failed for %s/%s: %s", stock, exchange, exc)
+        return False
 
 
 def _ws_unsubscribe(stock: str, exchange: str, product: str = "cash",
@@ -1188,6 +1229,54 @@ async def skip_suggestion(trade_id: str):
     return {"status": "skipped", "trade_id": trade_id}
 
 
+# ── Chart workspace ───────────────────────────────────────────────────────────
+
+@app.get("/charts")
+async def charts_page():
+    return FileResponse("static/charts.html")
+
+
+@app.get("/api/ohlc")
+async def get_ohlc(
+    stock:    str,
+    exchange: str = "NSE",
+    product:  str = "cash",
+    interval: str = "5minute",
+    days:     int = 1,
+    expiry:   str = "",
+    right:    str = "",
+    strike:   str = "0",
+):
+    """Fetch OHLC history from Breeze get_historical_data_v2."""
+    _require_session()
+    from datetime import timedelta, timezone
+    valid = {"1second","1minute","5minute","30minute","1day"}
+    if interval not in valid:
+        raise HTTPException(400, f"interval must be one of {valid}")
+    today   = datetime.now()
+    from_dt = (today - timedelta(days=max(days, 1))).strftime("%Y-%m-%dT09:00:00.000Z")
+    to_dt   = today.strftime("%Y-%m-%dT15:30:00.000Z")
+    try:
+        await asyncio.to_thread(_limiter.acquire, "get_historical_data_v2")
+        resp = await asyncio.to_thread(
+            _session.api.get_historical_data_v2,
+            interval=interval,
+            from_date=from_dt,
+            to_date=to_dt,
+            stock_code=stock,
+            exchange_code=exchange,
+            product_type=product,
+            expiry_date=expiry,
+            right=right,
+            strike_price=strike,
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    if resp and resp.get("Status") == 200:
+        return {"candles": resp.get("Success") or [], "count": len(resp.get("Success") or [])}
+    return {"candles": [], "warning": _breeze_error_msg(resp)}
+
+
 # ── Paper trading ────────────────────────────────────────────────────────────
 
 @app.get("/paper")
@@ -1357,7 +1446,7 @@ async def subscribe_on_demand(req: SubscribeReq):
     """Subscribe to a Breeze WebSocket feed for any symbol on demand."""
     _require_session()
     cache_key = req.stock_code.upper()
-    await asyncio.to_thread(
+    ok = await asyncio.to_thread(
         _ws_subscribe,
         req.stock_code.upper(),
         req.exchange_code,
@@ -1367,6 +1456,13 @@ async def subscribe_on_demand(req: SubscribeReq):
         req.expiry_date,
         cache_key,
     )
+    if not ok:
+        raise HTTPException(
+            400,
+            f"Could not subscribe to {req.stock_code} on {req.exchange_code}. "
+            "Symbol may not exist in the Breeze security master, or the exchange/product type "
+            "combination is incorrect."
+        )
     return {"subscribed": cache_key, "all": list(_ws_subscriptions)}
 
 
