@@ -54,8 +54,11 @@ log = logging.getLogger("dashboard")
 _session:    Optional[BreezeSession]      = None
 _algo_engine: Optional[OptionsAlgoEngine] = None
 _algo_task:  Optional[asyncio.Task]       = None
-_poll_task:  Optional[asyncio.Task]       = None
+_broadcast_task: Optional[asyncio.Task]   = None
 _trigger_tasks: Dict[str, asyncio.Task]   = {}
+
+_ws_subscriptions: set         = set()   # "stock|exchange|product|right|strike|expiry" keys
+_token_to_symbol:  Dict[str, str] = {}   # Breeze tick token → _ltp_cache key
 
 _positions: List[dict] = []   # open + closed option/equity positions
 _order_log: List[dict] = []   # every order placed this session
@@ -162,134 +165,122 @@ def _compute_pnl() -> dict:
     }
 
 
-# ── LTP polling background task ───────────────────────────────────────────────
+# ── Breeze WebSocket feed ─────────────────────────────────────────────────────
 
-_POLL_NORMAL  = 10   # seconds between successful polls
-_POLL_BACKOFF = 60   # seconds to wait after a 503 / parse error
-_POLL_AUTH    = 300  # seconds to wait after a 401 (session likely expired)
-_consecutive_errors = 0
+def _on_tick(tick: dict) -> None:
+    """Synchronous callback invoked by the Breeze SDK on every market tick.
+    Runs in the SDK's socketio background thread — dict writes are GIL-safe."""
+    token = tick.get("symbol", "")
+    ltp   = tick.get("last")
+    if token and ltp is not None and token in _token_to_symbol:
+        _ltp_cache[_token_to_symbol[token]] = float(ltp)
 
 
-async def _safe_get_quotes(session, **kwargs) -> Optional[dict]:
-    """Call get_quotes and return the parsed response, or None on any error."""
+def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
+                  right: str = "", strike: str = "", expiry: str = "",
+                  cache_key: str = "") -> None:
+    """Subscribe to a Breeze feed, mapping the returned token to cache_key."""
+    sub_key = f"{stock}|{exchange}|{product}|{right}|{strike}|{expiry}"
+    if sub_key in _ws_subscriptions or not (_session and _session._api):
+        return
     try:
-        resp = await asyncio.to_thread(session.api.get_quotes, **kwargs)
-        if isinstance(resp, dict):
-            return resp
+        resp = _session.api.subscribe_feeds(
+            stock_code=stock,
+            exchange_code=exchange,
+            product_type=product,
+            expiry_date=expiry,
+            strike_price=str(strike) if strike else "",
+            right=right,
+            get_exchange_quotes=True,
+            get_market_depth=False,
+        )
+        # resp = {'message': 'Stock 4.1!2885 subscribed successfully'}
+        if resp and "message" in resp:
+            parts = resp["message"].split()
+            if len(parts) >= 2:
+                _token_to_symbol[parts[1]] = cache_key or stock
+        _ws_subscriptions.add(sub_key)
+        log.info("WS subscribed: %s", cache_key or stock)
     except Exception as exc:
-        log.debug("get_quotes exception: %s", exc)
-    return None
+        log.error("WS subscribe failed for %s: %s", stock, exc)
 
 
-async def _poll_ltps() -> None:
-    global _consecutive_errors
-    log.info("LTP polling started (interval=%ds).", _POLL_NORMAL)
-    sleep_for = _POLL_NORMAL
+def _ws_unsubscribe(stock: str, exchange: str, product: str = "cash",
+                    right: str = "", strike: str = "", expiry: str = "") -> None:
+    """Unsubscribe from a Breeze feed."""
+    sub_key = f"{stock}|{exchange}|{product}|{right}|{strike}|{expiry}"
+    if sub_key not in _ws_subscriptions or not (_session and _session._api):
+        return
+    try:
+        _session.api.unsubscribe_feeds(
+            stock_code=stock,
+            exchange_code=exchange,
+            product_type=product,
+            expiry_date=expiry,
+            strike_price=str(strike) if strike else "",
+            right=right,
+        )
+        _ws_subscriptions.discard(sub_key)
+        log.info("WS unsubscribed: %s", stock)
+    except Exception as exc:
+        log.warning("WS unsubscribe failed for %s: %s", stock, exc)
 
+
+def _setup_ws_feeds() -> None:
+    """Open Breeze WebSocket and subscribe watchlist + any existing option legs.
+    Must be called in a thread (blocking SDK calls)."""
+    _session.api.on_ticks = _on_tick
+    _session.api.ws_connect()
+    for w in WATCHLIST:
+        _ws_subscribe(w["stock"], w["exchange"], cache_key=w["stock"])
+    for pos in _positions:
+        if pos.get("is_open") and pos.get("right"):
+            expiry_str = SymbolBuilder.breeze_dt(date.fromisoformat(pos["expiry"]))
+            right_str  = "call" if pos["right"] == "CE" else "put"
+            _ws_subscribe(
+                pos["stock"], pos["exchange"], "options",
+                right_str, str(pos["strike"]), expiry_str,
+                cache_key=pos["symbol"],
+            )
+    log.info("Breeze WS feeds active — subscribed %d symbols.", len(_ws_subscriptions))
+
+
+async def _broadcast_loop() -> None:
+    """Push LTP + P&L snapshots to all UI clients every second."""
     while True:
-        await asyncio.sleep(sleep_for)
-        sleep_for = _POLL_NORMAL   # reset; adjust below on error
-
-        if not (_session and _session._api):
+        await asyncio.sleep(1)
+        if not _ltp_cache:
             continue
-
-        try:
-            had_error = False
-
-            # Spot watchlist
-            for w in WATCHLIST:
-                resp = await _safe_get_quotes(
-                    _session,
-                    stock_code=w["stock"],
-                    exchange_code=w["exchange"],
-                    expiry_date="",
-                    product_type="cash",
-                    right="",
-                    strike_price="",
-                )
-                if resp is None:
-                    had_error = True
-                    continue
-
-                status = resp.get("Status")
-                if status == 200 and resp.get("Success"):
-                    _ltp_cache[w["stock"]] = float(resp["Success"][0]["ltp"])
-                    _consecutive_errors = 0
-                elif status == 5:
-                    # "Limit exceed: API call per day"
-                    log.warning("Breeze API daily limit hit — backing off %ds.", _POLL_AUTH)
-                    await broadcast({"type": "alert",
-                                     "message": "⚠ Breeze API daily call limit reached. Polling paused."})
-                    sleep_for = _POLL_AUTH
-                    break
-                else:
-                    had_error = True
-
-            if had_error:
-                _consecutive_errors += 1
-                # Exponential backoff capped at 5 min
-                sleep_for = min(_POLL_BACKOFF * _consecutive_errors, 300)
-                log.warning("LTP poll had errors (attempt %d) — next poll in %ds.",
-                            _consecutive_errors, sleep_for)
-                if _consecutive_errors == 1:
-                    await broadcast({"type": "alert",
-                                     "message": "⚠ Breeze quote feed issue — retrying shortly."})
-                continue
-
-            # Open option legs
-            for pos in list(_positions):
-                if not pos.get("is_open") or pos["product"] != "options":
-                    continue
-                expiry_obj = date.fromisoformat(pos["expiry"])
-                right_str  = "call" if pos["right"] == "CE" else "put"
-                resp = await _safe_get_quotes(
-                    _session,
-                    stock_code=pos["stock"],
-                    exchange_code=pos["exchange"],
-                    expiry_date=SymbolBuilder.breeze_dt(expiry_obj),
-                    product_type="options",
-                    right=right_str,
-                    strike_price=str(pos["strike"]),
-                )
-                if resp and resp.get("Status") == 200 and resp.get("Success"):
-                    _ltp_cache[pos["symbol"]] = float(resp["Success"][0]["ltp"])
-
-            _consecutive_errors = 0
-            pnl_data = _compute_pnl()
-            await broadcast({"type": "ltp", "data": _ltp_cache.copy()})
-            await broadcast({"type": "pnl", "data": pnl_data})
-
-            if pnl_data["total_pnl"] < -(_MAX_DAILY_LOSS * 0.80):
-                await broadcast({
-                    "type":    "alert",
-                    "message": (
-                        f"⚠ Daily loss ₹{abs(pnl_data['total_pnl']):,.0f} "
-                        f"approaching limit ₹{_MAX_DAILY_LOSS:,.0f}"
-                    ),
-                })
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            _consecutive_errors += 1
-            sleep_for = min(_POLL_BACKOFF * _consecutive_errors, 300)
-            log.error("LTP poll unexpected error (attempt %d, retry in %ds): %s",
-                      _consecutive_errors, sleep_for, exc)
+        pnl_data = _compute_pnl()
+        await broadcast({"type": "ltp", "data": _ltp_cache.copy()})
+        await broadcast({"type": "pnl", "data": pnl_data})
+        if pnl_data["total_pnl"] < -(_MAX_DAILY_LOSS * 0.80):
+            await broadcast({
+                "type":    "alert",
+                "message": (
+                    f"⚠ Daily loss ₹{abs(pnl_data['total_pnl']):,.0f} "
+                    f"approaching limit ₹{_MAX_DAILY_LOSS:,.0f}"
+                ),
+            })
 
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _poll_task
-    _poll_task = asyncio.create_task(_poll_ltps())
+    global _broadcast_task
+    _broadcast_task = asyncio.create_task(_broadcast_loop())
     log.info("Dashboard running → http://localhost:8000")
     yield
-    if _poll_task:
-        _poll_task.cancel()
+    if _broadcast_task:
+        _broadcast_task.cancel()
     for t in _trigger_tasks.values():
         t.cancel()
     if _session:
+        try:
+            await asyncio.to_thread(_session.api.ws_disconnect)
+        except Exception:
+            pass
         await asyncio.to_thread(_session.disconnect)
     log.info("Dashboard shutdown complete.")
 
@@ -366,6 +357,7 @@ async def connect(req: ConnectReq):
     try:
         _session = BreezeSession(cfg)
         await asyncio.to_thread(_session.connect)
+        await asyncio.to_thread(_setup_ws_feeds)
     except Exception as exc:
         _session = None
         raise HTTPException(500, f"Connection failed: {exc}")
@@ -378,6 +370,12 @@ async def connect(req: ConnectReq):
 async def disconnect_api():
     global _session
     if _session:
+        try:
+            await asyncio.to_thread(_session.api.ws_disconnect)
+        except Exception:
+            pass
+        _ws_subscriptions.clear()
+        _token_to_symbol.clear()
         await asyncio.to_thread(_session.disconnect)
         _session = None
     await broadcast({"type": "status", "connected": False})
@@ -462,6 +460,14 @@ async def place_manual_order(req: ManualOrderReq):
     }
     _positions.append(pos)
 
+    # Subscribe live feed for option legs so LTP arrives via WebSocket
+    if req.product == "options" and req.right and req.strike:
+        _ws_subscribe(
+            req.stock_code, req.exchange_code, "options",
+            right_str, str(req.strike), SymbolBuilder.breeze_dt(expiry_obj),
+            cache_key=symbol,
+        )
+
     log_entry = _record_order(req.action, symbol, req.quantity, entry_price, order_id)
     await broadcast({"type": "order", "data": log_entry})
     log.info("Manual order: %s %s ×%d → %s", req.action.upper(), symbol, req.quantity, order_id)
@@ -504,6 +510,14 @@ async def exit_position(body: dict):
     )
     result = await place_manual_order(exit_req)
     pos["is_open"] = False
+
+    # Unsubscribe the option feed — no open position needs it anymore
+    if pos.get("right") and pos.get("strike") and pos.get("expiry"):
+        right_str  = "call" if pos["right"] == "CE" else "put"
+        expiry_str = SymbolBuilder.breeze_dt(date.fromisoformat(pos["expiry"]))
+        _ws_unsubscribe(pos["stock"], pos["exchange"], "options",
+                        right_str, str(pos["strike"]), expiry_str)
+
     await broadcast({"type": "pnl", "data": _compute_pnl()})
     return result
 
