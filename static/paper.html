@@ -109,10 +109,25 @@
   .tbl-wrap { max-height: 300px; overflow-y: auto; }
 
   /* LTP tiles */
-  .ltp-row { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
-  .ltp-chip { background:var(--bg3); border:1px solid var(--border); border-radius:6px;
-    padding:6px 12px; font-family:monospace; font-size:12px; }
-  .ltp-chip .sym { color:var(--muted); font-size:10px; margin-right:6px; }
+  /* Market price boxes */
+  .mkt-strip { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px; }
+  .mkt-box {
+    background:var(--bg2); border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; display:flex; flex-direction:column; gap:4px;
+    transition:border-color .2s;
+  }
+  .mkt-box:hover { border-color:var(--paper); }
+  .mkt-box .mb-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .mkt-box .mb-name  { font-size:12px; font-weight:700; color:var(--text); }
+  .mkt-box .mb-price { font-size:20px; font-weight:700; font-family:monospace; color:var(--text); }
+  .mkt-box .mb-chg   { font-size:11px; font-family:monospace; }
+  .mb-up   { color:var(--green); }
+  .mb-down { color:var(--red); }
+  .mb-ws   { font-size:10px; color:var(--muted); display:flex; align-items:center; gap:4px; }
+  .ws-dot  { width:6px; height:6px; border-radius:50%; background:var(--muted); flex-shrink:0; }
+  .ws-dot.live { background:var(--green); box-shadow:0 0 4px var(--green); }
+  @media(max-width:900px){.mkt-strip{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:600px){.mkt-strip{grid-template-columns:repeat(2,1fr)}}
 
   /* Order log */
   #paper-log { font-family:monospace; font-size:11px; max-height:200px; overflow-y:auto; color:var(--muted); }
@@ -121,6 +136,38 @@
   ::-webkit-scrollbar { width:6px; }
   ::-webkit-scrollbar-track { background:var(--bg); }
   ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+  /* Strategy selector cards */
+  .strat-grid { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .strat-card {
+    border:1px solid var(--border); border-radius:8px; padding:8px 12px;
+    cursor:pointer; transition:all .15s; background:var(--bg3); min-width:120px;
+    text-align:center;
+  }
+  .strat-card:hover { border-color:var(--paper); }
+  .strat-card.selected { border-color:var(--paper); background:var(--paper-bg); }
+  .strat-card .sc-name { font-size:11px; font-weight:700; color:var(--text); }
+  .strat-card .sc-type { font-size:10px; color:var(--muted); margin-top:2px; }
+
+  /* Leg preview table */
+  .leg-preview { background:var(--bg3); border-radius:6px; padding:10px; margin-top:10px; }
+  .leg-preview table { font-size:11px; }
+  .leg-preview th { font-size:10px; }
+  .leg-row-buy  { color:var(--green); }
+  .leg-row-sell { color:var(--red); }
+
+  /* Strategy positions */
+  .strat-trade { background:var(--bg3); border:1px solid var(--border); border-radius:8px;
+    padding:10px 12px; margin-bottom:8px; }
+  .strat-trade-header { display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:8px; }
+  .strat-trade-name { font-size:12px; font-weight:700; color:var(--paper); }
+  .strat-trade-desc { font-size:10px; color:var(--muted); }
+
+  /* Alert items */
+  .alert-item { padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:12px; }
+  .alert-target { background:#1a3a1a; border:1px solid var(--green); color:var(--green); }
+  .alert-sl     { background:#3a1a1a; border:1px solid var(--red);   color:var(--red); }
 </style>
 </head>
 <body>
@@ -143,14 +190,49 @@
 <main>
 
   <!-- LTP strip -->
-  <div class="ltp-row" id="ltp-strip">
-    <div class="ltp-chip"><span class="sym">NIFTY</span><span id="ltp-NIFTY">—</span></div>
-    <div class="ltp-chip"><span class="sym">INFY</span><span id="ltp-INFY">—</span></div>
-    <div class="ltp-chip"><span class="sym">ONGC</span><span id="ltp-ONGC">—</span></div>
-    <div class="ltp-chip"><span class="sym">MAXHEALTH</span><span id="ltp-MAXHEALTH">—</span></div>
-    <div class="ltp-chip" style="color:var(--muted);font-size:11px" id="ltp-status">
-      ⚡ Live prices via WebSocket
+  <!-- Market price boxes (5 symbols) -->
+  <div class="mkt-strip" id="ltp-strip">
+
+    <div class="mkt-box">
+      <div class="mb-label">Index &bull; NSE</div>
+      <div class="mb-name">NIFTY 50</div>
+      <div class="mb-price" id="ltp-NIFTY">—</div>
+      <div class="mb-chg"  id="chg-NIFTY">&nbsp;</div>
     </div>
+
+    <div class="mkt-box">
+      <div class="mb-label">Index &bull; NSE</div>
+      <div class="mb-name">BANK NIFTY</div>
+      <div class="mb-price" id="ltp-BANKNIFTY">—</div>
+      <div class="mb-chg"  id="chg-BANKNIFTY">&nbsp;</div>
+    </div>
+
+    <div class="mkt-box">
+      <div class="mb-label">Equity &bull; NSE</div>
+      <div class="mb-name">RELIANCE</div>
+      <div class="mb-price" id="ltp-RELIANCE">—</div>
+      <div class="mb-chg"  id="chg-RELIANCE">&nbsp;</div>
+    </div>
+
+    <div class="mkt-box">
+      <div class="mb-label">Equity &bull; NSE</div>
+      <div class="mb-name">HDFC BANK</div>
+      <div class="mb-price" id="ltp-HDFCBANK">—</div>
+      <div class="mb-chg"  id="chg-HDFCBANK">&nbsp;</div>
+    </div>
+
+    <div class="mkt-box" style="position:relative">
+      <div class="mb-label">Equity &bull; NSE</div>
+      <div class="mb-name">TCS</div>
+      <div class="mb-price" id="ltp-TCS">—</div>
+      <div class="mb-chg"  id="chg-TCS">&nbsp;</div>
+      <!-- WebSocket status lives in the last box -->
+      <div class="mb-ws" id="ltp-status" style="margin-top:4px">
+        <span class="ws-dot" id="ws-dot"></span>
+        <span id="ws-label">Connecting…</span>
+      </div>
+    </div>
+
   </div>
 
   <!-- Portfolio summary -->
@@ -199,6 +281,114 @@
       <button class="primary" onclick="setCapital()">Set & Reset</button>
       <button onclick="document.getElementById('capital-form').style.display='none'">Cancel</button>
     </div>
+  </div>
+
+  <!-- ══ Option Strategy Builder ══════════════════════════════════════════ -->
+  <div class="card" id="strategy-builder">
+    <h3>Option Strategy Builder</h3>
+
+    <!-- 5 strategy selector cards -->
+    <div class="strat-grid">
+      <div class="strat-card" id="sc-iron_condor" onclick="selectStrategy('iron_condor')">
+        <div class="sc-name">Iron Condor</div>
+        <div class="sc-type">Credit · 4 Legs</div>
+      </div>
+      <div class="strat-card" id="sc-bull_call_spread" onclick="selectStrategy('bull_call_spread')">
+        <div class="sc-name">Bull Call Spread</div>
+        <div class="sc-type">Debit · Bullish</div>
+      </div>
+      <div class="strat-card" id="sc-bear_put_spread" onclick="selectStrategy('bear_put_spread')">
+        <div class="sc-name">Bear Put Spread</div>
+        <div class="sc-type">Debit · Bearish</div>
+      </div>
+      <div class="strat-card" id="sc-covered_call" onclick="selectStrategy('covered_call')">
+        <div class="sc-name">Covered Call</div>
+        <div class="sc-type">Income · Fut+CE</div>
+      </div>
+      <div class="strat-card" id="sc-long_straddle" onclick="selectStrategy('long_straddle')">
+        <div class="sc-name">Long Straddle</div>
+        <div class="sc-type">Debit · Volatile</div>
+      </div>
+    </div>
+
+    <!-- Config form -->
+    <div class="form-grid">
+      <div class="form-row span2">
+        <label>Symbol</label>
+        <select id="st-stock-select" onchange="onSymbolSelect()">
+          <option value="">— Select a symbol —</option>
+          <optgroup label="Indices (NFO)">
+            <option value="NIFTY">NIFTY 50 &nbsp;·&nbsp; 75 units/lot &nbsp;·&nbsp; step ₹50</option>
+            <option value="BANKNIFTY">BANK NIFTY &nbsp;·&nbsp; 30 units/lot &nbsp;·&nbsp; step ₹100</option>
+          </optgroup>
+          <optgroup label="Large-cap Equities (NFO)">
+            <option value="RELIANCE">RELIANCE &nbsp;·&nbsp; 250 units/lot &nbsp;·&nbsp; step ₹50</option>
+            <option value="HDFCBANK">HDFC BANK &nbsp;·&nbsp; 550 units/lot &nbsp;·&nbsp; step ₹10</option>
+            <option value="TCS">TCS &nbsp;·&nbsp; 150 units/lot &nbsp;·&nbsp; step ₹50</option>
+            <option value="INFY">INFOSYS &nbsp;·&nbsp; 300 units/lot &nbsp;·&nbsp; step ₹20</option>
+          </optgroup>
+          <optgroup label="Other">
+            <option value="__other__">Other symbol…</option>
+          </optgroup>
+        </select>
+        <input id="st-stock-custom" placeholder="e.g. SBIN, AXISBANK, KOTAKBANK"
+               style="display:none;margin-top:6px"
+               oninput="this.value=this.value.toUpperCase()">
+        <div id="st-symbol-info" style="margin-top:5px;font-size:10px;color:var(--muted)"></div>
+      </div>
+      <div class="form-row">
+        <label>Expiry Date</label>
+        <input id="st-expiry" type="date">
+      </div>
+      <div class="form-row">
+        <label>Lots</label>
+        <input id="st-lots" type="number" value="1" min="1" max="50">
+      </div>
+      <div class="form-row" id="st-width-row">
+        <label id="st-width-label">Width Steps</label>
+        <input id="st-width" type="number" value="2" min="1" max="10" title="Strike distance (× step size) between short and long legs">
+      </div>
+      <div class="form-row" id="st-short-row">
+        <label>Short / OTM Steps</label>
+        <input id="st-short" type="number" value="2" min="1" max="10" title="OTM distance from ATM for short leg (Iron Condor/Covered Call)">
+      </div>
+    </div>
+
+    <div class="form-actions" style="margin-top:10px">
+      <button onclick="previewLegs()" id="btn-preview">🔍 Preview Legs</button>
+      <button class="primary" onclick="enterStrategy()" id="btn-enter" disabled>📄 Enter Strategy</button>
+    </div>
+
+    <!-- Leg preview -->
+    <div id="leg-preview-wrap" style="display:none">
+      <div class="leg-preview">
+        <div id="plan-desc" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
+        <table>
+          <thead>
+            <tr><th>#</th><th>Label</th><th>Action</th><th>Right</th><th>Strike</th><th>Qty</th><th>Live ₹</th><th>Limit ₹ (opt)</th></tr>
+          </thead>
+          <tbody id="leg-rows"></tbody>
+        </table>
+        <div id="plan-breakeven" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Strategy Positions ════════════════════════════════════════════════ -->
+  <div class="card" id="strategy-positions">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0;border:none;padding:0">Strategy Positions</h3>
+      <button onclick="loadStrategyTrades()" style="font-size:11px">↻ Refresh</button>
+    </div>
+    <div id="strategy-trades-wrap">
+      <p style="color:var(--muted);font-size:12px;padding:8px">No strategy positions yet.</p>
+    </div>
+  </div>
+
+  <!-- ══ Strategy Alerts ═══════════════════════════════════════════════════ -->
+  <div class="card" id="strategy-alerts-card" style="display:none">
+    <h3>Strategy Alerts</h3>
+    <div id="strategy-alerts-list"></div>
   </div>
 
   <div class="cols2">
@@ -352,24 +542,60 @@ function connectWS() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
     const msg = JSON.parse(e.data);
-    if (msg.type === 'ltp')          updateLTPs(msg.data);
-    if (msg.type === 'init' && msg.ltp) updateLTPs(msg.ltp);
-    if (msg.type === 'paper_update') renderSummary(msg.data);
+    if (msg.type === 'ltp')                  updateLTPs(msg.data);
+    if (msg.type === 'init' && msg.ltp)      updateLTPs(msg.ltp);
+    if (msg.type === 'paper_update')         renderSummary(msg.data);
+    if (msg.type === 'strategy_alert')       handleStrategyAlert(msg.alert);
+    if (msg.type === 'paper_strategy_entered' || msg.type === 'paper_strategy_closed')
+                                             loadStrategyTrades();
     if (msg.type === 'pong') {}
   };
-  ws.onclose = () => { ws = null; setTimeout(connectWS, 3000); };
-  ws.onerror = () => { ws = null; };
+  ws.onopen  = () => { _setWsStatus(true); };
+  ws.onclose = () => { ws = null; _setWsStatus(false); setTimeout(connectWS, 3000); };
+  ws.onerror = () => { ws = null; _setWsStatus(false); };
   setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 20000);
 }
 connectWS();
 
+// Previous LTP snapshot — used to colour the change line
+const _prevLtp = {};
+
+// Symbols shown in the market boxes (Breeze code → display name already in HTML)
+const MKT_SYMS = ['NIFTY','BANKNIFTY','RELIANCE','HDFCBANK','TCS'];
+
 function updateLTPs(data) {
   Object.entries(data).forEach(([sym, ltp]) => {
+    const prev = ltpCache[sym];
     ltpCache[sym] = ltp;
-    const el = document.getElementById('ltp-' + sym);
-    if (el) el.textContent = ltp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    // Update price box if this symbol has a box
+    const priceEl = document.getElementById('ltp-' + sym);
+    const chgEl   = document.getElementById('chg-' + sym);
+    if (priceEl) {
+      priceEl.textContent = ltp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+      // Flash colour on change
+      if (prev !== undefined && prev !== ltp) {
+        priceEl.style.color = ltp > prev ? 'var(--green)' : 'var(--red)';
+        setTimeout(() => priceEl.style.color = '', 800);
+      }
+    }
+    // Change line vs previous session snapshot
+    if (chgEl && prev !== undefined) {
+      const diff = ltp - prev;
+      const pct  = ((diff / prev) * 100).toFixed(2);
+      const sign = diff >= 0 ? '+' : '';
+      chgEl.textContent = `${sign}${diff.toFixed(2)}  (${sign}${pct}%)`;
+      chgEl.className   = 'mb-chg ' + (diff >= 0 ? 'mb-up' : 'mb-down');
+    }
   });
   updateFillPreview();
+}
+
+function _setWsStatus(live) {
+  const dot   = document.getElementById('ws-dot');
+  const label = document.getElementById('ws-label');
+  if (dot)   { dot.className   = 'ws-dot' + (live ? ' live' : ''); }
+  if (label) { label.textContent = live ? 'Live via WebSocket' : 'Reconnecting…'; }
 }
 
 // ── Alert ──────────────────────────────────────────────────────────────────
@@ -619,6 +845,256 @@ async function loadSummary() {
 }
 
 loadSummary();
+
+// ── Strategy Builder ────────────────────────────────────────────────────────
+let _selectedStrategy = null;
+let _planLegs = [];
+
+// Set default expiry for strategy (nearest Thursday)
+(function() {
+  const d = new Date();
+  const days = (4 - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + days);
+  document.getElementById('st-expiry').value = d.toISOString().split('T')[0];
+})();
+
+// ── Symbol catalogue (display info + ICICI/Breeze code as select value) ───────
+const SYMBOL_INFO = {
+  NIFTY:     { label:'NIFTY 50',   kind:'Index',  lot:75,  step:50,  exchange:'NFO' },
+  BANKNIFTY: { label:'BANK NIFTY', kind:'Index',  lot:30,  step:100, exchange:'NFO' },
+  RELIANCE:  { label:'RELIANCE',   kind:'Equity', lot:250, step:50,  exchange:'NFO' },
+  HDFCBANK:  { label:'HDFC BANK',  kind:'Equity', lot:550, step:10,  exchange:'NFO' },
+  TCS:       { label:'TCS',        kind:'Equity', lot:150, step:50,  exchange:'NFO' },
+  INFY:      { label:'INFOSYS',    kind:'Equity', lot:300, step:20,  exchange:'NFO' },
+};
+
+function getStrategySymbol() {
+  const sel = document.getElementById('st-stock-select').value;
+  if (!sel || sel === '__other__')
+    return document.getElementById('st-stock-custom').value.trim().toUpperCase();
+  return sel;
+}
+
+function onSymbolSelect() {
+  const sel    = document.getElementById('st-stock-select').value;
+  const custom = document.getElementById('st-stock-custom');
+  const info   = document.getElementById('st-symbol-info');
+
+  custom.style.display = (sel === '__other__') ? 'block' : 'none';
+  if (sel && sel !== '__other__') {
+    const s = SYMBOL_INFO[sel];
+    info.textContent = s
+      ? `${s.kind} · Lot size: ${s.lot} units · Strike step: ₹${s.step} · Exchange: ${s.exchange}`
+      : `Exchange: NFO`;
+  } else {
+    info.textContent = '';
+  }
+  // Reset preview when symbol changes
+  document.getElementById('leg-preview-wrap').style.display = 'none';
+  document.getElementById('btn-enter').disabled = true;
+  _planLegs = [];
+}
+
+const STRATEGY_META = {
+  iron_condor:      { hasWidth: true,  hasShort: true,  widthLabel: 'Spread Width Steps' },
+  bull_call_spread: { hasWidth: true,  hasShort: false, widthLabel: 'Spread Width Steps' },
+  bear_put_spread:  { hasWidth: true,  hasShort: false, widthLabel: 'Spread Width Steps' },
+  covered_call:     { hasWidth: false, hasShort: true,  widthLabel: '' },
+  long_straddle:    { hasWidth: false, hasShort: false, widthLabel: '' },
+};
+
+function selectStrategy(key) {
+  _selectedStrategy = key;
+  _planLegs = [];
+  document.querySelectorAll('.strat-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('sc-' + key).classList.add('selected');
+
+  const meta = STRATEGY_META[key] || {};
+  document.getElementById('st-width-row').style.display = meta.hasWidth  ? 'block' : 'none';
+  document.getElementById('st-short-row').style.display = meta.hasShort ? 'block' : 'none';
+  if (meta.widthLabel) document.getElementById('st-width-label').textContent = meta.widthLabel;
+
+  document.getElementById('leg-preview-wrap').style.display = 'none';
+  document.getElementById('btn-enter').disabled = true;
+}
+
+async function previewLegs() {
+  if (!_selectedStrategy) { showAlert('Select a strategy first'); return; }
+  const stock = getStrategySymbol();
+  if (!stock) { showAlert('Select or enter a symbol first'); return; }
+
+  const lots        = parseInt(document.getElementById('st-lots').value) || 1;
+  const width_steps = parseInt(document.getElementById('st-width').value) || 2;
+  const short_steps = parseInt(document.getElementById('st-short').value) || 2;
+
+  const params = new URLSearchParams({
+    strategy_id: _selectedStrategy, stock, lots, width_steps, short_steps
+  });
+  try {
+    const r = await fetch('/api/paper/strategy/plan?' + params);
+    const d = await r.json();
+    if (!r.ok) { showAlert('Preview failed: ' + (d.detail || ''), '#f87171'); return; }
+
+    _planLegs = d.legs;
+    document.getElementById('plan-desc').textContent =
+      `${d.description}  ·  Spot: ₹${d.spot?.toLocaleString('en-IN')}  ·  ATM: ${d.atm}`;
+
+    const beL = d.break_even_lower ? `Lower BE: ${d.break_even_lower}` : '';
+    const beU = d.break_even_upper ? `Upper BE: ${d.break_even_upper}` : '';
+    document.getElementById('plan-breakeven').textContent = [beL, beU].filter(Boolean).join('   |   ');
+
+    document.getElementById('leg-rows').innerHTML = d.legs.map((leg, i) => {
+      const cls = leg.action === 'buy' ? 'leg-row-buy' : 'leg-row-sell';
+      const rightStr = leg.right || '—';
+      const strikeStr = leg.strike || '—';
+      const live = leg.live_price ? `₹${leg.live_price.toLocaleString('en-IN', {minimumFractionDigits:2})}` : '—';
+      return `<tr class="${cls}">
+        <td>${i+1}</td>
+        <td style="font-size:10px">${leg.label}</td>
+        <td><span class="tag tag-${leg.action}">${leg.action.toUpperCase()}</span></td>
+        <td>${rightStr}</td>
+        <td style="font-family:monospace">${strikeStr}</td>
+        <td>${leg.qty}</td>
+        <td style="font-family:monospace">${live}</td>
+        <td><input type="number" step="0.05" placeholder="auto"
+              id="leg-price-${i}" style="padding:3px 6px;font-size:11px;width:80px"></td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('leg-preview-wrap').style.display = 'block';
+    document.getElementById('btn-enter').disabled = false;
+  } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
+}
+
+async function enterStrategy() {
+  if (!_selectedStrategy || !_planLegs.length) { showAlert('Preview legs first'); return; }
+  const stock  = getStrategySymbol();
+  const expiry = document.getElementById('st-expiry').value;
+  const lots   = parseInt(document.getElementById('st-lots').value) || 1;
+  if (!expiry) { showAlert('Set expiry date'); return; }
+
+  const leg_prices = _planLegs.map((_, i) => {
+    const v = parseFloat(document.getElementById(`leg-price-${i}`)?.value);
+    return isNaN(v) ? 0 : v;
+  });
+
+  const body = {
+    strategy_id:  _selectedStrategy,
+    stock, expiry, lots,
+    exchange:     'NFO',
+    short_steps:  parseInt(document.getElementById('st-short').value) || 2,
+    width_steps:  parseInt(document.getElementById('st-width').value) || 2,
+    leg_prices,
+  };
+
+  try {
+    const r = await fetch('/api/paper/strategy/enter', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!r.ok) { showAlert('Enter failed: ' + (d.detail||''), '#f87171'); return; }
+    showAlert(`✓ Strategy entered: ${d.trade?.strategy_name}`, '#86efac');
+    document.getElementById('leg-preview-wrap').style.display = 'none';
+    document.getElementById('btn-enter').disabled = true;
+    _planLegs = [];
+    await loadStrategyTrades();
+  } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
+}
+
+async function exitStrategy(tradeId) {
+  if (!confirm('Exit this strategy at market?')) return;
+  try {
+    const r = await fetch(`/api/paper/strategy/exit/${tradeId}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) { showAlert('Exit failed: ' + (d.detail||''), '#f87171'); return; }
+    const pnl = d.realised_pnl;
+    showAlert(`✓ Strategy closed · P&L: ${pnl >= 0 ? '+' : ''}₹${Math.abs(pnl).toLocaleString('en-IN')}`,
+              pnl >= 0 ? '#86efac' : '#f87171');
+    await loadStrategyTrades();
+  } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
+}
+
+async function loadStrategyTrades() {
+  try {
+    const r = await fetch('/api/paper/strategies');
+    if (!r.ok) return;
+    const d = await r.json();
+    renderStrategyTrades(d.trades || []);
+  } catch(e) {}
+}
+
+function renderStrategyTrades(trades) {
+  const wrap = document.getElementById('strategy-trades-wrap');
+  if (!trades.length) {
+    wrap.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:8px">No strategy positions yet.</p>';
+    return;
+  }
+
+  wrap.innerHTML = trades.map(t => {
+    const pnl      = t.unrealised_pnl ?? 0;
+    const pnlHtml  = pnlSpan(pnl);
+    const isCredit = t.net_credit > 0;
+    const creditLbl = isCredit
+      ? `Net Credit: ₹${t.net_credit.toLocaleString('en-IN', {minimumFractionDigits:2})}`
+      : `Net Debit: ₹${Math.abs(t.net_credit).toLocaleString('en-IN', {minimumFractionDigits:2})}`;
+    const statusColor = t.status === 'open' ? 'var(--green)' : 'var(--muted)';
+
+    const legsHtml = (t.legs || []).map(leg => {
+      const cls = leg.action === 'buy' ? 'leg-row-buy' : 'leg-row-sell';
+      return `<tr class="${cls}" style="font-size:10px">
+        <td>${leg.label || leg.symbol}</td>
+        <td><span class="tag tag-${leg.action}">${leg.action.toUpperCase()}</span></td>
+        <td>${leg.qty}</td>
+        <td style="font-family:monospace">₹${(leg.fill_price||0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+        <td style="font-family:monospace">₹${(leg.ltp||0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+      </tr>`;
+    }).join('');
+
+    const alertsHtml = (t.alerts || []).map(a => {
+      const cls = a.type?.includes('TARGET') ? 'alert-target' : 'alert-sl';
+      return `<div class="alert-item ${cls}" style="margin-top:4px;font-size:11px">⚡ ${a.message}</div>`;
+    }).join('');
+
+    return `<div class="strat-trade">
+      <div class="strat-trade-header">
+        <div>
+          <span class="strat-trade-name">${t.strategy_name}</span>
+          <span style="margin-left:8px;font-size:10px;color:var(--muted)">${t.stock} · ${t.expiry}</span>
+          <span style="margin-left:8px;font-size:10px;color:var(--muted)">${creditLbl}</span>
+          <span style="margin-left:8px;font-size:11px;color:${statusColor};font-weight:700">${t.status?.toUpperCase()}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${pnlHtml}
+          ${t.status === 'open'
+            ? `<button class="danger" style="padding:2px 8px;font-size:11px" onclick="exitStrategy('${t.id}')">Exit</button>`
+            : ''}
+        </div>
+      </div>
+      <table style="font-size:11px;margin-bottom:${alertsHtml ? 6 : 0}px">
+        <thead><tr><th>Leg</th><th>Side</th><th>Qty</th><th>Fill ₹</th><th>LTP ₹</th></tr></thead>
+        <tbody>${legsHtml}</tbody>
+      </table>
+      ${alertsHtml}
+    </div>`;
+  }).join('');
+}
+
+// Handle strategy_alert from WebSocket
+function handleStrategyAlert(alert) {
+  const card = document.getElementById('strategy-alerts-card');
+  const list = document.getElementById('strategy-alerts-list');
+  card.style.display = 'block';
+  const cls   = (alert.type||'').includes('TARGET') ? 'alert-target' : 'alert-sl';
+  const item  = document.createElement('div');
+  item.className = `alert-item ${cls}`;
+  item.textContent = `⚡ ${alert.message || alert.type}`;
+  list.insertBefore(item, list.firstChild);
+  showAlert(`Strategy Alert: ${alert.message || alert.type}`,
+    cls === 'alert-target' ? '#86efac' : '#f87171');
+  loadStrategyTrades();
+}
+
+loadStrategyTrades();
 </script>
 </body>
 </html>

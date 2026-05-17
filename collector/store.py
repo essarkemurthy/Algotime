@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import psycopg2
 import psycopg2.pool
+from psycopg2.extras import execute_values
 
 log = logging.getLogger(__name__)
 
@@ -13,11 +14,13 @@ class DataStore:
     """
     Thread-safe PostgreSQL store backed by a connection pool.
     All public methods acquire a connection, execute, commit, and return it.
+    Uses execute_values for batch inserts (single multi-row statement, 10-100x
+    faster than executemany which issues one round-trip per row).
     """
 
     def __init__(self, db_url: str) -> None:
         self._pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=2, maxconn=10, dsn=db_url
+            minconn=4, maxconn=20, dsn=db_url
         )
         log.info("DataStore connected to PostgreSQL.")
 
@@ -55,6 +58,21 @@ class DataStore:
         finally:
             self._put(conn)
 
+    def _execvalues(self, sql: str, rows: list, template: str) -> None:
+        """Single multi-row INSERT via execute_values — much faster than executemany."""
+        if not rows:
+            return
+        conn = self._get()
+        try:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, rows, template=template, page_size=500)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self._put(conn)
+
     def _queryone(self, sql: str, params=None):
         conn = self._get()
         try:
@@ -76,11 +94,11 @@ class DataStore:
     # ── spot ticks ────────────────────────────────────────────────────────────
 
     def insert_spot_ticks(self, rows: List[Dict]) -> None:
-        self._execmany(
+        self._execvalues(
             """INSERT INTO spot_ticks (ts, symbol, ltp, volume)
-               VALUES (%(ts)s, %(symbol)s, %(ltp)s, %(volume)s)
-               ON CONFLICT DO NOTHING""",
-            rows,
+               VALUES %s ON CONFLICT DO NOTHING""",
+            [(r["ts"], r["symbol"], r["ltp"], r["volume"]) for r in rows],
+            template="(%s, %s, %s, %s)",
         )
 
     # ── candles (unified: equity spot, all intervals) ─────────────────────────
@@ -102,17 +120,18 @@ class DataStore:
     def insert_candles(self, rows: List[Dict]) -> None:
         if not rows:
             return
-        self._execmany(
+        self._execvalues(
             """INSERT INTO candles (ts, symbol, "interval", open, high, low, close, volume)
-               VALUES (%(ts)s, %(symbol)s, %(interval)s,
-                       %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
+               VALUES %s
                ON CONFLICT (symbol, "interval", ts) DO UPDATE
                SET open   = EXCLUDED.open,
                    high   = GREATEST(candles.high, EXCLUDED.high),
                    low    = LEAST(candles.low,     EXCLUDED.low),
                    close  = EXCLUDED.close,
                    volume = EXCLUDED.volume""",
-            rows,
+            [(r["ts"], r["symbol"], r["interval"],
+              r["open"], r["high"], r["low"], r["close"], r["volume"]) for r in rows],
+            template="(%s, %s, %s, %s, %s, %s, %s, %s)",
         )
 
     def get_candle_last_ts(self, symbol: str, interval: str) -> Optional[datetime]:
@@ -153,19 +172,19 @@ class DataStore:
     def insert_futures_candles(self, rows: List[Dict]) -> None:
         if not rows:
             return
-        self._execmany(
+        self._execvalues(
             """INSERT INTO futures_candles
                    (ts, symbol, expiry, "interval", open, high, low, close, volume)
-               VALUES
-                   (%(ts)s, %(symbol)s, %(expiry)s, %(interval)s,
-                    %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
+               VALUES %s
                ON CONFLICT (symbol, expiry, "interval", ts) DO UPDATE
                SET open   = EXCLUDED.open,
                    high   = GREATEST(futures_candles.high, EXCLUDED.high),
                    low    = LEAST(futures_candles.low,     EXCLUDED.low),
                    close  = EXCLUDED.close,
                    volume = EXCLUDED.volume""",
-            rows,
+            [(r["ts"], r["symbol"], r["expiry"], r["interval"],
+              r["open"], r["high"], r["low"], r["close"], r["volume"]) for r in rows],
+            template="(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
         )
 
     def get_futures_candle_last_ts(self, symbol: str, expiry: date,
@@ -261,6 +280,53 @@ class DataStore:
             (symbol, expiry, trade_date, symbol, expiry),
         )
         return {"atm_strike": row[0], "atm_iv": row[1]} if row else None
+
+    # ── options EOD ───────────────────────────────────────────────────────────
+
+    def insert_options_eod(self, rows: List[Dict]) -> None:
+        if not rows:
+            return
+        self._execvalues(
+            """INSERT INTO options_eod
+                   (date, symbol, expiry, strike, "right",
+                    open, high, low, close, settle,
+                    volume, oi, oi_change, underlying)
+               VALUES %s
+               ON CONFLICT (date, symbol, expiry, strike, "right") DO NOTHING""",
+            [(r["date"], r["symbol"], r["expiry"], r["strike"], r["right"],
+              r.get("open"), r.get("high"), r.get("low"), r.get("close"),
+              r.get("settle"), r.get("volume", 0), r.get("oi", 0),
+              r.get("oi_change", 0), r.get("underlying")) for r in rows],
+            template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        )
+
+    def get_options_eod(
+        self,
+        symbol: str,
+        expiry: date,
+        trade_date: Optional[date] = None,
+    ) -> List[Dict]:
+        if trade_date:
+            rows = self._queryall(
+                """SELECT date, strike, "right", open, high, low, close,
+                          settle, volume, oi, oi_change, underlying
+                   FROM options_eod
+                   WHERE symbol=%s AND expiry=%s AND date=%s
+                   ORDER BY strike, "right" """,
+                (symbol, expiry, trade_date),
+            )
+        else:
+            rows = self._queryall(
+                """SELECT date, strike, "right", open, high, low, close,
+                          settle, volume, oi, oi_change, underlying
+                   FROM options_eod
+                   WHERE symbol=%s AND expiry=%s
+                   ORDER BY date, strike, "right" """,
+                (symbol, expiry),
+            )
+        cols = ["date", "strike", "right", "open", "high", "low", "close",
+                "settle", "volume", "oi", "oi_change", "underlying"]
+        return [dict(zip(cols, r)) for r in rows]
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 

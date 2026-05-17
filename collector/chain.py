@@ -54,8 +54,7 @@ class ChainSnapshotCollector:
                                    exchange=self._cfg.nfo_exchange)
                     time.sleep(0.3)   # gentle rate limiting between REST calls
                 except Exception as exc:
-                    log.error("Chain snapshot failed %s %s: %s",
-                              symbol, expiry, exc, exc_info=True)
+                    log.warning("Chain snapshot skipped %s %s: %s", symbol, expiry, exc)
 
         # Equity option chains — 3 monthly expiries each
         for symbol in self._cfg.equity_option_symbols:
@@ -67,14 +66,13 @@ class ChainSnapshotCollector:
                                    exchange=self._cfg.nfo_exchange)
                     time.sleep(0.3)
                 except Exception as exc:
-                    log.error("Equity chain snapshot failed %s %s: %s",
-                              symbol, expiry, exc, exc_info=True)
+                    log.warning("Equity chain snapshot skipped %s %s: %s", symbol, expiry, exc)
 
     # ── internals ─────────────────────────────────────────────────────────────
 
     def _snapshot(self, symbol: str, expiry: date, ts: datetime,
                   is_index: bool, exchange: str) -> None:
-        spot  = self._get_spot(symbol, exchange if not is_index else self._cfg.nse_exchange)
+        spot  = self._get_spot(symbol, self._cfg.nse_exchange)
         chain = self._fetch_chain(symbol, expiry, exchange)
         if chain.empty:
             log.debug("Empty chain for %s %s — expiry may not be listed.", symbol, expiry)

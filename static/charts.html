@@ -148,7 +148,7 @@
       <button class="primary" onclick="addToWatchlist()">Add</button>
       <button onclick="toggleAddForm()">Cancel</button>
     </div>
-    <div id="wl-items"><div id="wl-empty">Add up to 5 stocks</div></div>
+    <div id="wl-items"><div id="wl-empty">Add up to 10 stocks</div></div>
   </aside>
 
   <!-- ── Chart panel ── -->
@@ -203,6 +203,36 @@
         <label class="ind-chk"><input type="checkbox" id="chk-vol"  checked onchange="toggleSub('vol',this.checked)"> Vol</label>
         <label class="ind-chk"><input type="checkbox" id="chk-rsi"  onchange="toggleSub('rsi',this.checked)"> RSI(14)</label>
         <label class="ind-chk"><input type="checkbox" id="chk-macd" onchange="toggleSub('macd',this.checked)"> MACD</label>
+      </div>
+      <div class="tb-sep"></div>
+
+      <!-- Download -->
+      <button id="dl-btn" onclick="toggleDownloadPanel()" title="Download historical data for selected symbol">⬇ Data</button>
+    </div>
+
+    <!-- Download panel (collapsible) -->
+    <div id="dl-panel" style="display:none;background:var(--panel);border-bottom:1px solid var(--border);padding:10px 14px;font-size:12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <strong style="color:var(--fg)">Download Historical Data</strong>
+        <span id="dl-for-symbol" style="color:var(--blue,#4fa3e0);font-size:11px;font-weight:600"></span>
+        <label style="color:var(--muted)">Intraday days:
+          <input id="dl-days" type="number" value="90" min="1" max="365" style="width:55px;margin-left:4px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:3px;padding:2px 4px;">
+        </label>
+        <label style="color:var(--muted)">Daily days:
+          <input id="dl-days-daily" type="number" value="730" min="1" max="1825" style="width:60px;margin-left:4px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:3px;padding:2px 4px;">
+        </label>
+        <button class="primary" id="dl-start-btn" onclick="startDownload()">▶ Start</button>
+        <span id="dl-status-text" style="color:var(--muted)">Select a stock first, then click Start.</span>
+      </div>
+      <div id="dl-progress-wrap" style="display:none;margin-top:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="flex:1;background:var(--border);border-radius:3px;height:6px;overflow:hidden;">
+            <div id="dl-progress-bar" style="height:100%;background:var(--blue,#4fa3e0);width:0%;transition:width 0.4s;border-radius:3px;"></div>
+          </div>
+          <span id="dl-pct" style="color:var(--muted);min-width:38px;text-align:right">0%</span>
+        </div>
+        <div id="dl-current" style="color:var(--fg);margin-bottom:4px;"></div>
+        <div id="dl-log" style="max-height:80px;overflow-y:auto;font-family:monospace;font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:3px;padding:4px 6px;white-space:pre-wrap;"></div>
       </div>
     </div>
 
@@ -269,9 +299,26 @@ let _ws          = null;
 let _ltpCache    = {};       // stock → ltp
 let _ltpPrev     = {};       // stock → previous ltp
 
-// Watchlist: [{stock, exchange, product}]  max 5
-const MAX_WL = 5;
-let _watchlist = JSON.parse(localStorage.getItem('chartWatchlist') || '[]');
+// Watchlist: [{stock, exchange, product}]
+const MAX_WL = 10;
+
+const _DEFAULT_WATCHLIST = [
+  {stock:'NIFTY',     exchange:'NSE', product:'cash', label:'NIFTY 50'},
+  {stock:'BANKNIFTY', exchange:'NSE', product:'cash', label:'BANK NIFTY'},
+  {stock:'RELIANCE',  exchange:'NSE', product:'cash', label:'RELIANCE'},
+  {stock:'HDFCBANK',  exchange:'NSE', product:'cash', label:'HDFC BANK'},
+  {stock:'TCS',       exchange:'NSE', product:'cash', label:'TCS'},
+];
+
+// Always ensure the 5 defaults are present; append any extra user-added symbols
+function _mergeDefaults(saved) {
+  const existing = new Set(saved.map(w => w.stock));
+  const missing  = _DEFAULT_WATCHLIST.filter(d => !existing.has(d.stock));
+  return [...missing, ...saved];
+}
+let _watchlist = _mergeDefaults(
+  JSON.parse(localStorage.getItem('chartWatchlist') || '[]')
+);
 
 // Currently charted symbol
 let _active = null;   // {stock, exchange, product}
@@ -391,7 +438,7 @@ function saveWL() { localStorage.setItem('chartWatchlist', JSON.stringify(_watch
 
 function renderWatchlist() {
   const wrap = document.getElementById('wl-items');
-  if (!_watchlist.length) { wrap.innerHTML = '<div id="wl-empty">Add up to 5 stocks</div>'; return; }
+  if (!_watchlist.length) { wrap.innerHTML = '<div id="wl-empty">Add symbols using + Add</div>'; return; }
   wrap.innerHTML = '';
   _watchlist.forEach((w, i) => {
     const ltp   = _ltpCache[w.stock];
@@ -405,12 +452,12 @@ function renderWatchlist() {
     const div = document.createElement('div');
     div.className = 'wl-tile' + (isActive ? ' active' : '');
     div.id = `wl-tile-${w.stock}`;
-    div.onclick = () => loadStock(w);
+    div.onclick = () => loadStock(w, true);
     div.innerHTML = `
       <div style="display:flex;justify-content:space-between">
         <div>
-          <div class="wl-sym">${w.stock}</div>
-          <div class="wl-exch">${w.exchange} · ${w.product || 'cash'}</div>
+          <div class="wl-sym">${w.label || w.stock}</div>
+          <div class="wl-exch">${w.stock} · ${w.exchange}</div>
         </div>
         <button class="wl-rm danger" onclick="event.stopPropagation();removeFromWL(${i})">✕</button>
       </div>
@@ -443,8 +490,9 @@ function removeFromWL(idx) {
 
 function toggleAddForm() {
   const f = document.getElementById('wl-add-form');
-  f.style.display = f.style.display === 'none' ? '' : 'none';
-  if (f.style.display !== 'none') document.getElementById('wl-input').focus();
+  const hidden = window.getComputedStyle(f).display === 'none';
+  f.style.display = hidden ? 'block' : 'none';
+  if (hidden) document.getElementById('wl-input').focus();
 }
 
 let _wlPickedCode = '', _wlPickedExch = '';
@@ -509,13 +557,15 @@ function addToWatchlist() {
     alert(`${code} (${exch}) already in watchlist`); return;
   }
   const prod = exch === 'NFO' ? 'futures' : 'cash';
-  _watchlist.push({ stock: code, exchange: exch, product: prod });
+  const entry = { stock: code, exchange: exch, product: prod };
+  _watchlist.push(entry);
   saveWL();
   renderWatchlist();
   subscribeAll();
   toggleAddForm();
   document.getElementById('wl-input').value = '';
   _wlPickedCode = ''; _wlPickedExch = '';
+  loadStock(entry, true);   // auto-load immediately after adding
 }
 
 async function subscribeAll() {
@@ -528,6 +578,103 @@ async function subscribeAll() {
       });
     } catch(e) {}
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DOWNLOAD HISTORICAL DATA
+// ════════════════════════════════════════════════════════════════════════════
+let _dlPollTimer = null;
+
+function toggleDownloadPanel() {
+  const p = document.getElementById('dl-panel');
+  const showing = p.style.display !== 'none';
+  p.style.display = showing ? 'none' : 'block';
+  if (!showing) {
+    const lbl = document.getElementById('dl-for-symbol');
+    lbl.textContent = _active ? `for: ${_active.stock} (${_active.exchange})` : '— select a stock first';
+  }
+}
+
+async function startDownload() {
+  if (!_active) { alert('Select a stock from the watchlist first.'); return; }
+  const btn  = document.getElementById('dl-start-btn');
+  const stat = document.getElementById('dl-status-text');
+  const days      = parseInt(document.getElementById('dl-days').value)      || 90;
+  const daysDaily = parseInt(document.getElementById('dl-days-daily').value) || 730;
+
+  btn.disabled = true;
+  stat.style.color = 'var(--muted)';
+  stat.textContent = `Downloading ${_active.stock}…`;
+  document.getElementById('dl-progress-wrap').style.display = 'block';
+  document.getElementById('dl-log').textContent = '';
+
+  try {
+    const r = await fetch('/api/data/download', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        backfill_days:       days,
+        backfill_days_daily: daysDaily,
+        symbols:             [_active.stock],
+      }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      stat.style.color = 'var(--red)';
+      stat.textContent = e.detail || 'Error starting download';
+      btn.disabled = false;
+      return;
+    }
+    stat.textContent = 'Running…';
+    clearInterval(_dlPollTimer);
+    _dlPollTimer = setInterval(_pollDownload, 2500);
+  } catch(e) {
+    stat.style.color = 'var(--red)';
+    stat.textContent = 'Network error: ' + e.message;
+    btn.disabled = false;
+  }
+}
+
+async function _pollDownload() {
+  try {
+    const r = await fetch('/api/data/status');
+    const d = await r.json();
+
+    const pct  = d.total_items > 0 ? Math.round(d.done_items / d.total_items * 100) : 0;
+    const stat = document.getElementById('dl-status-text');
+    const bar  = document.getElementById('dl-progress-bar');
+    const pctEl= document.getElementById('dl-pct');
+    const cur  = document.getElementById('dl-current');
+    const log  = document.getElementById('dl-log');
+    const btn  = document.getElementById('dl-start-btn');
+
+    bar.style.width = pct + '%';
+    pctEl.textContent = pct + '%';
+    cur.textContent = d.current || '';
+
+    if (d.log && d.log.length) {
+      log.textContent = d.log.slice(-30).join('\n');
+      log.scrollTop = log.scrollHeight;
+    }
+
+    if (d.status === 'complete') {
+      clearInterval(_dlPollTimer);
+      stat.style.color = 'var(--green)';
+      stat.textContent = `Done! ${d.done_items} items downloaded.`;
+      btn.disabled = false;
+      // Refresh DB symbol list and reload current chart from DB
+      await checkDbStatus();
+      if (_active) loadStock(_active, true);
+    } else if (d.status === 'error') {
+      clearInterval(_dlPollTimer);
+      stat.style.color = 'var(--red)';
+      stat.textContent = 'Error: ' + (d.error || 'unknown');
+      btn.disabled = false;
+    } else {
+      const eta = d.eta_sec != null ? ` · ETA ${Math.ceil(d.eta_sec)}s` : '';
+      stat.textContent = `${d.done_items}/${d.total_items} items${eta}`;
+      stat.style.color = 'var(--muted)';
+    }
+  } catch(e) {}
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -626,13 +773,15 @@ function setSource(src) {
   _dataSource = src;
   document.getElementById('src-live').classList.toggle('on', src === 'live');
   document.getElementById('src-db').classList.toggle('on',   src === 'db');
-  if (_active) loadStock(_active);
+  if (_active) loadStock(_active, false);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // LOAD STOCK + HISTORICAL DATA
 // ════════════════════════════════════════════════════════════════════════════
-async function loadStock(w) {
+// autoSrc=true → auto-pick DB/live based on what's available (only on symbol change)
+// autoSrc=false → respect current _dataSource (user explicitly chose it)
+async function loadStock(w, autoSrc = false) {
   _active = { ...w };
   _candles = []; _curCandle = null; _vwapNum = 0; _vwapDen = 0;
   document.getElementById('chart-symbol-label').textContent = `${w.stock}  (${w.exchange})`;
@@ -656,11 +805,19 @@ async function loadStock(w) {
     } catch(e) {}
   }
 
-  // Auto-select source: use DB if available AND symbol has stored data, else live
-  const _preferredSrc = (_dbAvailable && _dbSymbols.has(w.stock.toUpperCase())) ? 'db' : 'live';
-  if (_preferredSrc !== _dataSource) setSource(_preferredSrc);
+  // Auto-select source only when loading a new symbol (not when user clicked DB/Live)
+  if (autoSrc) {
+    const preferred = (_dbAvailable && _dbSymbols.has(w.stock.toUpperCase())) ? 'db' : 'live';
+    if (preferred !== _dataSource) {
+      _dataSource = preferred;
+      document.getElementById('src-live').classList.toggle('on', preferred === 'live');
+      document.getElementById('src-db').classList.toggle('on',   preferred === 'db');
+    }
+  }
 
   // Fetch historical OHLC — from DB or live Breeze depending on source toggle
+  const loadingEl = document.getElementById('chart-loading');
+  let loadError = null;
   try {
     const days = _activeTF === '1day' ? 730 : _activeTF === '30minute' ? 90 : _activeTF === '5minute' ? 90 : 68;
     let url;
@@ -670,31 +827,44 @@ async function loadStock(w) {
       url = `/api/ohlc?stock=${encodeURIComponent(w.stock)}&exchange=${encodeURIComponent(w.exchange)}&product=${encodeURIComponent(w.product||'cash')}&interval=${_activeTF}&days=${days}`;
     }
     const r = await fetch(url);
-    const d = await r.json();
-    if (d.warning) {
-      document.getElementById('chart-loading').style.display = 'none';
-      document.getElementById('chart-loading').textContent = d.warning || 'No data';
-      document.getElementById('chart-loading').style.display = 'block';
+    if (!r.ok) { loadError = `Server error ${r.status}`; }
+    else {
+      const d = await r.json();
+      if (d.error)   loadError = d.error;
+      if (d.warning) loadError = d.warning;
+      if (d.candles && d.candles.length) {
+        loadError = null;   // data arrived — clear any warning
+        _candles = d.candles.map(c => ({
+          time:   _dtToEpoch(c.datetime),
+          open:   parseFloat(c.open   || 0),
+          high:   parseFloat(c.high   || 0),
+          low:    parseFloat(c.low    || 0),
+          close:  parseFloat(c.close  || 0),
+          volume: parseFloat(c.volume || 0),
+        })).filter(c => c.time > 0 && c.close > 0).sort((a,b) => a.time - b.time);
+        _candles.forEach(c => { _vwapNum += c.close * c.volume; _vwapDen += c.volume; });
+      } else if (!loadError) {
+        loadError = `No data for ${w.stock} [${_activeTF}] in ${_dataSource === 'db' ? 'DB' : 'Breeze'}`;
+      }
     }
-    if (d.candles && d.candles.length) {
-      _candles = d.candles.map(c => ({
-        time:   _dtToEpoch(c.datetime),
-        open:   parseFloat(c.open   || 0),
-        high:   parseFloat(c.high   || 0),
-        low:    parseFloat(c.low    || 0),
-        close:  parseFloat(c.close  || 0),
-        volume: parseFloat(c.volume || 0),
-      })).filter(c => c.time > 0 && c.close > 0).sort((a,b) => a.time - b.time);
-      // Rebuild VWAP from history
-      _candles.forEach(c => { _vwapNum += c.close * c.volume; _vwapDen += c.volume; });
-    }
-  } catch(e) {}
+  } catch(e) { loadError = 'Fetch failed: ' + e.message; }
 
-  document.getElementById('chart-loading').style.display = 'none';
+  if (loadError) {
+    const isDbMode  = _dataSource === 'db';
+    const isLiveMode = _dataSource === 'live';
+    let hint = '';
+    if (isDbMode)   hint = '<br><small style="color:var(--muted)">Try downloading data with the ⬇ Data button, or switch to Live source.</small>';
+    if (isLiveMode) hint = '<br><small style="color:var(--muted)">Breeze may not support this interval for indices. Try DB source if you have downloaded data.</small>';
+    loadingEl.innerHTML = loadError + hint;
+    loadingEl.style.display = '';
+  } else {
+    loadingEl.style.display = 'none';
+  }
   _pushDataToChart();
   _redrawOverlays();
   _redrawSubcharts();
   _calcSignals();
+  _drawStrategyBreakevens();
 }
 
 function _dtToEpoch(s) {
@@ -707,7 +877,11 @@ function _dtToEpoch(s) {
 function _pushDataToChart() {
   if (!_mainSeries) return;
   const all = [..._candles, ...(_curCandle ? [{ ..._curCandle }] : [])];
-  if (!all.length) return;
+  if (!all.length) {
+    _mainSeries.setData([]);
+    if (_volSeries) _volSeries.setData([]);
+    return;
+  }
   if (_activeChartType === 'line') {
     _mainSeries.setData(all.map(c => ({ time: c.time, value: c.close })));
   } else {
@@ -967,6 +1141,46 @@ function _calcSignals() {
   _runFormulaQuiet();
 }
 
+// ── Strategy break-even overlays ──────────────────────────────────────────
+let _beLines = [];   // active createPriceLine handles
+
+async function _drawStrategyBreakevens() {
+  if (!_mainSeries || !_active) return;
+
+  // Clear existing BE lines
+  _beLines.forEach(l => { try { _mainSeries.removePriceLine(l); } catch(e){} });
+  _beLines = [];
+
+  try {
+    const r = await fetch('/api/paper/strategies');
+    if (!r.ok) return;
+    const { trades } = await r.json();
+
+    (trades || []).forEach(t => {
+      if (t.status !== 'open') return;
+      if (t.stock?.toUpperCase() !== _active?.stock?.toUpperCase()) return;
+
+      const beColors = { lower: '#f59e0b', upper: '#f59e0b' };
+      if (t.break_even_lower) {
+        _beLines.push(_mainSeries.createPriceLine({
+          price: t.break_even_lower,
+          color: beColors.lower, lineWidth: 1, lineStyle: 2,
+          axisLabelVisible: true,
+          title: `BE↓ ${t.strategy_name}`,
+        }));
+      }
+      if (t.break_even_upper) {
+        _beLines.push(_mainSeries.createPriceLine({
+          price: t.break_even_upper,
+          color: beColors.upper, lineWidth: 1, lineStyle: 2,
+          axisLabelVisible: true,
+          title: `BE↑ ${t.strategy_name}`,
+        }));
+      }
+    });
+  } catch(e) {}
+}
+
 function toggleFormulaArea() {
   const el=document.getElementById('formula-area');
   el.style.display = el.style.display==='none' ? '' : 'none';
@@ -1062,7 +1276,7 @@ document.addEventListener('click', e => { if (!e.target.closest('.sym-wrap')) do
   // Default: show vol sub-chart
   document.getElementById('chk-vol').checked = true;
   // Auto-load first watchlist stock
-  if (_watchlist.length) loadStock(_watchlist[0]);
+  if (_watchlist.length) loadStock(_watchlist[0], true);
 })();
 </script>
 </body>

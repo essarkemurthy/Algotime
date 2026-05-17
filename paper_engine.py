@@ -8,7 +8,7 @@ No real orders are sent to Breeze.
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger("paper")
 
@@ -61,10 +61,11 @@ class PaperTrader:
     """Simulated order book — fills instantly at LTP, tracks P&L mark-to-market."""
 
     def __init__(self, starting_capital: float = 1_000_000.0) -> None:
-        self.starting_capital = starting_capital
-        self.cash             = starting_capital
-        self._orders:    List[PaperOrder]    = []
-        self._positions: List[PaperPosition] = []
+        self.starting_capital    = starting_capital
+        self.cash                = starting_capital
+        self._orders:            List[PaperOrder]    = []
+        self._positions:         List[PaperPosition] = []
+        self._strategy_trades:   List[dict]          = []
         self._seq = 0
 
     # ── Orders ────────────────────────────────────────────────────────────────
@@ -254,11 +255,191 @@ class PaperTrader:
             "status": o.status,
         }
 
+    # ── Multi-leg strategy trades ──────────────────────────────────────────────
+
+    def enter_strategy(
+        self,
+        strategy_id:  str,
+        strategy_name: str,
+        stock:        str,
+        exchange:     str,
+        expiry:       str,
+        legs:         List[dict],          # each: {action, product, right, strike, qty, price}
+        ltp_cache:    Dict[str, float],
+        break_even_lower: Optional[float] = None,
+        break_even_upper: Optional[float] = None,
+    ) -> dict:
+        """Place all legs of a multi-leg strategy atomically (paper fills)."""
+        self._seq += 1
+        strat_seq = self._seq
+        filled_legs = []
+        net_credit  = 0.0
+
+        for leg in legs:
+            right  = leg.get("right")
+            strike = leg.get("strike")
+            prod   = leg.get("product", "options")
+            action = leg["action"]
+            qty    = leg["qty"]
+            price  = float(leg.get("price", 0))
+
+            order = self.place_order(
+                stock=stock, exchange=exchange, product=prod,
+                action=action, qty=qty, order_type="limit" if price else "market",
+                price=price, ltp_cache=ltp_cache,
+                right=right, strike=strike, expiry=expiry if prod == "options" else None,
+            )
+            # Credit/debit accounting
+            signed = order.fill_price * qty
+            net_credit += signed if action == "sell" else -signed
+            filled_legs.append({
+                "pos_id":     f"PP{strat_seq:04d}",
+                "label":      leg.get("label", f"{action} {right or ''} {strike or ''}"),
+                "action":     action,
+                "right":      right,
+                "strike":     strike,
+                "product":    prod,
+                "qty":        qty,
+                "fill_price": order.fill_price,
+                "order_id":   order.id,
+            })
+
+        trade = {
+            "id":                f"ST{strat_seq:04d}",
+            "strategy_id":       strategy_id,
+            "strategy_name":     strategy_name,
+            "stock":             stock,
+            "exchange":          exchange,
+            "expiry":            expiry,
+            "legs":              filled_legs,
+            "net_credit":        round(net_credit, 2),
+            "status":            "open",
+            "opened_at":         datetime.now().strftime("%H:%M:%S"),
+            "closed_at":         None,
+            "realised_pnl":      None,
+            "alerts":            [],
+            "break_even_lower":  break_even_lower,
+            "break_even_upper":  break_even_upper,
+        }
+        self._strategy_trades.append(trade)
+        log.info("Paper strategy entered: %s  %s  net_credit=%.2f",
+                 strategy_name, stock, net_credit)
+        return trade
+
+    def exit_strategy(
+        self, trade_id: str, ltp_cache: Dict[str, float]
+    ) -> Tuple[dict, float]:
+        """Close all open legs of a strategy trade."""
+        trade = next((t for t in self._strategy_trades if t["id"] == trade_id), None)
+        if not trade or trade["status"] != "open":
+            raise ValueError(f"Strategy trade '{trade_id}' not found or already closed.")
+
+        net_exit_credit = 0.0
+        for leg in trade["legs"]:
+            # Find matching open position
+            pos = next(
+                (p for p in self._positions
+                 if p.is_open and p.symbol == _symbol_key(
+                     trade["stock"], leg["product"], leg.get("right"),
+                     leg.get("strike"), trade["expiry"] if leg["product"] == "options" else None
+                 )),
+                None,
+            )
+            if not pos:
+                continue
+            exit_action = "sell" if pos.direction == "buy" else "buy"
+            order = self.place_order(
+                stock=trade["stock"], exchange=trade["exchange"],
+                product=leg["product"], action=exit_action,
+                qty=pos.qty, order_type="market", price=0,
+                ltp_cache=ltp_cache, right=leg.get("right"),
+                strike=leg.get("strike"),
+                expiry=trade["expiry"] if leg["product"] == "options" else None,
+            )
+            signed = order.fill_price * pos.qty
+            net_exit_credit += signed if exit_action == "sell" else -signed
+
+        realised = trade["net_credit"] + net_exit_credit
+        trade["status"]       = "closed"
+        trade["closed_at"]    = datetime.now().strftime("%H:%M:%S")
+        trade["realised_pnl"] = round(realised, 2)
+        log.info("Paper strategy closed: %s  P&L=%.2f", trade["id"], realised)
+        return trade, realised
+
+    def strategy_summary(self, ltp_cache: Dict[str, float]) -> List[dict]:
+        """Return all strategy trades with live unrealised P&L."""
+        result = []
+        for trade in self._strategy_trades:
+            unr = 0.0
+            if trade["status"] == "open":
+                for leg in trade["legs"]:
+                    sym = _symbol_key(
+                        trade["stock"], leg["product"], leg.get("right"),
+                        leg.get("strike"),
+                        trade["expiry"] if leg["product"] == "options" else None,
+                    )
+                    ltp = ltp_cache.get(sym) or ltp_cache.get(trade["stock"]) or leg["fill_price"]
+                    signed = ltp * leg["qty"]
+                    unr += signed if leg["action"] == "sell" else -signed
+                trade_copy = {**trade, "unrealised_pnl": round(trade["net_credit"] + unr, 2)}
+            else:
+                trade_copy = {**trade, "unrealised_pnl": None}
+            result.append(trade_copy)
+        return result
+
+    def check_alerts(self, ltp_cache: Dict[str, float]) -> List[dict]:
+        """Return new alert dicts for strategy trades crossing thresholds."""
+        new_alerts = []
+        for trade in self._strategy_trades:
+            if trade["status"] != "open":
+                continue
+            summary = self.strategy_summary(ltp_cache)
+            t = next((s for s in summary if s["id"] == trade["id"]), None)
+            if t is None:
+                continue
+            pnl = t["unrealised_pnl"] or 0.0
+            credit = trade["net_credit"]
+
+            alerts_fired = set(a["type"] for a in trade["alerts"])
+
+            # Iron Condor / credit strategies: target = 50% of credit, SL = 2x credit
+            if credit > 0:
+                if pnl >= credit * 0.5 and "TARGET_50" not in alerts_fired:
+                    alert = {"type": "TARGET_50", "trade_id": trade["id"],
+                             "message": f"🎯 {trade['strategy_name']} {trade['stock']} — 50% profit target hit (P&L ₹{pnl:,.0f})",
+                             "level": "success", "ts": datetime.now().strftime("%H:%M:%S")}
+                    trade["alerts"].append(alert)
+                    new_alerts.append(alert)
+                if pnl <= -credit * 2 and "SL_2X" not in alerts_fired:
+                    alert = {"type": "SL_2X", "trade_id": trade["id"],
+                             "message": f"🛑 {trade['strategy_name']} {trade['stock']} — 2x stop-loss hit (P&L ₹{pnl:,.0f})",
+                             "level": "danger", "ts": datetime.now().strftime("%H:%M:%S")}
+                    trade["alerts"].append(alert)
+                    new_alerts.append(alert)
+
+            # Debit strategies: SL = 50% of debit, target = 80% gain
+            elif credit < 0:
+                debit = -credit
+                if pnl >= debit * 0.8 and "TARGET_80" not in alerts_fired:
+                    alert = {"type": "TARGET_80", "trade_id": trade["id"],
+                             "message": f"🎯 {trade['strategy_name']} {trade['stock']} — 80% gain hit (P&L ₹{pnl:,.0f})",
+                             "level": "success", "ts": datetime.now().strftime("%H:%M:%S")}
+                    trade["alerts"].append(alert)
+                    new_alerts.append(alert)
+                if pnl <= -debit * 0.5 and "SL_50" not in alerts_fired:
+                    alert = {"type": "SL_50", "trade_id": trade["id"],
+                             "message": f"🛑 {trade['strategy_name']} {trade['stock']} — 50% stop-loss hit (P&L ₹{pnl:,.0f})",
+                             "level": "danger", "ts": datetime.now().strftime("%H:%M:%S")}
+                    trade["alerts"].append(alert)
+                    new_alerts.append(alert)
+        return new_alerts
+
     # ── Reset ─────────────────────────────────────────────────────────────────
 
     def reset(self) -> None:
         self.cash = self.starting_capital
         self._orders.clear()
         self._positions.clear()
+        self._strategy_trades.clear()
         self._seq = 0
         log.info("Paper portfolio reset. Starting capital ₹%,.0f", self.starting_capital)

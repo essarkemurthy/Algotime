@@ -50,7 +50,7 @@ class HistoricalBackfill:
         log.info("Starting historical backfill — intraday: %d days, daily: %d days",
                  self._cfg.backfill_days, self._cfg.backfill_days_daily)
 
-        now = datetime.now()
+        now = datetime.now().replace(tzinfo=None)
 
         # Spot / index candles — all configured symbols
         for symbol in self._cfg.all_spot_symbols:
@@ -83,6 +83,8 @@ class HistoricalBackfill:
     def _backfill_spot(self, symbol: str, breeze_interval: str,
                        db_interval: str, from_dt: datetime, to_dt: datetime) -> None:
         last_ts = self._store.get_candle_last_ts(symbol, db_interval)
+        if last_ts is not None:
+            last_ts = last_ts.replace(tzinfo=None)
         fetch_from = (last_ts + timedelta(minutes=1)) if last_ts else from_dt
 
         if fetch_from >= to_dt:
@@ -105,12 +107,18 @@ class HistoricalBackfill:
         if candles:
             self._store.insert_candles(candles)
             log.info("Spot %s [%s]: +%d candles.", symbol, db_interval, len(candles))
+        else:
+            log.warning("Spot %s [%s]: Breeze returned 0 candles from %s to %s.",
+                        symbol, db_interval,
+                        fetch_from.strftime("%Y-%m-%d"), to_dt.strftime("%Y-%m-%d"))
 
     # ── futures ───────────────────────────────────────────────────────────────
 
     def _backfill_futures(self, symbol: str, expiry: date, breeze_interval: str,
                           db_interval: str, from_dt: datetime, to_dt: datetime) -> None:
         last_ts = self._store.get_futures_candle_last_ts(symbol, expiry, db_interval)
+        if last_ts is not None:
+            last_ts = last_ts.replace(tzinfo=None)
         fetch_from = (last_ts + timedelta(minutes=1)) if last_ts else from_dt
 
         if fetch_from >= to_dt:
@@ -135,6 +143,8 @@ class HistoricalBackfill:
             self._store.insert_futures_candles(candles)
             log.info("Futures %s %s [%s]: +%d candles.",
                      symbol, expiry, db_interval, len(candles))
+        else:
+            log.warning("Futures %s %s [%s]: Breeze returned 0 candles.", symbol, expiry, db_interval)
 
     # ── Breeze REST — chunked to respect API date-range limits ───────────────
 

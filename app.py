@@ -101,15 +101,24 @@ logging.basicConfig(
 log = logging.getLogger("dashboard")
 log.setLevel(logging.DEBUG)   # see subscribe/tick diagnostics in logs/dashboard.log
 
+# Silence the Breeze SDK's verbose per-response DEBUG logs
+logging.getLogger("APILogger").setLevel(logging.WARNING)
+
 # ── Global state ──────────────────────────────────────────────────────────────
 
 _session:    Optional[BreezeSession]      = None
 _algo_engine: Optional[OptionsAlgoEngine] = None
 _algo_task:  Optional[asyncio.Task]       = None
-_broadcast_task: Optional[asyncio.Task]   = None
-_chain_snap_task: Optional[asyncio.Task]  = None   # periodic chain/delta snapshots
+_broadcast_task:    Optional[asyncio.Task] = None
+_chain_snap_task:   Optional[asyncio.Task] = None   # periodic chain/delta snapshots
+_strategy_task:     Optional[asyncio.Task] = None   # strategy signal polling
+_candle_flush_task: Optional[asyncio.Task] = None   # flush live OHLCV to DB every 60 s
 _trigger_tasks: Dict[str, asyncio.Task]   = {}
 _main_loop:  Optional[asyncio.AbstractEventLoop] = None
+
+# ── Strategy runner state ─────────────────────────────────────────────────────
+_active_strategies: Dict[str, dict] = {}   # strategy_id → {instance, cfg, mode, auto_exec}
+_strategy_signals: deque = deque(maxlen=500)
 
 _ws_subscriptions: set            = set()
 _token_to_symbol:  Dict[str, str] = {}
@@ -125,6 +134,38 @@ _symbol_index: List[dict] = []
 _SYMBOL_CACHE  = Path("data/symbols.json")
 
 _limiter = BreezeRateLimiter(per_min=75, per_day=4500)
+
+# ── Symbol alias map — normalise user-supplied display names to Breeze codes ──
+_SYMBOL_ALIASES: Dict[str, str] = {
+    # NIFTY variants
+    "NIFTY 50":    "NIFTY",
+    "NIFTY50":     "NIFTY",
+    "CNX NIFTY":   "NIFTY",
+    # BANKNIFTY variants
+    "BANK NIFTY":  "BANKNIFTY",
+    "BANKNIFTY50": "BANKNIFTY",
+    "NIFTY BANK":  "BANKNIFTY",
+    # FINNIFTY
+    "FIN NIFTY":   "FINNIFTY",
+    # MIDCPNIFTY
+    "MIDCAP NIFTY":"MIDCPNIFTY",
+    # Equities — common display names
+    "HDFC BANK":   "HDFCBANK",
+    "HDFC":        "HDFCBANK",
+    "INFOSYS":     "INFY",
+    "STATE BANK":  "SBIN",
+    "SBI":         "SBIN",
+    "ICICI BANK":  "ICICIBANK",
+    "KOTAK BANK":  "KOTAKBANK",
+    "BHARTI":      "BHARTIARTL",
+    "AIRTEL":      "BHARTIARTL",
+    "AXIS BANK":   "AXISBANK",
+}
+
+def _normalize_symbol(sym: str) -> str:
+    """Resolve display names and aliases to the canonical Breeze trading symbol."""
+    s = sym.strip().upper()
+    return _SYMBOL_ALIASES.get(s, s)
 
 _MAX_DAILY_LOSS:    float = float(os.getenv("MAX_DAILY_LOSS",    "40000"))
 _TOTAL_PREMIUM_CAP: float = float(os.getenv("TOTAL_PREMIUM_CAP", "78000"))
@@ -149,6 +190,11 @@ def _init_db_store() -> None:
 _tick_buffer: List[dict] = []
 _tick_buffer_lock = threading.Lock()
 _TICK_FLUSH_SEC = 5
+
+# ── Candle write queue — decouples tick handler from DB I/O ──────────────────
+# Tick handler puts rows here; _candle_writer_thread drains and batch-inserts.
+import queue as _queue
+_candle_write_queue: "_queue.Queue[dict]" = _queue.Queue(maxsize=50_000)
 
 # ── Historical download state ─────────────────────────────────────────────────
 _download_running: bool      = False
@@ -191,11 +237,58 @@ class _DownloadLogHandler(logging.Handler):
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
-    {"stock": "NIFTY",     "exchange": "NSE", "label": "NIFTY"},
-    {"stock": "INFY",      "exchange": "NSE", "label": "INFY"},
-    {"stock": "ONGC",      "exchange": "NSE", "label": "ONGC"},
-    {"stock": "MAXHEALTH", "exchange": "NSE", "label": "MAXHEALTH"},
+    {"stock": "NIFTY",     "exchange": "NSE", "label": "NIFTY 50"},
+    {"stock": "BANKNIFTY", "exchange": "NSE", "label": "BANK NIFTY"},
+    {"stock": "RELIANCE",  "exchange": "NSE", "label": "RELIANCE"},
+    {"stock": "HDFCBANK",  "exchange": "NSE", "label": "HDFC BANK"},
+    {"stock": "TCS",       "exchange": "NSE", "label": "TCS"},
 ]
+
+# ── Live candle accumulator (tick → OHLCV, written to 'candles' table) ────────
+# Intervals to build in-process (minutes → DB label)
+_CANDLE_IVLS: Dict[int, str] = {1: "1m", 5: "5m", 30: "30m"}
+
+# {symbol: {interval_min: {ts, open, high, low, close, volume}}}
+_live_candles: Dict[str, Dict[int, dict]] = {}
+_live_candles_lock = threading.Lock()
+
+
+def _update_live_candle(symbol: str, ltp: float, volume: int, ts: datetime) -> None:
+    """Update per-symbol OHLCV buckets from every tick.
+    Closed candles are queued for immediate DB write.
+    Partial candles are queued by the candle writer thread every second.
+    The tick handler never blocks on DB I/O."""
+    ts_epoch = int(ts.timestamp())
+
+    for iMin, label in _CANDLE_IVLS.items():
+        bucket_epoch = (ts_epoch // (iMin * 60)) * (iMin * 60)
+        bucket_dt    = datetime.fromtimestamp(bucket_epoch)
+
+        with _live_candles_lock:
+            sym_ivl = _live_candles.setdefault(symbol, {})
+            cur     = sym_ivl.get(iMin)
+
+            if cur is None:
+                sym_ivl[iMin] = dict(ts=bucket_dt, open=ltp, high=ltp,
+                                     low=ltp, close=ltp, volume=volume)
+            elif cur["ts"] == bucket_dt:
+                cur["high"]    = max(cur["high"], ltp)
+                cur["low"]     = min(cur["low"],  ltp)
+                cur["close"]   = ltp
+                cur["volume"] += volume
+            else:
+                # Bucket closed — enqueue immediately (non-blocking)
+                try:
+                    _candle_write_queue.put_nowait(dict(
+                        ts=cur["ts"], symbol=symbol, interval=label,
+                        open=cur["open"], high=cur["high"],
+                        low=cur["low"],   close=cur["close"],
+                        volume=cur["volume"],
+                    ))
+                except _queue.Full:
+                    pass  # circuit-breaker: drop if queue saturated
+                sym_ivl[iMin] = dict(ts=bucket_dt, open=ltp, high=ltp,
+                                     low=ltp, close=ltp, volume=volume)
 
 _ws_clients: Set[WebSocket] = set()
 _suggestion_engine: Optional[SuggestionEngine] = None
@@ -311,14 +404,17 @@ def _on_tick(tick: dict) -> None:
     now = datetime.now()
 
     # ── Buffer tick for DB persistence ────────────────────────────────────────
+    tick_vol = int(tick.get("ltq", 0) or 0)
     if _db_store is not None:
         with _tick_buffer_lock:
             _tick_buffer.append({
                 "ts":     now,
                 "symbol": cache_key,
                 "ltp":    ltp_f,
-                "volume": int(tick.get("ltq", 0) or 0),
+                "volume": tick_vol,
             })
+        # Build live OHLCV candles (1m, 5m, 30m) and flush closed ones to DB
+        _update_live_candle(cache_key, ltp_f, tick_vol, now)
 
     # ── Build tick entry for the live tick pane ───────────────────────────────
     entry = {
@@ -327,7 +423,7 @@ def _on_tick(tick: dict) -> None:
         "change": float(tick.get("change", 0) or 0),
         "bid":    float(tick.get("bPrice", 0) or 0),
         "ask":    float(tick.get("sPrice", 0) or 0),
-        "ltq":    int(tick.get("ltq", 0) or 0),
+        "ltq":    tick_vol,
         "oi":     int(tick.get("OI", 0) or 0),
     }
     if cache_key not in _tick_log:
@@ -484,6 +580,11 @@ async def _broadcast_loop() -> None:
                     f"approaching limit ₹{_MAX_DAILY_LOSS:,.0f}"
                 ),
             })
+        # Strategy trade alerts (target hit / stop-loss)
+        if _tick % 5 == 0:
+            alerts = _paper.check_alerts(_ltp_cache)
+            for a in alerts:
+                await broadcast({"type": "strategy_alert", "alert": a})
 
 
 # ── Symbol index ──────────────────────────────────────────────────────────────
@@ -601,24 +702,118 @@ async def _chain_snapshot_loop() -> None:
         await asyncio.sleep(_CHAIN_SNAP_INTERVAL_SEC)
 
 
+_STRATEGY_POLL_SEC = 10   # generate signals every 10 s
+
+async def _strategy_signal_loop() -> None:
+    """Poll all active strategies every 10 s, broadcast signals via WebSocket."""
+    await asyncio.sleep(5)   # brief startup delay
+    while True:
+        for strat_id, run in list(_active_strategies.items()):
+            try:
+                instance = run["instance"]
+                signals  = await asyncio.to_thread(
+                    instance.generate_signals,
+                    _session, _ltp_cache, _db_store,
+                )
+                for sig in signals:
+                    d = sig.to_dict()
+                    _strategy_signals.appendleft(d)
+                    await broadcast({"type": "strategy_signal", "signal": d})
+                    log.info("Strategy signal [%s] %s %s — %s",
+                             strat_id, sig.action, sig.symbol, sig.rationale[:60])
+
+                    if run.get("auto_exec") and run.get("mode") == "paper":
+                        _auto_paper_trade(sig)
+
+            except Exception as exc:
+                log.warning("Strategy %s error: %s", strat_id, exc)
+
+        await asyncio.sleep(_STRATEGY_POLL_SEC)
+
+
+def _auto_paper_trade(sig) -> None:
+    """Execute a BUY_CALL / BUY_PUT signal as a paper trade."""
+    try:
+        if sig.action not in ("BUY_CALL", "BUY_PUT"):
+            return
+        ltp = _ltp_cache.get(sig.symbol, 100.0)
+        right = "CE" if sig.action == "BUY_CALL" else "PE"
+        symbol = f"{sig.symbol} ATM {right}"
+        _paper.open_position(symbol=symbol, entry_price=ltp, qty=75,
+                             action="buy", product="options")
+        log.info("Auto paper trade: %s %s @ %.2f", sig.action, sig.symbol, ltp)
+    except Exception as exc:
+        log.debug("Auto paper trade failed: %s", exc)
+
+
+def _candle_writer_thread() -> None:
+    """Dedicated DB writer: drains _candle_write_queue every second.
+    Also snapshots all partial candles once per second so charts stay live.
+    Runs in its own daemon thread — never blocks the event loop or tick handler."""
+    while True:
+        time.sleep(1)
+        if _db_store is None:
+            continue
+
+        # Drain queued closed candles (non-blocking)
+        batch: list = []
+        while True:
+            try:
+                batch.append(_candle_write_queue.get_nowait())
+            except _queue.Empty:
+                break
+
+        # Snapshot all currently-open partial candles
+        with _live_candles_lock:
+            for symbol, ivls in _live_candles.items():
+                for iMin, cur in ivls.items():
+                    batch.append(dict(
+                        ts=cur["ts"], symbol=symbol,
+                        interval=_CANDLE_IVLS[iMin],
+                        open=cur["open"], high=cur["high"],
+                        low=cur["low"],   close=cur["close"],
+                        volume=cur["volume"],
+                    ))
+
+        if batch:
+            try:
+                _db_store.insert_candles(batch)
+            except Exception as exc:
+                log.warning("Candle writer error: %s", exc)
+
+
+async def _candle_flush_loop() -> None:
+    """Kept for compatibility — actual work is done by _candle_writer_thread."""
+    while True:
+        await asyncio.sleep(3600)
+
+
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _broadcast_task, _chain_snap_task, _main_loop
-    _main_loop      = asyncio.get_event_loop()
-    _broadcast_task = asyncio.create_task(_broadcast_loop())
-    _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
+    global _broadcast_task, _chain_snap_task, _strategy_task, _main_loop
+    global _candle_flush_task
+    _main_loop         = asyncio.get_event_loop()
+    _broadcast_task    = asyncio.create_task(_broadcast_loop())
+    _chain_snap_task   = asyncio.create_task(_chain_snapshot_loop())
+    _strategy_task     = asyncio.create_task(_strategy_signal_loop())
+    _candle_flush_task = asyncio.create_task(_candle_flush_loop())
     _load_symbol_index()
     _init_db_store()   # connect to PostgreSQL if DB_URL is set
-    # Start background tick writer thread (no-op if DB unavailable)
-    threading.Thread(target=_tick_writer_thread, daemon=True, name="tick-writer").start()
+    # Start background writer threads (no-op if DB unavailable)
+    threading.Thread(target=_tick_writer_thread,   daemon=True, name="tick-writer").start()
+    threading.Thread(target=_candle_writer_thread, daemon=True, name="candle-writer").start()
     log.info("Dashboard running → http://localhost:8000")
     yield
     if _broadcast_task:
         _broadcast_task.cancel()
     if _chain_snap_task:
         _chain_snap_task.cancel()
+    if _strategy_task:
+        _strategy_task.cancel()
+    if _candle_flush_task:
+        _candle_flush_task.cancel()
     for t in _trigger_tasks.values():
         t.cancel()
     # Flush remaining buffered ticks before exit
@@ -650,6 +845,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+
+@app.get("/strategies")
+async def strategies_page():
+    return FileResponse("static/strategies.html")
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -779,6 +979,103 @@ async def get_db_status():
     except Exception as exc:
         return {"available": False, "mode": "memory",
                 "reason": str(exc), "candles_count": 0}
+
+
+class DbConfigReq(BaseModel):
+    host:     str = "localhost"
+    port:     int = 5432
+    dbname:   str = "trading_data"
+    user:     str = "postgres"
+    password: str = ""
+
+
+@app.post("/api/db/configure")
+async def configure_db(req: DbConfigReq):
+    """
+    Accept DB connection details from the UI wizard, test the connection,
+    run schema setup if tables are missing, and activate the global DataStore.
+    """
+    global _db_store
+    host     = req.host
+    port     = req.port
+    dbname   = req.dbname
+    user     = req.user
+    password = req.password
+
+    # Use urllib.parse.quote to handle special chars in URL; also keep kwarg form for connect()
+    from urllib.parse import quote_plus
+    db_url = f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{dbname}"
+
+    try:
+        import psycopg2
+        # Use keyword args — avoids URL parsing issues with special chars in password
+        conn = psycopg2.connect(
+            host=host, port=port, dbname=dbname,
+            user=user, password=password,
+            connect_timeout=5,
+        )
+
+        # Auto-create tables if they don't exist yet
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'candles'
+        """)
+        tables_exist = cur.fetchone()[0] > 0
+
+        if not tables_exist:
+            log.info("DB configure: tables not found — running schema setup.")
+            import subprocess, sys
+            setup_script = Path(__file__).parent / "scripts" / "setup_db.py"
+            if setup_script.exists():
+                result = subprocess.run(
+                    [sys.executable, str(setup_script)],
+                    env={**os.environ, "DB_URL": db_url},
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode != 0:
+                    conn.close()
+                    return {"ok": False, "error": f"Schema setup failed: {result.stderr[:400]}"}
+
+        cur.execute("SELECT COUNT(*) FROM candles")
+        candles_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT symbol) FROM candles")
+        symbols_count = cur.fetchone()[0]
+        conn.close()
+
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    # Activate global store and persist URL for this process
+    os.environ["DB_URL"] = db_url
+    try:
+        from collector.store import DataStore
+        if _db_store is not None:
+            try:
+                _db_store.close()
+            except Exception:
+                pass
+        _db_store = DataStore(db_url)
+        log.info("DB store (re)initialised from UI wizard — %s candles.", candles_count)
+    except Exception as exc:
+        return {"ok": False, "error": f"DataStore init failed: {exc}"}
+
+    return {"ok": True, "candles_count": candles_count, "symbols_count": symbols_count}
+
+
+@app.post("/api/db/disable")
+async def disable_db():
+    """Deactivate the DB store — revert to in-memory mode."""
+    global _db_store
+    if _db_store is not None:
+        try:
+            _db_store.close()
+        except Exception:
+            pass
+        _db_store = None
+    os.environ.pop("DB_URL", None)
+    log.info("DB store disabled by user — running in-memory mode.")
+    return {"ok": True}
 
 
 # ── Manual order ──────────────────────────────────────────────────────────────
@@ -1716,7 +2013,7 @@ async def get_ohlc_db(
             "count":   0,
             "source":  "db",
             "warning": f"No data in DB for {symbol.upper()} [{db_interval}]. "
-                       f"Available symbols: NIFTY, MARUTI, TCS, WIPRO, NTPC, ONGC",
+                       f"Connect Breeze to collect live data, or use the Download button for historical data.",
         }
 
     candles = [
@@ -1766,6 +2063,10 @@ async def start_data_download(body: dict = {}):
     backfill_days       = int(body.get("backfill_days",       90))
     backfill_days_daily = int(body.get("backfill_days_daily", 730))
 
+    # Optional symbol override: if provided, restrict to those symbols only (no futures)
+    override_symbols: list = body.get("symbols") or []
+    override_symbols = [s.strip().upper() for s in override_symbols if s]
+
     # Pre-calculate total work items so ETA is available from the first poll
     from collector.config import CollectorConfig as _Cfg
     _tmp = _Cfg(
@@ -1773,6 +2074,10 @@ async def start_data_download(body: dict = {}):
         session_token=session_token, db_url=db_url,
         backfill_days=backfill_days, backfill_days_daily=backfill_days_daily,
     )
+    if override_symbols:
+        _tmp.symbols         = override_symbols
+        _tmp.equity_symbols  = []
+        _tmp.futures_symbols = []
     _spot_items    = len(_tmp.all_spot_symbols)  * len(_tmp.historical_intervals)
     _futures_items = len(_tmp.futures_symbols)   * _tmp.futures_num_expiries * len(_tmp.historical_intervals)
     _total_items   = _spot_items + _futures_items
@@ -1815,6 +2120,10 @@ async def start_data_download(body: dict = {}):
                 backfill_days=backfill_days,
                 backfill_days_daily=backfill_days_daily,
             )
+            if override_symbols:
+                cfg.symbols         = override_symbols
+                cfg.equity_symbols  = []
+                cfg.futures_symbols = []
 
             _download_status["current"] = "Running backfill…"
             backfill = HistoricalBackfill(api, cfg, store)
@@ -1841,6 +2150,280 @@ async def get_data_status():
         "running": _download_running,
         "log":     list(_download_log[-100:]),   # last 100 lines
     }
+
+
+@app.post("/api/data/nse_bulk")
+async def start_nse_bulk_download(body: dict = {}):
+    """
+    Download Nifty 50 + Sensex 30 equity + F&O EOD from NSE public archives.
+    No Breeze credentials required — uses NSE bhavcopy files directly.
+
+    Body params (all optional):
+      days        int   Calendar days of history to fetch  (default 730)
+      equity_only bool  Skip F&O download
+      fo_only     bool  Skip equity download
+    """
+    global _download_running, _download_log, _download_status
+
+    if _download_running:
+        raise HTTPException(409, "Download already in progress — wait for it to finish.")
+
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        raise HTTPException(
+            400,
+            "DB_URL not set — PostgreSQL is required to store downloaded data.",
+        )
+
+    days        = int(body.get("days", 730))
+    equity_only = bool(body.get("equity_only", False))
+    fo_only     = bool(body.get("fo_only", False))
+
+    _download_running = True
+    _download_log.clear()
+    _download_status.update(
+        status="running", current="Connecting to NSE…", error="",
+        done_items=0, total_items=days,   # one item per calendar day
+        start_ts=time.monotonic(), eta_sec=None,
+    )
+
+    def _run_nse():
+        global _download_running, _download_status
+        try:
+            from collector.nse_bulk_download import NSEBulkDownloader
+
+            def _progress(msg: str) -> None:
+                _download_log.append(msg)
+                if len(_download_log) > 1000:
+                    del _download_log[0]
+                _download_status["current"] = msg[:120]
+                # Lines like "[2024-05-15] equity= ..." mark a processed trading day
+                if msg.startswith("[20") or msg.startswith("[19"):
+                    _download_status["done_items"] += 1
+                    done    = _download_status["done_items"]
+                    total   = _download_status["total_items"]
+                    elapsed = time.monotonic() - _download_status["start_ts"]
+                    if done > 0 and elapsed > 0 and total > done:
+                        _download_status["eta_sec"] = int((total - done) / (done / elapsed))
+
+            NSEBulkDownloader(db_url=db_url, progress_cb=_progress).run(
+                days=days,
+                equity=not fo_only,
+                fo=not equity_only,
+            )
+            _download_status.update(status="complete", current="Done!", error="")
+            log.info("NSE bulk download complete.")
+        except Exception as exc:
+            log.error("NSE bulk download error: %s", exc, exc_info=True)
+            _download_status.update(status="error", current="", error=str(exc))
+        finally:
+            _download_running = False
+
+    threading.Thread(target=_run_nse, daemon=True, name="nse-bulk-download").start()
+    return {"status": "started"}
+
+
+# ── Paper strategy trades ─────────────────────────────────────────────────────
+
+class PaperStrategyReq(BaseModel):
+    strategy_id:   str
+    stock:         str
+    exchange:      str = "NFO"
+    expiry:        str              # YYYY-MM-DD
+    lots:          int = 1
+    short_steps:   int = 2         # IC / covered call OTM distance
+    width_steps:   int = 2         # IC / spread width
+    leg_prices:    List[float] = []  # manual prices per leg (empty = use LTP)
+
+
+@app.post("/api/paper/strategy/enter")
+async def paper_strategy_enter(req: PaperStrategyReq):
+    from trade_engine.option_strategies import (
+        STRATEGY_BUILDERS, STRATEGY_NAMES, STRIKE_STEPS, LOT_SIZES,
+    )
+    stock = _normalize_symbol(req.stock)   # resolve "HDFC BANK" → "HDFCBANK" etc.
+
+    builder = STRATEGY_BUILDERS.get(req.strategy_id)
+    if not builder:
+        raise HTTPException(400, f"Unknown strategy: {req.strategy_id}")
+
+    spot = _ltp_cache.get(stock)
+    if not spot:
+        raise HTTPException(400,
+            f"No live LTP for {stock}. Connect to Breeze and subscribe this symbol first.")
+
+    step     = STRIKE_STEPS.get(stock, 50)
+    lot_size = LOT_SIZES.get(stock, 75)
+
+    kwargs: dict = dict(spot=spot, step=step, lots=req.lots, lot_size=lot_size)
+    if req.strategy_id in ("iron_condor",):
+        kwargs.update(short_steps=req.short_steps, width_steps=req.width_steps)
+    elif req.strategy_id in ("bull_call_spread", "bear_put_spread"):
+        kwargs.update(width_steps=req.width_steps)
+    elif req.strategy_id == "covered_call":
+        kwargs.update(otm_steps=req.short_steps)
+
+    plan    = builder(**kwargs)
+    legs    = [l.to_dict() for l in plan["legs"]]
+
+    # Overlay manual prices if provided
+    for i, price in enumerate(req.leg_prices):
+        if i < len(legs) and price > 0:
+            legs[i]["price"] = price
+
+    try:
+        trade = _paper.enter_strategy(
+            strategy_id        = req.strategy_id,
+            strategy_name      = STRATEGY_NAMES[req.strategy_id],
+            stock              = stock,
+            exchange           = req.exchange,
+            expiry             = req.expiry,
+            legs               = legs,
+            ltp_cache          = _ltp_cache,
+            break_even_lower   = plan.get("break_even_lower"),
+            break_even_upper   = plan.get("break_even_upper"),
+        )
+        await broadcast({"type": "paper_strategy_entered", "trade": trade})
+        return {"ok": True, "trade": trade,
+                "break_even_lower": trade.get("break_even_lower"),
+                "break_even_upper": trade.get("break_even_upper")}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/paper/strategy/exit/{trade_id}")
+async def paper_strategy_exit(trade_id: str):
+    try:
+        trade, pnl = _paper.exit_strategy(trade_id, _ltp_cache)
+        await broadcast({"type": "paper_strategy_closed",
+                         "trade_id": trade_id, "pnl": pnl})
+        return {"ok": True, "trade": trade, "realised_pnl": pnl}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/paper/strategies")
+async def paper_strategy_list():
+    return {"trades": _paper.strategy_summary(_ltp_cache)}
+
+
+@app.get("/api/paper/strategy/plan")
+async def paper_strategy_plan(
+    strategy_id: str,
+    stock:       str,
+    lots:        int = 1,
+    short_steps: int = 2,
+    width_steps: int = 2,
+):
+    """Preview the legs and strikes without entering the trade."""
+    from trade_engine.option_strategies import (
+        STRATEGY_BUILDERS, STRATEGY_NAMES, STRIKE_STEPS, LOT_SIZES,
+    )
+    stock = _normalize_symbol(stock)   # resolve display names to Breeze codes
+
+    builder = STRATEGY_BUILDERS.get(strategy_id)
+    if not builder:
+        raise HTTPException(400, f"Unknown strategy: {strategy_id}")
+
+    spot = _ltp_cache.get(stock)
+    if not spot:
+        raise HTTPException(400,
+            f"No live LTP for {stock}. Connect to Breeze and subscribe this symbol first.")
+
+    step     = STRIKE_STEPS.get(stock, 50)
+    lot_size = LOT_SIZES.get(stock, 75)
+
+    kwargs: dict = dict(spot=spot, step=step, lots=lots, lot_size=lot_size)
+    if strategy_id == "iron_condor":
+        kwargs.update(short_steps=short_steps, width_steps=width_steps)
+    elif strategy_id in ("bull_call_spread", "bear_put_spread"):
+        kwargs.update(width_steps=width_steps)
+    elif strategy_id == "covered_call":
+        kwargs.update(otm_steps=short_steps)
+
+    plan = builder(**kwargs)
+    legs_preview = []
+    for leg in plan["legs"]:
+        sym = f"{stock}_{leg.right}_{leg.strike}" if leg.right and leg.strike else stock
+        ltp = _ltp_cache.get(sym) or 0
+        legs_preview.append({**leg.to_dict(), "live_price": ltp})
+
+    return {
+        "strategy":    STRATEGY_NAMES[strategy_id],
+        "description": plan["description"],
+        "atm":         plan["atm"],
+        "spot":        spot,
+        "legs":        legs_preview,
+        "break_even_lower": plan.get("break_even_lower"),
+        "break_even_upper": plan.get("break_even_upper"),
+    }
+
+
+# ── Strategy runner API ───────────────────────────────────────────────────────
+
+class StrategyStartReq(BaseModel):
+    strategy_id: str
+    params:      dict  = {}
+    mode:        str   = "paper"   # paper | live
+    auto_exec:   bool  = False
+
+
+@app.post("/api/strategy/start")
+async def strategy_start(req: StrategyStartReq):
+    from trade_engine.strategy_signals import STRATEGY_REGISTRY
+    cls = STRATEGY_REGISTRY.get(req.strategy_id)
+    if not cls:
+        return {"ok": False, "error": f"Unknown strategy: {req.strategy_id}"}
+    if req.strategy_id in _active_strategies:
+        return {"ok": False, "error": "Already running"}
+    if req.mode == "live" and not (_session and _session._api):
+        return {"ok": False, "error": "Live mode requires an active Breeze session"}
+
+    instance = cls(req.params)
+    _active_strategies[req.strategy_id] = {
+        "instance":  instance,
+        "cfg":       req.params,
+        "mode":      req.mode,
+        "auto_exec": req.auto_exec,
+        "symbols":   req.params.get("symbols", []),
+        "started_at": datetime.now().isoformat(),
+        "signal_count": 0,
+    }
+    log.info("Strategy started: %s  mode=%s  symbols=%s",
+             req.strategy_id, req.mode, req.params.get("symbols"))
+    return {"ok": True, "strategy_id": req.strategy_id,
+            "mode": req.mode, "symbols": req.params.get("symbols", [])}
+
+
+@app.post("/api/strategy/stop")
+async def strategy_stop(body: dict):
+    sid = body.get("strategy_id", "")
+    if sid not in _active_strategies:
+        return {"ok": False, "error": "Not running"}
+    del _active_strategies[sid]
+    log.info("Strategy stopped: %s", sid)
+    return {"ok": True}
+
+
+@app.get("/api/strategy/list")
+async def strategy_list():
+    runs = [
+        {
+            "strategy_id":  sid,
+            "mode":         run["mode"],
+            "symbols":      run["symbols"],
+            "started_at":   run["started_at"],
+            "signal_count": run["signal_count"],
+            "auto_exec":    run["auto_exec"],
+        }
+        for sid, run in _active_strategies.items()
+    ]
+    return {"runs": runs}
+
+
+@app.get("/api/strategy/signals")
+async def strategy_signals(limit: int = 100):
+    return {"signals": list(_strategy_signals)[:limit]}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

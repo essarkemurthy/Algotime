@@ -1,407 +1,558 @@
-# Breeze Trading Dashboard
+# Algo Trade Dashboard
 
-A locally-run web dashboard for NSE/NFO options trading via [ICICI Direct Breeze Connect](https://api.icicidirect.com/). Place manual orders, run algo strategies, monitor live P&L, and practice with a paper trading simulator — all from a browser at `http://localhost:8000`.
+A real-time algorithmic trading dashboard for Indian markets, built on ICICI Direct's **Breeze Connect** API. Stream live prices, view interactive charts with technical indicators, build multi-leg option strategies in a paper-trading simulator, run automated signal generators, and store years of market history in PostgreSQL — all from a single browser-based interface.
+
+**No PostgreSQL required to get started.** The app runs entirely in-memory out of the box; PostgreSQL is optional but unlocks historical charting, EOD data persistence, and backtesting.
+
+---
+
+## Table of Contents
+
+1. [Features](#features)
+2. [Prerequisites](#prerequisites)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Running the App](#running-the-app)
+6. [Pages & Navigation](#pages--navigation)
+7. [Step-by-Step: First Run](#step-by-step-first-run)
+8. [Paper Trading](#paper-trading)
+9. [Option Strategy Builder](#option-strategy-builder)
+10. [Strategy Signal Generators](#strategy-signal-generators)
+11. [Charts & Technical Analysis](#charts--technical-analysis)
+12. [PostgreSQL Setup (Optional)](#postgresql-setup-optional)
+13. [Historical Data Download](#historical-data-download)
+14. [NSE Bulk Download (No Breeze Required)](#nse-bulk-download-no-breeze-required)
+15. [Database Schema](#database-schema)
+16. [Project Structure](#project-structure)
+17. [API Reference](#api-reference)
+18. [Troubleshooting](#troubleshooting)
+19. [Disclaimer](#disclaimer)
 
 ---
 
 ## Features
 
-| Feature | Description |
+| Area | What it does |
 |---|---|
-| **Live Quotes** | LTP strip for NIFTY, INFY, ONGC, MAXHEALTH — updates every 10 seconds |
-| **Manual Orders** | Place any equity/options buy or sell from a form |
-| **Trigger Orders** | Set a price level; order fires automatically when spot crosses it |
-| **Algo Strategies** | Bull Put Spread and Iron Condor entry scan with Greeks + IV Rank filter |
-| **Morning Brief** | AI-generated (Claude Haiku) or rule-based trade ideas at start of day |
-| **Research Calls** | Log and act on ICICI research recommendations with structured fields |
-| **Order Book** | Fetch today's real orders from Breeze and cancel open ones |
-| **Positions** | Live portfolio positions from Breeze |
-| **Paper Trading** | Full simulated trading page — no real orders, tracks P&L mark-to-market |
-
----
-
-## Architecture
-
-```
-algo-trade/
-├── app.py                  FastAPI server — trading dashboard + WebSocket (run this)
-├── main.py                 CLI algo engine (headless, no browser)
-├── collect.py              Data collector — streams market data to PostgreSQL
-├── options_engine.py       Legacy Breeze engine (referenced by app.py)
-├── suggestions.py          Morning Brief — AI (Claude Haiku) or rule-based
-├── paper_engine.py         In-memory paper trading simulator
-├── static/
-│   ├── index.html          Main trading dashboard
-│   ├── charts.html         Chart workspace (OHLC + indicators)
-│   └── paper.html          Paper trading simulator
-├── trade_engine/           Packaged algo engine (strategies, Greeks, risk)
-├── collector/              Market data collection package (requires PostgreSQL)
-├── scripts/
-│   └── setup_db.py         One-time DB schema creation
-├── data/                   IV history CSV (auto-created, no DB needed)
-├── logs/                   Runtime logs (auto-created)
-├── requirements.txt
-├── .env.example            Credential template — copy to .env
-└── .env                    Your credentials (never committed)
-```
-
-> **Two modes:**
-> - **Dashboard only** — run `app.py`, no PostgreSQL needed. Orders, charts, paper trading, live quotes all work via direct Breeze API calls.
-> - **With data collector** — also run `collect.py` to stream ticks, option chains, and futures into PostgreSQL for historical analysis.
-
----
-
-## Quick Start
-
-### 1. Clone the repository
-
-```powershell
-git clone https://github.com/essarkemurthy/algo-trade.git
-cd algo-trade
-```
-
-### 2. Create and activate a virtual environment
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**macOS / Linux:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-> If PowerShell blocks script execution, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
-
-### 3. Install dependencies
-
-```powershell
-pip install -r requirements.txt
-```
-
-### 4. Configure credentials
-
-Copy the example env file and fill in your details:
-
-```powershell
-copy .env.example .env   # Windows
-# cp .env.example .env   # macOS/Linux
-```
-
-Edit `.env`:
-
-```env
-# ── Required: Breeze API (ICICI Direct) ───────────────────────────────────────
-BREEZE_API_KEY=your_api_key_here
-BREEZE_API_SECRET=your_api_secret_here
-BREEZE_SESSION_TOKEN=your_session_token_here
-
-# ── Optional: PostgreSQL (only needed for the data collector) ─────────────────
-# The dashboard (app.py) works fine without this.
-# Format: postgresql://username:password@host:port/database
-DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
-
-# ── Optional: AI Morning Brief (Claude Haiku) ─────────────────────────────────
-ANTHROPIC_API_KEY=your_anthropic_key_here
-```
-
-> **The `.env` file is listed in `.gitignore` and will never be committed to git.**
-
-### 5. Get your Breeze session token (required daily)
-
-1. Go to [api.icicidirect.com](https://api.icicidirect.com/)
-2. Log in with your ICICI Direct credentials
-3. After the redirect, copy the `apisession` value from the URL
-4. Paste it as `BREEZE_SESSION_TOKEN` in your `.env`
-
-The token expires at the end of each trading day. Repeat every morning before 9:15 AM IST.
-
-### 6. Run the dashboard
-
-**Option A — VS Code (recommended):**
-Open the project folder in VS Code and press **F5**. The server starts and the browser opens automatically at `http://localhost:8000`.
-
-**Option B — Terminal:**
-```powershell
-.venv\Scripts\Activate.ps1        # Windows
-# source .venv/bin/activate        # macOS/Linux
-
-python app.py
-```
-
-Then open `http://localhost:8000` in a browser.
-
-> The dashboard works **without PostgreSQL**. Charts fetch OHLC directly from Breeze. Orders, paper trading, and live quotes all work without a database.
+| **Live Prices** | WebSocket stream of LTP, volume, bid/ask from Breeze Connect |
+| **Option Chain** | Full chain snapshot with Delta, Gamma, Theta, Vega, IV per strike |
+| **Interactive Charts** | Candlestick / bar / line with EMA 9/21/50, Bollinger Bands, VWAP, RSI, MACD |
+| **Paper Trading** | Zero-risk order simulation with real-time P&L, position management, portfolio summary |
+| **Option Strategy Builder** | One-click multi-leg strategies: Iron Condor, Bull Call Spread, Bear Put Spread, Covered Call, Long Straddle |
+| **Strategy Alerts** | Auto-fires profit target / stop-loss alerts (50% profit / 2× SL for credit; 80% profit / 50% SL for debit) |
+| **Signal Generators** | 5 automated strategies: 0DTE Scalper, IVR Iron Condor, VIX Regime Switcher, Gamma Scalper, Momentum Breakout |
+| **Tick → Candle Writer** | Every Breeze WebSocket tick updates live OHLCV candles; closed candles are batch-written to DB every second |
+| **Data Collection** | Persists spot ticks, candles, futures, option chain snapshots, PCR, IV rank to PostgreSQL |
+| **Breeze Backfill** | Downloads up to 90 days intraday + 2 years daily OHLCV from Breeze for any subscribed symbol |
+| **NSE Bulk Download** | Downloads 2 years of Nifty 50 + Sensex 30 equity EOD, futures EOD, and full options EOD — **no Breeze credentials needed** |
+| **DB Wizard** | In-app setup wizard — choose No Database or PostgreSQL without editing any config file |
+| **Break-even overlays** | Dashed lines on charts mark the break-even prices of active paper strategy positions |
+| **Rate Limiter** | Thread-safe sliding-window limiter (75 calls/min, 4,500 calls/day) prevents Breeze API bans |
 
 ---
 
 ## Prerequisites
 
-- Python 3.9 – 3.13
-- ICICI Direct Breeze API credentials — sign up at [api.icicidirect.com](https://api.icicidirect.com/)
-- PostgreSQL 17+ — **optional**, only needed if you want to run `collect.py` to store historical market data
+| Requirement | Notes |
+|---|---|
+| **Python 3.10 or later** | 3.11 recommended |
+| **ICICI Direct account** | With Breeze API access enabled — [api.icicidirect.com](https://api.icicidirect.com/) |
+| **PostgreSQL 14+** | **Optional** — only needed for historical charts and data persistence |
+
+> **Breeze API rate limit:** ~4,500 historical data API calls per day. The NSE Bulk Download feature bypasses this limit entirely — it pulls directly from NSE's public bhavcopy archives with no credentials required.
 
 ---
 
-## PostgreSQL Setup (Optional — Data Collector Only)
+## Installation
 
-The trading dashboard (`app.py`) works without PostgreSQL. Only `collect.py` requires it.
+```bash
+# 1. Clone the repository
+git clone https://github.com/Techultime/algo-trade.git
+cd algo-trade
 
-### 1. Install PostgreSQL
-Download from [postgresql.org/download/windows](https://www.postgresql.org/download/windows/) and install with default settings (port 5432). Note the password you set for the `postgres` user.
+# 2. Create a virtual environment
+python -m venv .venv
 
-### 2. Start the PostgreSQL service
-Open **Services** (`Win + R` → `services.msc`), find **postgresql-x64-18**, right-click → **Start**.
+# 3. Activate the virtual environment
+#    Windows PowerShell:
+.venv\Scripts\Activate.ps1
+#    Windows CMD:
+.venv\Scripts\activate.bat
+#    macOS / Linux:
+source .venv/bin/activate
 
-Or from an Administrator PowerShell:
-```powershell
-Start-Service postgresql-x64-18
+# 4. Install dependencies
+pip install -r requirements.txt
 ```
 
-### 3. Create the database
-```powershell
-$env:PGPASSWORD = "your_postgres_password"
-& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres -h localhost trading_data
+> **Windows PowerShell script execution:** If step 3 fails with "cannot be loaded because running scripts is disabled", run once as Administrator:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+
+---
+
+## Configuration
+
+### 1. Create your `.env` file
+
+```bash
+# Windows
+copy .env.example .env
+
+# macOS / Linux
+cp .env.example .env
 ```
 
-### 4. Set DB_URL in `.env`
-```env
+### 2. Edit `.env` with your credentials
+
+```ini
+# ── Breeze API (ICICI Direct) — Required for live data ───────────────────────
+BREEZE_API_KEY=your_api_key_here
+BREEZE_API_SECRET=your_api_secret_here
+
+# Session token — generate a fresh one each morning (see below)
+BREEZE_SESSION_TOKEN=your_session_token_here
+
+# ── PostgreSQL — Optional ─────────────────────────────────────────────────────
+# Leave blank to run in in-memory mode (no database required)
 DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
 ```
 
-### 5. Create all tables
-```powershell
-.venv\Scripts\Activate.ps1
-python scripts/setup_db.py
-```
+> **The `.env` file is in `.gitignore` and will never be committed to git.**
 
-You should see:
-```
-Tables ready:
-  [ok] candles
-  [ok] chain_snapshots
-  [ok] depth_snapshots
-  [ok] futures_candles
-  [ok] futures_ticks
-  [ok] iv_daily
-  [ok] pcr_snapshots
-  [ok] spot_ticks
-```
+### 3. Getting your Breeze API key and secret
 
-### 6. Run the data collector (on trading days)
-```powershell
-python collect.py
-```
+1. Log in at [api.icicidirect.com](https://api.icicidirect.com/)
+2. Navigate to **My Apps** → create an app to get your API Key and Secret
+3. These are permanent — paste them into `.env` once
 
-The collector runs from 9:15 AM to 3:35 PM IST and self-terminates. It collects spot ticks, futures, full option chains, market depth, PCR, and historical OHLCV for NIFTY, BANKNIFTY, FINNIFTY and 5 large-cap equities.
+### 4. Getting your daily session token (required every morning)
+
+The session token **expires daily** and must be refreshed before trading:
+
+1. Go to [api.icicidirect.com](https://api.icicidirect.com/) and log in
+2. Click **Get Session Token** (or the API login link for your app)
+3. After redirecting, copy the `apisession` value from the URL
+4. Paste it as `BREEZE_SESSION_TOKEN=...` in `.env`
+5. Restart the app
+
+**Alternative:** Skip editing `.env` entirely and enter credentials directly in the dashboard's connection wizard when you start the app.
 
 ---
 
-## Daily Workflow
+## Running the App
 
+```bash
+# Make sure the virtual environment is active first
+.venv\Scripts\Activate.ps1       # Windows
+source .venv/bin/activate         # macOS / Linux
+
+# Start the server
+uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
-08:45  Generate fresh session token on the Breeze portal
-       Paste it as BREEZE_SESSION_TOKEN in .env
 
-09:00  Press F5 (VS Code) or: python app.py
-       Browser opens at http://localhost:8000
+Open your browser at **[http://localhost:8000](http://localhost:8000)**.
 
-09:15  Click [Connect] on the dashboard
-       Enter your API Key and Session Token
-       Status dot turns green — LTP strip begins updating
+For a stable session (no auto-reload on file changes):
 
-09:15  "Morning Brief" card shows AI/rule-based trade ideas
-       Review each suggestion → [Approve] (auto-registers trigger) or [Skip]
-
-09:30  Market opens
-       Monitor LTP strip, open positions, P&L summary
-       Place manual orders or let trigger orders fire automatically
-
-15:15  Algo engine force-flattens any open strategy positions
-       Session ends — revoke token on the Breeze portal
+```bash
+uvicorn app:app --host 0.0.0.0 --port 8000
 ```
+
+> **Important:** Always use `--workers 1` (the default). The in-memory paper engine and LTP cache are not shared across processes — multiple workers would give each browser tab an independent state.
 
 ---
 
-## Dashboard Sections
+## Pages & Navigation
 
-### LTP Strip
-Live price tiles for NIFTY, INFY, ONGC, MAXHEALTH. Updated every 10 seconds over WebSocket.
+| URL | Page | Description |
+|---|---|---|
+| `/` | **Live Dashboard** | Breeze connection wizard, live option chain, watchlist, LTP ticker |
+| `/charts` | **Charts** | Interactive OHLCV charts with technical indicators and a symbol watchlist |
+| `/paper` | **Paper Trading** | Simulated order placement, portfolio tracker, option strategy builder, alerts |
+| `/strategies` | **Strategy Signals** | Automated signal generators with a real-time signal log |
 
-### Manual Order
-Form fields: Stock, Exchange, Right (CE/PE/Equity), Strike, Expiry, Action (BUY/SELL), Qty, Order Type (Market/Limit), Price. Sends a real order to Breeze on submit.
+Navigation links appear in the header on every page.
 
-### Trigger Order
-Set a watch price level and direction (above/below). When the LTP crosses the threshold an order fires automatically. Shows as an active watcher until triggered or expired.
+---
 
-### Algo Control
-Start/stop Bull Put Spread or Iron Condor entry scans. The algo reads the live option chain, computes IV Rank and delta, and places legs automatically when conditions are met.
+## Step-by-Step: First Run
 
-### Morning Brief
-At page load (or on demand) the engine generates 2–3 trade ideas:
-- **With `ANTHROPIC_API_KEY`** — calls Claude Haiku, which analyses NIFTY/Gift Nifty context and suggests structured trades
-- **Without API key** — rule-based fallback (NIFTY > 23,500 → bullish idea, below → bearish idea)
+### Step 1 — Choose your database mode
 
-Each idea shows Symbol, Action, Strike, Expiry, Qty, Reason. [Approve] registers it as a trigger order. [Skip] dismisses it.
+When you first open [http://localhost:8000](http://localhost:8000) you'll see a two-option setup wizard:
 
-### ICICI Research Calls
-Log structured research recommendations with fields: Bias (Bullish/Bearish/Neutral), Type (Options/Equity/Futures), CMP, Entry Trigger, Target, Why, Source. [Act] converts the call into a trigger order. [Dismiss] removes it.
+**No Database (recommended for new users)**
+Click this to start immediately. Live prices stream directly from Breeze. Charts show live tick data but no historical bars. Everything else — paper trading, option chain, strategy builder — works fully.
 
-### Order Book & Positions
-Two tabs that fetch live data from Breeze:
-- **Orders** — today's order list (NSE + NFO), with [Cancel] for pending orders
-- **Positions** — current portfolio positions with average price and qty
+**I have PostgreSQL**
+Click this to expand a connection form. Enter your PostgreSQL host, port, database name, user, and password. The app tests the connection, auto-creates all tables if they don't exist, and enables historical data features.
 
-### Paper Trading
-Navigate to `/paper` (or click the "📄 Paper Trading" link in the header). A separate simulated trading page that:
-- Shares the same live LTP feed via WebSocket
-- Fills orders instantly at LTP (market) or a specified price (limit)
-- Tracks cash, invested amount, unrealised and realised P&L
-- Supports position averaging and opposing-direction close/reduce
-- [Exit] button per position for market exit; [Exit All] to flatten
-- Closed positions log with realised P&L per trade
-- [Reset] to start fresh; [Change Capital] to adjust starting amount
+### Step 2 — Connect to Breeze
+
+Enter your **API Key**, **API Secret**, and **Session Token**, then click **Connect to Breeze**.
+
+- On success the status dot turns green and live prices begin streaming
+- The LTP strip at the top starts updating with real market prices
+- The option chain loads automatically for NIFTY
+
+### Step 3 — Explore live data
+
+- Switch the option chain symbol using the dropdown (NIFTY, BANKNIFTY, etc.)
+- Click **Charts** in the header to open the chart workspace and add symbols to your watchlist
+- Click **Paper Trading** to start simulated trading
 
 ---
 
 ## Paper Trading
 
-The paper trading engine (`paper_engine.py`) is entirely in-memory — no state survives a server restart.
+The paper trading simulator (`/paper`) lets you trade with zero risk, tracking positions and P&L in real time.
 
-**Starting capital:** ₹10,00,000 (editable in the UI)
+### Portfolio summary bar
 
-**How fills work:**
-- Market order → filled at current LTP from the cache; fails if LTP not yet known (requires limit price in that case)
-- Limit order → filled immediately at the specified price (no queue simulation)
+| Tile | What it shows |
+|---|---|
+| Starting Capital | Configurable — click Change to set a new amount and reset |
+| Cash Available | Undeployed capital |
+| Invested | Market value of open positions |
+| Portfolio Value | Cash + Invested |
+| Unrealised P&L | Live mark-to-market P&L on open positions |
+| Realised P&L | Cumulative closed-trade P&L |
+| Total Return % | Combined return as a percentage of starting capital |
 
-**Position logic:**
-- Same direction as existing position → qty and average price are merged
-- Opposite direction → reduces or closes the existing position, books realised P&L
+### Placing a single order
 
-**P&L formula:**
-```
-Unrealised = (LTP − avg_price) × qty        [for longs]
-           = (avg_price − LTP) × qty        [for shorts]
-Equity     = Starting Capital + Unrealised + Realised
-```
+1. Enter a stock code (e.g. `NIFTY`, `INFY`, `SBIN`)
+2. Choose Exchange (`NSE` for equities, `NFO` for derivatives)
+3. Choose Product: **Cash / Equity** or **Options**
+4. For options: select Right (CE or PE), Strike, and Expiry date
+5. Choose Action (BUY or SELL), Quantity, and Order Type (Market or Limit)
+6. Click **Place Paper Order**
+
+Market orders fill at the live LTP. Limit orders fill immediately at the specified price (no queue simulation).
+
+### Position management
+
+- **Open Positions** — live P&L updated via WebSocket. Exit individual positions or use **Exit All** to flatten everything
+- **Closed Positions** — full history of closed trades with realised P&L and timestamps
+- **Order Log** — chronological log of every paper fill
 
 ---
 
-## API Reference
+## Option Strategy Builder
 
-All endpoints are on `http://localhost:8000`.
+Located on the Paper Trading page, the strategy builder lets you enter multi-leg option strategies with a single click — the app calculates strikes, quantities, and leg structure automatically.
 
-### Connection
+### The 5 supported strategies
 
-| Method | Path | Body | Description |
+| Strategy | Legs | Net | Outlook |
 |---|---|---|---|
-| `POST` | `/api/connect` | `{api_key, session_token}` | Connect Breeze session |
-| `POST` | `/api/disconnect` | — | Disconnect |
-| `GET` | `/api/status` | — | `{connected: bool}` |
+| **Iron Condor** | 4 | Credit | Neutral — range-bound market |
+| **Bull Call Spread** | 2 | Debit | Mildly bullish |
+| **Bear Put Spread** | 2 | Debit | Mildly bearish |
+| **Covered Call** | 2 | Income | Hold futures, generate premium income |
+| **Long Straddle** | 2 | Debit | High volatility expected in either direction |
 
-### Orders & Positions
+### How to enter a strategy
 
-| Method | Path | Description |
+1. **Select a strategy card** — the relevant parameter fields appear
+2. **Enter symbol** — e.g. `NIFTY`, `BANKNIFTY`, `RELIANCE`
+3. **Set Expiry Date** — defaults to the nearest Thursday (weekly expiry)
+4. **Set Lots** — number of lots (1 lot = symbol's standard lot size)
+5. **Width Steps** — spread width in multiples of the strike step (e.g. 2 × 50 = 100 points for NIFTY)
+6. **Short / OTM Steps** — how far OTM the short leg is from ATM
+7. Click **Preview Legs** — shows all legs with live market prices
+8. Optionally enter manual limit prices for any leg
+9. Click **Enter Strategy** — all legs fill simultaneously at paper prices
+
+### Strike and lot size reference
+
+| Symbol | Strike Step | Lot Size |
 |---|---|---|
-| `POST` | `/api/order/manual` | Place a manual order |
-| `POST` | `/api/order/trigger` | Register a trigger order |
-| `DELETE` | `/api/order/{order_id}` | Cancel an order |
-| `GET` | `/api/breeze/orders` | Fetch today's Breeze order list |
-| `GET` | `/api/breeze/positions` | Fetch live Breeze positions |
-| `POST` | `/api/breeze/orders/{id}/cancel` | Cancel a specific Breeze order |
+| NIFTY | 50 | 75 |
+| BANKNIFTY | 100 | 30 |
+| FINNIFTY | 50 | 40 |
+| MIDCPNIFTY | 25 | 50 |
+| RELIANCE | 50 | 250 |
+| TCS | 50 | 150 |
+| HDFCBANK | 10 | 550 |
+| INFY | 20 | 300 |
+| SBIN | 5 | 1500 |
 
-### Algo
+### Automatic P&L alerts
 
-| Method | Path | Description |
+| Alert | Trigger | Strategy type |
 |---|---|---|
-| `POST` | `/api/algo/start` | Start strategy (`{strategy: "bull_put_spread"\|"iron_condor"}`) |
-| `POST` | `/api/algo/stop` | Stop running algo |
+| **TARGET_50** | P&L ≥ 50% of net credit | Credit strategies |
+| **SL_2X** | Loss ≥ 2× net credit | Credit strategies |
+| **TARGET_80** | P&L ≥ 80% of net debit paid | Debit strategies |
+| **SL_50** | Loss ≥ 50% of net debit paid | Debit strategies |
 
-### Paper Trading
+---
 
-| Method | Path | Description |
+## Strategy Signal Generators
+
+The Strategies page (`/strategies`) runs five automated signal generators that analyse live market data and emit actionable signals every 10 seconds.
+
+| # | Strategy | What it monitors | Signal produced |
+|---|---|---|---|
+| 1 | **0DTE Expiry Scalper** | VWAP and opening-range breakout on expiry days only | `BUY_CALL` / `BUY_PUT` |
+| 2 | **IVR Iron Condor** | IV Rank from historical IV database (requires PostgreSQL) | `ENTER_IRON_CONDOR` when IVR > threshold |
+| 3 | **VIX Regime Switcher** | India VIX level from Breeze | Regime change: Low / Elevated / High |
+| 4 | **Gamma Scalper** | ATM straddle net delta imbalance | `HEDGE_SHORT` / `HEDGE_LONG` |
+| 5 | **Momentum Breakout** | Rolling N-period high/low | `BUY_CALL` on N-period high, `BUY_PUT` on low |
+
+### How to run a strategy signal generator
+
+1. Click a strategy card on the Strategies page
+2. Select one or more symbols (type to search)
+3. Configure parameters (entry timeframe, IVR threshold, delta threshold, lookback period, etc.)
+4. Choose **Paper mode** (signals auto-execute as paper trades) or **Live mode** (signals only)
+5. Click **Start** — signals appear in the real-time signal log with timestamp, action, confidence, and rationale
+6. Click **Stop** to halt the strategy
+
+---
+
+## Charts & Technical Analysis
+
+The Charts page (`/charts`) provides a full workspace for OHLCV analysis.
+
+### Timeframes
+
+| Label | Interval | Data source |
 |---|---|---|
-| `GET` | `/paper` | Paper trading page |
-| `POST` | `/api/paper/order` | Place a paper order |
-| `POST` | `/api/paper/exit/{pos_id}` | Exit a paper position at market |
-| `GET` | `/api/paper/summary` | Full portfolio snapshot |
-| `POST` | `/api/paper/reset` | Reset all paper positions and orders |
-| `POST` | `/api/paper/capital` | Change starting capital (resets portfolio) |
+| 1m | 1 minute | Live WebSocket ticks (market hours) or DB |
+| 5m | 5 minutes | Live WebSocket ticks or DB |
+| 30m | 30 minutes | Live WebSocket ticks or DB |
+| 1D | Daily | NSE Bulk Download or Breeze backfill → DB |
 
-### Suggestions & Research
+### Indicators
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/suggestions` | Get morning brief ideas |
-| `POST` | `/api/suggestions/{id}/approve` | Approve idea (registers trigger) |
-| `POST` | `/api/suggestions/{id}/skip` | Skip idea |
-| `GET` | `/api/research` | List research calls |
-| `POST` | `/api/research` | Add a research call |
-| `DELETE` | `/api/research/{id}` | Delete a research call |
-| `POST` | `/api/research/{id}/act` | Convert to trigger order |
-| `POST` | `/api/research/{id}/skip` | Mark as skipped |
+**Overlay (main chart):** EMA 9, EMA 21, EMA 50, Bollinger Bands (20, 2σ), VWAP
 
-### WebSocket
+**Sub-charts:** Volume histogram, RSI (14), MACD (12/26/9)
 
-`ws://localhost:8000/ws`
+### Signal badge
 
-Frames broadcast every 10 seconds:
+A live **BUY / SELL / NEUTRAL** badge combines all indicator readings into a single directional bias.
 
-```json
-{"type": "ltp",   "data": {"NIFTY": 24312.45, "INFY": 1148.20, ...}}
-{"type": "pnl",   "data": {"total_pnl": 2304.0, "unrealised": 1500.0, ...}}
-{"type": "alert", "message": "Daily loss limit approaching: ₹35,000 of ₹40,000"}
+### Break-even overlays
+
+When you switch to a symbol that has an open strategy position in paper trading, dashed amber horizontal lines appear at the break-even prices (e.g. `BE↓ Iron Condor`, `BE↑ Iron Condor`).
+
+### Watchlist
+
+- Click **+ Add** to add any NSE/NFO symbol
+- 5 default symbols always present: NIFTY 50, BANK NIFTY, RELIANCE, HDFC BANK, TCS
+- Additional symbols persist in browser `localStorage`
+- Click any tile to load that symbol's chart
+
+### Data source toggle
+
+Each chart has a **Live / DB** toggle:
+- **Live** — builds candles from the current WebSocket tick stream (no history before app start)
+- **DB** — loads OHLCV from PostgreSQL (requires historical data downloaded — see below)
+
+### Download button (⬇ Data)
+
+On the chart toolbar, the **⬇ Data** button opens a download panel that fetches Breeze historical data for the currently selected symbol only. Progress, ETA, and a log tail are shown inline. After download completes, the chart automatically reloads from DB.
+
+---
+
+## PostgreSQL Setup (Optional)
+
+PostgreSQL enables historical charting and persistent data collection across sessions.
+
+### 1. Install PostgreSQL
+
+Download from [postgresql.org/download](https://www.postgresql.org/download/) and install with default settings (port 5432).
+
+### 2. Start the PostgreSQL service
+
+**Windows:**
+```powershell
+Start-Service postgresql-x64-17
 ```
 
-Send `{"type": "ping"}` → server responds `{"type": "pong"}`.
+**macOS (Homebrew):**
+```bash
+brew services start postgresql@17
+```
+
+**Linux:**
+```bash
+sudo systemctl start postgresql
+```
+
+### 3. Create the database
+
+```bash
+# Windows
+& "C:\Program Files\PostgreSQL\17\bin\createdb.exe" -U postgres -h localhost trading_data
+
+# macOS / Linux
+createdb -U postgres trading_data
+```
+
+### 4. Set DB_URL in `.env`
+
+```ini
+DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
+```
+
+### 5. Tables are created automatically
+
+All tables are created automatically when the app starts (or when the NSE bulk download runs). No manual schema setup is needed.
+
+### 6. Recommended PostgreSQL performance settings
+
+For high-frequency tick storage run these once in `psql`:
+
+```sql
+ALTER SYSTEM SET synchronous_commit      = 'off';
+ALTER SYSTEM SET wal_buffers             = '16MB';
+ALTER SYSTEM SET checkpoint_completion_target = 0.9;
+ALTER SYSTEM SET work_mem                = '16MB';
+ALTER SYSTEM SET effective_cache_size    = '512MB';
+ALTER SYSTEM SET random_page_cost        = 1.1;
+ALTER SYSTEM SET effective_io_concurrency = 200;
+SELECT pg_reload_conf();
+```
+
+`synchronous_commit = off` gives a large write throughput improvement with minimal data-loss risk (at most ~200ms of ticks on a crash).
 
 ---
 
-## Troubleshooting
+## Historical Data Download
 
-### Session expired / 401 errors
-Your session token has expired. Generate a new one from the Breeze portal, update `.env`, and press F5 to restart.
+### Option A — Breeze Backfill (intraday + daily, credentials required)
 
-### 503 errors from Breeze
-Breeze servers are overloaded. The LTP poller automatically backs off (up to 5 minutes). Wait and it will resume.
+From the Charts page, click the **⬇ Data** button to download historical OHLCV for the currently selected symbol from Breeze.
 
-### Rate limit (Status 5)
-Breeze enforces a per-minute call limit. This usually happens if many WebSocket clients connect at once (refresh loop). The poller pauses 300 seconds automatically. Refresh the page once, not repeatedly.
+- **Intraday** (1m, 5m, 30m): up to 90 days
+- **Daily** (1D): up to 2 years
+- The download fetches only the gap since the last stored candle — safe to re-run
 
-### "No live price for symbol" in paper trading
-The LTP cache hasn't received a quote for that symbol yet. Either:
-- Connect to Breeze first and wait 10–15 seconds for the first poll
-- Or use a **Limit** order and enter the price manually
+> **Rate limit:** Breeze allows ~4,500 REST API calls per day. For large symbol lists, spread downloads across multiple sessions.
 
-### WebSocket connects in a loop
-Usually caused by opening many browser tabs. Close extra tabs; each tab opens one WebSocket connection.
+### Option B — Breeze bulk backfill via API
 
-### Order placed but not appearing in Order Book
-The Order Book tab fetches on demand — click the **Orders** tab or refresh it with the reload button. The server also caches one fetch per minute to avoid rate limits.
+```bash
+curl -X POST http://localhost:8000/api/data/download \
+  -H "Content-Type: application/json" \
+  -d "{\"symbols\": [\"NIFTY\"]}"
+```
+
+This triggers a background backfill for the specified symbol(s) using the active Breeze session.
 
 ---
 
-## Algo Strategies
+## NSE Bulk Download (No Breeze Required)
 
-### Bull Put Spread
-Sells an OTM put and buys a further-OTM put in the same expiry. Net credit. Profits when NIFTY stays flat or rises.
+Downloads **2 years** of Nifty 50 + Sensex 30 historical data from NSE's public bhavcopy archives — **no ICICI/Breeze credentials needed**.
 
-Entry conditions:
-- IV Rank ≥ 40
-- Short strike |delta| ≈ 0.25
-- Spread width: 100 points (configurable)
+### What it downloads
 
-### Iron Condor
-Bull Put Spread + Bear Call Spread. Four legs, net credit. Profits when NIFTY stays within a range.
+| Data | Table | Symbols |
+|---|---|---|
+| Equity EOD (OHLCV, daily) | `candles` (interval=`1d`) | 50 Nifty 50 + 30 Sensex 30 stocks (54 unique) |
+| Futures EOD (OHLCV, daily) | `futures_candles` (interval=`1d`) | Same 54 stocks + NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY |
+| Options EOD (per strike, daily) | `options_eod` | Same universe — all strikes, all expiries, CE + PE |
 
-Exit triggers (both strategies):
-- Debit-to-close ≥ 2× entry credit (stop-loss)
-- P&L ≥ 50% of max profit (profit target)
-- |Net delta| > 5 (delta breach)
-- 15:15 IST (force flatten)
+### Via API (app must be running)
+
+```bash
+# Trigger full 2-year download
+curl -X POST http://localhost:8000/api/data/nse_bulk \
+  -H "Content-Type: application/json" \
+  -d "{\"days\": 730}"
+
+# Equity only (skip F&O)
+curl -X POST http://localhost:8000/api/data/nse_bulk \
+  -H "Content-Type: application/json" \
+  -d "{\"days\": 730, \"equity_only\": true}"
+
+# F&O only (skip equity spot)
+curl -X POST http://localhost:8000/api/data/nse_bulk \
+  -H "Content-Type: application/json" \
+  -d "{\"days\": 730, \"fo_only\": true}"
+
+# Monitor progress
+curl http://localhost:8000/api/data/status
+```
+
+**Windows CMD** (use escaped double quotes):
+```cmd
+curl -X POST http://localhost:8000/api/data/nse_bulk -H "Content-Type: application/json" -d "{\"days\": 730}"
+```
+
+### Via CLI (no app needed)
+
+```bash
+# Full download
+python -m collector.nse_bulk_download --days 730
+
+# Equity only
+python -m collector.nse_bulk_download --days 730 --equity-only
+
+# F&O only
+python -m collector.nse_bulk_download --days 730 --fo-only
+
+# Custom DB URL
+python -m collector.nse_bulk_download --days 730 --db-url "postgresql://..."
+```
+
+### Key behaviours
+
+- **Resumes automatically** — re-running continues from the last stored date, skipping already-downloaded days
+- **Weekends and holidays** skipped automatically (404 dates are silently ignored)
+- **Duplicate safe** — equity/futures use `ON CONFLICT DO UPDATE`; options use `ON CONFLICT DO NOTHING`
+- **Rate** — ~150 requests/minute (0.4s sleep between dates); a full 730-day run takes ~8–10 minutes
+
+### What intraday data is NOT available from NSE
+
+NSE does not publish free historical intraday data. The 1m, 5m, and 30m candles can only be built from **live WebSocket ticks** during market hours. After the app runs for a few sessions, historical intraday bars will accumulate in the `candles` table.
+
+---
+
+## Database Schema
+
+All tables are created automatically by the app or by `NSEBulkDownloader.run()`.
+
+| Table | Contents | Created by |
+|---|---|---|
+| `candles` | OHLCV candles at 1m / 5m / 30m / 1d | Live ticks + NSE bulk + Breeze backfill |
+| `spot_ticks` | Every WebSocket LTP tick (unlogged for speed) | Live collector |
+| `futures_ticks` | Futures contract LTP and open interest | Live collector |
+| `futures_candles` | Futures OHLCV at 1d (+ live intervals) | NSE bulk + Breeze backfill |
+| `options_eod` | Options OHLCV + OI + Greeks per strike per day | NSE bulk download |
+| `chain_snapshots` | Full option chain every 5 minutes (bid/ask, OI, IV, Greeks) | Live collector |
+| `depth_snapshots` | 5-level market depth snapshots | Live collector |
+| `pcr_snapshots` | Put-Call Ratio per expiry | Live collector |
+| `iv_daily` | Daily ATM IV summary for IV Rank / IV Percentile | Live collector |
+
+### `options_eod` schema
+
+```sql
+CREATE TABLE options_eod (
+    date       date          NOT NULL,
+    symbol     text          NOT NULL,
+    expiry     date          NOT NULL,
+    strike     numeric(12,2) NOT NULL,
+    "right"    char(2)       NOT NULL,   -- CE or PE
+    open       numeric(12,2),
+    high       numeric(12,2),
+    low        numeric(12,2),
+    close      numeric(12,2),
+    settle     numeric(12,2),            -- settlement price (more reliable than close for illiquid strikes)
+    volume     bigint        DEFAULT 0,
+    oi         bigint        DEFAULT 0,
+    oi_change  bigint        DEFAULT 0,
+    underlying numeric(12,2),
+    PRIMARY KEY (date, symbol, expiry, strike, "right")
+);
+```
 
 ---
 
@@ -409,36 +560,227 @@ Exit triggers (both strategies):
 
 ```
 algo-trade/
-├── main.py                 FastAPI entry point; all REST + WebSocket routes
-├── options_engine.py       Original algo engine (BreezeSession, OrderRouter, Greeks, strategies)
-├── suggestions.py          Morning Brief generator (SuggestionEngine, MorningBrief, TradeIdea)
-├── collect.py              Data collector runner
-├── trade_engine/           Refactored engine package
-│   ├── config.py           Env var loading + risk/timing constants
-│   ├── models.py           Leg, Position data structures
-│   ├── session.py          BreezeSession lifecycle
-│   ├── chain.py            OptionChainFetcher
-│   ├── greeks.py           GreeksEngine + IVRankCalc
-│   ├── router.py           OrderRouter
-│   ├── risk.py             StopLossManager
-│   ├── engine.py           OptionsAlgoEngine orchestrator
-│   └── strategies/         BullPutSpread, IronCondor
-├── collector/              Market data collection (candles, spot, IV EOD)
-├── data/                   iv_history.csv and collected DB data
-├── logs/                   Runtime logs
-├── requirements.txt        Python dependencies
-├── .env                    Credentials — NEVER commit this file
-├── .env.example            Template for .env
-├── .gitignore
-└── .vscode/
-    ├── launch.json         F5 → starts server + opens browser
-    └── settings.json       Points VS Code to .venv interpreter
+│
+├── app.py                          # FastAPI server — all HTTP + WebSocket routes
+├── paper_engine.py                 # In-memory paper trading engine
+├── options_engine.py               # Breeze session + option chain utilities
+├── suggestions.py                  # AI-powered trade suggestions (optional, needs ANTHROPIC_API_KEY)
+│
+├── trade_engine/
+│   ├── config.py                   # Breeze connection config dataclass
+│   ├── session.py                  # Breeze session lifecycle
+│   ├── chain.py                    # Option chain snapshot builder
+│   ├── greeks.py                   # Black-Scholes Greeks via py_vollib
+│   ├── strategy_signals.py         # 5 automated signal generators
+│   ├── option_strategies.py        # Multi-leg strategy builders (Iron Condor, Spreads, etc.)
+│   ├── risk.py                     # Risk checks and position limits
+│   └── strategies/                 # Rule-based strategy classes
+│       ├── iron_condor.py
+│       └── bull_put_spread.py
+│
+├── collector/
+│   ├── runner.py                   # Background data collection orchestrator
+│   ├── chain.py                    # Option chain → DB every 5 minutes
+│   ├── candles.py                  # Tick → OHLCV candle builder
+│   ├── spot.py                     # Spot LTP ticks → DB (batched)
+│   ├── futures.py                  # Futures ticks → DB
+│   ├── historical.py               # Breeze REST historical downloader → DB (gap-fill)
+│   ├── nse_bulk_download.py        # NSE bhavcopy bulk downloader (no credentials needed)
+│   ├── depth.py                    # Order book depth → DB
+│   ├── iv_eod.py                   # End-of-day IV summary → iv_daily table
+│   ├── config.py                   # CollectorConfig dataclass
+│   └── store.py                    # DataStore class (psycopg2 ThreadedConnectionPool)
+│
+├── static/
+│   ├── index.html                  # Live Dashboard (wizard, option chain, watchlist)
+│   ├── charts.html                 # Interactive OHLCV charts + technical indicators
+│   ├── paper.html                  # Paper trading + option strategy builder
+│   └── strategies.html             # Automated signal generator UI
+│
+├── .env.example                    # Copy to .env and fill in credentials
+├── .gitignore                      # .env and .venv excluded from git
+└── requirements.txt                # Python dependencies
 ```
+
+---
+
+## API Reference
+
+All endpoints are served by `app.py` on `http://localhost:8000`.
+
+### Connection & DB
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/connect` | Connect to Breeze (`{api_key, api_secret, session_token}`) |
+| `GET` | `/api/status` | Connection and DB mode status |
+| `POST` | `/api/db/configure` | Configure PostgreSQL (`{host, port, dbname, user, password}`) |
+| `POST` | `/api/db/disable` | Switch to in-memory mode |
+
+### Market Data
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/subscribe` | Subscribe symbol to WebSocket feed |
+| `GET` | `/api/chain` | Option chain snapshot with Greeks |
+| `GET` | `/api/ohlc` | OHLCV from Breeze REST (live) |
+| `GET` | `/api/ohlc/db` | OHLCV from PostgreSQL |
+| `GET` | `/api/symbols` | Symbol search |
+
+### Historical Data Download
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/data/download` | Breeze backfill for specific symbol(s) — credentials required |
+| `POST` | `/api/data/nse_bulk` | NSE bhavcopy bulk download — no credentials needed |
+| `GET` | `/api/data/status` | Download progress, ETA, log tail |
+
+**`POST /api/data/download` body:**
+```json
+{
+  "symbols": ["NIFTY"],
+  "backfill_days": 90,
+  "backfill_days_daily": 730
+}
+```
+
+**`POST /api/data/nse_bulk` body:**
+```json
+{
+  "days": 730,
+  "equity_only": false,
+  "fo_only": false
+}
+```
+
+**`GET /api/data/status` response:**
+```json
+{
+  "status": "running",
+  "current": "[2024-05-15] equity=50  futures=180  options=12500",
+  "done_items": 45,
+  "total_items": 730,
+  "eta_sec": 380,
+  "running": true,
+  "log": ["...last 100 lines..."]
+}
+```
+
+### Paper Trading — Single Orders
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/paper/order` | Place a paper order |
+| `POST` | `/api/paper/exit/{pos_id}` | Exit a single open position |
+| `GET` | `/api/paper/summary` | Full portfolio snapshot |
+| `POST` | `/api/paper/reset` | Reset all positions and orders |
+| `POST` | `/api/paper/capital` | Set starting capital and reset |
+
+### Paper Trading — Option Strategies
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/paper/strategy/plan` | Preview legs + strikes without entering |
+| `POST` | `/api/paper/strategy/enter` | Enter a multi-leg strategy trade |
+| `POST` | `/api/paper/strategy/exit/{trade_id}` | Exit all legs of a strategy |
+| `GET` | `/api/paper/strategies` | All strategy trades with live P&L |
+
+### Automated Signal Runners
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/strategy/start` | Start a signal generator |
+| `POST` | `/api/strategy/stop` | Stop a running strategy |
+| `GET` | `/api/strategy/list` | Active strategy runs |
+| `GET` | `/api/strategy/signals` | Recent signal history |
+
+### WebSocket
+
+Connect at `ws://localhost:8000/ws`
+
+| `type` | Triggered when |
+|---|---|
+| `init` | On first connect — full state snapshot |
+| `ltp` | Every price tick |
+| `paper_update` | After any paper order or exit |
+| `strategy_signal` | When a signal generator fires |
+| `strategy_alert` | When a strategy trade hits target/SL |
+| `paper_strategy_entered` | After a multi-leg strategy entry |
+| `paper_strategy_closed` | After a strategy exit |
+
+Send `ping` as a plain string to keep the connection alive; the server responds with `pong`.
+
+---
+
+## Troubleshooting
+
+### "Failed to connect to Breeze" or 401 errors
+
+- The session token expires daily — generate a fresh one each morning
+- Verify `BREEZE_API_KEY` and `BREEZE_API_SECRET` are correct in `.env`
+- Ensure your ICICI Direct account has API access enabled
+
+### Charts show "No data in DB" for 1m / 5m / 30m
+
+Intraday candles are built from live WebSocket ticks — they accumulate during market hours. For daily (1D) charts, run the NSE bulk download first.
+
+### Charts show "No data in DB" for 1D
+
+Run the NSE bulk download:
+```cmd
+curl -X POST http://localhost:8000/api/data/nse_bulk -H "Content-Type: application/json" -d "{\"days\": 730}"
+```
+Then switch the chart data source to **DB** and select the **1D** interval.
+
+### NSE bulk download shows "All data already up to date" immediately
+
+The resume logic detected existing data for enough symbols. Force a full re-download by temporarily truncating:
+```sql
+TRUNCATE candles; TRUNCATE futures_candles; TRUNCATE options_eod;
+```
+Then re-run the bulk download.
+
+### NSE bulk download: futures/options rows are 0 but equity works
+
+NSE occasionally restructures the F&O bhavcopy ZIP format. Check the log via `GET /api/data/status` for any zip parse errors. The equity and F&O downloads are independent — re-run with `"fo_only": true` to retry only F&O.
+
+### Breeze historical data limit reached
+
+Breeze allows ~4,500 REST API calls per day. If you hit the limit mid-download, remaining symbols fail silently. Use the NSE bulk download instead for equity daily data — it has no rate limit.
+
+### "Test Connection" fails for PostgreSQL
+
+- Verify PostgreSQL is running (Windows: `services.msc`; Linux: `systemctl status postgresql`)
+- Check the database exists: `psql -U postgres -c "\l"`
+- Try a direct connection: `psql -h localhost -U postgres -d trading_data`
+
+### Port 8000 already in use
+
+```powershell
+# Windows
+netstat -ano | findstr :8000
+taskkill /PID <pid> /F
+```
+
+```bash
+# macOS / Linux
+lsof -i :8000 && kill -9 <pid>
+```
+
+### Data not persisting across server restarts
+
+Paper trading portfolio, order log, and LTP cache are **in-memory** and reset on every restart. Only PostgreSQL-backed data (candles, ticks, chain snapshots) survives restarts.
+
+### WebSocket keeps reconnecting
+
+The client auto-reconnects every 3 seconds after a disconnect. This is normal if the server is restarting. Avoid opening many browser tabs simultaneously — each tab holds one WebSocket connection.
 
 ---
 
 ## Disclaimer
 
-This software is for educational and research purposes only. Options trading involves substantial risk of loss and is not suitable for all investors. Paper-trade and back-test thoroughly before risking real capital. The authors are not responsible for any financial losses resulting from use of this software.
+This software is for educational and personal research purposes only. It is not affiliated with ICICI Securities, ICICI Direct, or Breeze Connect.
+
+Options trading involves substantial risk of loss and is not suitable for all investors. Always test in paper trading mode and back-test thoroughly before using real capital. The authors accept no responsibility for any financial losses resulting from the use of this software.
 
 Nothing in this dashboard constitutes financial advice.

@@ -21,51 +21,37 @@ class CollectorConfig:
     db_url: str = field(default_factory=lambda: os.environ["DB_URL"])
 
     # ── NSE Index symbols (WebSocket spot + option chain) ─────────────────────
+    # FINNIFTY and MIDCPNIFTY excluded — not supported by ICICI Direct Breeze get_quotes
     symbols: List[str] = field(default_factory=lambda: [
-        "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
+        "NIFTY", "BANKNIFTY",
     ])
 
-    # ── Equity symbols: spot ticks + candles (Nifty 50 top 25 by liquidity) ──
+    # ── Equity symbols: spot ticks + candles ─────────────────────────────────
     equity_symbols: List[str] = field(default_factory=lambda: [
-        "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-        "HINDUNILVR", "SBIN", "BHARTIARTL", "KOTAKBANK", "AXISBANK",
-        "LT", "ASIANPAINT", "MARUTI", "SUNPHARMA", "WIPRO",
-        "ULTRACEMCO", "NESTLEIND", "POWERGRID", "NTPC", "COALINDIA",
-        "ONGC", "TATAMOTORS", "TATASTEEL", "JSWSTEEL", "ADANIENT",
+        "RELIANCE", "HDFCBANK", "TCS",
     ])
 
     # ── Equity symbols that also have active option chains ────────────────────
-    # These use monthly expiries; strike steps vary by stock price.
     equity_option_symbols: List[str] = field(default_factory=lambda: [
-        "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-        "SBIN", "BHARTIARTL", "AXISBANK", "LT", "WIPRO",
+        "RELIANCE", "HDFCBANK", "TCS",
     ])
     equity_option_cfg: Dict[str, dict] = field(default_factory=lambda: {
-        "RELIANCE":  {"strike_step": 50},
-        "TCS":       {"strike_step": 50},
-        "HDFCBANK":  {"strike_step": 10},
-        "INFY":      {"strike_step": 20},
-        "ICICIBANK": {"strike_step": 10},
-        "SBIN":      {"strike_step": 5},
-        "BHARTIARTL":{"strike_step": 10},
-        "AXISBANK":  {"strike_step": 10},
-        "LT":        {"strike_step": 50},
-        "WIPRO":     {"strike_step": 5},
+        "RELIANCE": {"strike_step": 50},
+        "HDFCBANK": {"strike_step": 10},
+        "TCS":      {"strike_step": 50},
     })
 
     # ── Futures symbols (index + top equity futures) ───────────────────────────
     futures_symbols: List[str] = field(default_factory=lambda: [
-        "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
-        "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+        "NIFTY", "BANKNIFTY",
+        "RELIANCE", "HDFCBANK", "TCS",
     ])
     futures_num_expiries: int = 3   # near-month + next-month + far-month
 
     # ── Per-symbol option chain config ────────────────────────────────────────
     symbol_cfg: Dict[str, dict] = field(default_factory=lambda: {
-        "NIFTY":      {"strike_step": 50,  "expiry_type": "weekly"},
-        "BANKNIFTY":  {"strike_step": 100, "expiry_type": "weekly"},
-        "FINNIFTY":   {"strike_step": 50,  "expiry_type": "weekly"},
-        "MIDCPNIFTY": {"strike_step": 25,  "expiry_type": "weekly"},
+        "NIFTY":     {"strike_step": 50,  "expiry_type": "weekly"},
+        "BANKNIFTY": {"strike_step": 100, "expiry_type": "weekly"},
     })
 
     # ── Option chain expiry window ─────────────────────────────────────────────
@@ -93,7 +79,7 @@ class CollectorConfig:
     backfill_days: int              = 90    # 1m / 5m data window
     backfill_days_daily: int        = 730   # ~2 years of daily candles
     historical_intervals: List[str] = field(default_factory=lambda: [
-        "1minute", "5minute", "15minute", "30minute", "1day",
+        "1minute", "5minute", "30minute", "1day",
     ])
 
     # ── Greeks / IV ───────────────────────────────────────────────────────────

@@ -83,22 +83,38 @@
   }
   #connect-panel h2 { margin-bottom: 16px; font-size: 14px; }
 
-  /* ── DB status bar ── */
-  #db-status-bar {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 16px; padding: 8px 10px;
-    background: var(--bg3); border-radius: 6px;
-    font-size: 11px; color: var(--muted);
+  /* ── DB choice cards ── */
+  .db-choice-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
   }
-  #db-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-  #db-dot.ok  { background: var(--green); }
-  #db-dot.err { background: var(--red); }
-  #db-mode-badge {
-    margin-left: auto; padding: 1px 8px; border-radius: 10px;
-    font-size: 10px; font-weight: 700; letter-spacing: .3px;
+  .db-choice-card {
+    border: 2px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    cursor: pointer; transition: border-color .15s, background .15s;
+    background: var(--bg3);
   }
-  #db-mode-badge.full   { background: #1a3a1a; color: var(--green); }
-  #db-mode-badge.memory { background: #2a2000; color: var(--yellow); }
+  .db-choice-card:hover { border-color: var(--blue); }
+  .db-choice-card.selected { border-color: var(--blue); background: #0d1f3c; }
+  .db-choice-card .card-icon { font-size: 20px; margin-bottom: 6px; }
+  .db-choice-card .card-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .db-choice-card .card-desc  { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  /* DB fields grid */
+  .db-fields-grid { display: grid; grid-template-columns: 1fr 90px; gap: 8px; }
+  .db-fields-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  /* DB connection result */
+  #db-test-result { font-size: 11px; }
+  #db-test-result.ok  { color: var(--green); }
+  #db-test-result.err { color: var(--red); }
+  /* Section divider */
+  .setup-step {
+    font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .setup-step::after { content:''; flex:1; height:1px; background:var(--border); }
+  .step-num {
+    width: 18px; height: 18px; border-radius: 50%; background: var(--accent);
+    color: #fff; font-size: 10px; font-weight: 700; display: inline-flex;
+    align-items: center; justify-content: center; flex-shrink: 0;
+  }
   .form-row { margin-bottom: 10px; }
   label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
   input, select {
@@ -466,6 +482,7 @@
   <h1>⚡ Breeze Trading Dashboard</h1>
   <div class="header-right">
     <a href="/charts" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)" title="Open Chart Workspace">📈 Charts</a>
+    <a href="/strategies" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)" title="Strategy Builder">⚡ Strategies</a>
     <a href="/paper" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)" title="Open Paper Trading Simulator">📄 Paper Trading</a>
     <div class="status-dot" id="status-dot"></div>
     <span id="status-text" style="color:var(--muted);font-size:12px">Disconnected</span>
@@ -479,23 +496,57 @@
 
 <!-- Connect panel -->
 <div id="connect-panel">
-  <h2>Connect to Breeze</h2>
 
-  <!-- DB availability indicator (checked on page load, no Breeze needed) -->
-  <div id="db-status-bar">
-    <div id="db-dot"></div>
-    <span id="db-status-text" style="flex:1">Checking database…</span>
-    <span id="db-mode-badge"></span>
+  <!-- ── STEP 1: DATABASE ──────────────────────────────────────────────────── -->
+  <div class="setup-step"><span class="step-num">1</span> Database <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">(optional)</span></div>
+
+  <div class="db-choice-grid">
+    <div class="db-choice-card selected" id="card-nodb" onclick="setDbMode('none')">
+      <div class="card-icon">🚫</div>
+      <div class="card-title">No Database</div>
+      <div class="card-desc">Trade live. Charts and ticks fetched from Breeze on demand. Nothing stored between sessions.</div>
+    </div>
+    <div class="db-choice-card" id="card-pg" onclick="setDbMode('pg')">
+      <div class="card-icon">🗄</div>
+      <div class="card-title">I have PostgreSQL</div>
+      <div class="card-desc">Store ticks, candles, option chains, PCR history. Download months of history.</div>
+    </div>
   </div>
-  <!-- In-memory mode info (shown when DB unavailable) -->
-  <div id="db-memory-info" style="display:none;background:#1a1600;border:1px solid #3a2a00;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--yellow);line-height:1.7">
-    <b>In-Memory Mode</b> — PostgreSQL not available. All data is fetched live from Breeze and is not persisted across sessions.<br>
-    <span style="color:var(--muted)">
-      Available without DB: real-time ticks, on-demand OHLC charts (any symbol, up to 90 days intraday / 2 years daily),
-      option chains, manual &amp; algo orders, paper trading.<br>
-      Not available: historical storage, IV Rank/Percentile, PCR trends.
-    </span>
+
+  <!-- DB connection form — shown when PostgreSQL card selected -->
+  <div id="db-fields" style="display:none;margin-bottom:14px">
+    <div class="db-fields-grid">
+      <div class="form-row" style="margin-bottom:8px">
+        <label>Host</label>
+        <input id="db-host" type="text" value="localhost" placeholder="localhost">
+      </div>
+      <div class="form-row" style="margin-bottom:8px">
+        <label>Port</label>
+        <input id="db-port" type="number" value="5432">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:8px">
+      <label>Database name</label>
+      <input id="db-name" type="text" value="trading_data" placeholder="trading_data">
+    </div>
+    <div class="db-fields-grid2">
+      <div class="form-row" style="margin-bottom:8px">
+        <label>Username</label>
+        <input id="db-user" type="text" value="postgres" placeholder="postgres">
+      </div>
+      <div class="form-row" style="margin-bottom:8px">
+        <label>Password</label>
+        <input id="db-pass" type="password" placeholder="••••••••">
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+      <button onclick="testDbConnection()" id="btn-db-test" style="flex-shrink:0">Test Connection</button>
+      <span id="db-test-result"></span>
+    </div>
   </div>
+
+  <!-- ── STEP 2: BREEZE API ────────────────────────────────────────────────── -->
+  <div class="setup-step" style="margin-top:18px"><span class="step-num">2</span> Breeze API</div>
 
   <div class="form-row">
     <label>API Key</label>
@@ -506,55 +557,52 @@
     <input id="api-secret" type="password" placeholder="API Secret">
   </div>
   <div class="form-row">
-    <label>Session Token</label>
+    <label>Session Token <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(regenerate each day from ICICI login)</span></label>
     <input id="session-token" type="text" placeholder="Session token from ICICI login">
   </div>
-  <div style="margin-top:16px">
+  <div style="margin-top:14px">
     <button class="primary" onclick="apiConnect()" style="width:100%">Connect to Live Dashboard</button>
   </div>
-  <p style="margin-top:10px;font-size:11px;color:var(--muted)">
-    Credentials are sent only to your local server. Never shared externally.
+  <p style="margin-top:8px;font-size:11px;color:var(--muted)">
+    Credentials are sent only to your local server — never shared externally.
   </p>
 
-  <!-- ── Download Historical Data (hidden in memory mode) ── -->
-  <div id="dl-section">
-  <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
-  <h2 style="margin-bottom:4px">Download Historical Data</h2>
-  <p style="font-size:11px;color:var(--muted);margin-bottom:14px">
-    Fetches OHLCV candles for all symbols and stores into PostgreSQL. Uses the credentials above.
-    Runs independently — no need to click Connect first.
-  </p>
-  <div style="display:flex;gap:10px;margin-bottom:10px">
-    <div class="form-row" style="flex:1;margin-bottom:0">
-      <label>Intraday history (days)</label>
-      <input id="dl-days" type="number" value="90" min="1" max="365" title="1m/5m/15m/30m candles">
+  <!-- ── STEP 3: DOWNLOAD (only when DB connected) ─────────────────────────── -->
+  <div id="dl-section" style="display:none">
+    <div class="setup-step" style="margin-top:18px"><span class="step-num">3</span> Download Historical Data <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">(optional)</span></div>
+    <p style="font-size:11px;color:var(--muted);margin-bottom:12px">
+      Backfills OHLCV candles for all symbols into PostgreSQL. Uses the Breeze credentials above.
+      Runs in the background — no need to click Connect first.
+    </p>
+    <div style="display:flex;gap:10px;margin-bottom:10px">
+      <div class="form-row" style="flex:1;margin-bottom:0">
+        <label>Intraday (days)</label>
+        <input id="dl-days" type="number" value="90" min="1" max="365" title="1m/5m/15m/30m candles">
+      </div>
+      <div class="form-row" style="flex:1;margin-bottom:0">
+        <label>Daily candles (days)</label>
+        <input id="dl-days-daily" type="number" value="730" min="30" max="1825" title="~2 years">
+      </div>
     </div>
-    <div class="form-row" style="flex:1;margin-bottom:0">
-      <label>Daily history (days)</label>
-      <input id="dl-days-daily" type="number" value="730" min="30" max="1825" title="1d candles (~2 years)">
+    <button id="btn-download" class="success" onclick="startDownload()" style="width:100%">
+      Download Historical Data
+    </button>
+    <!-- Progress -->
+    <div id="dl-progress" style="display:none;margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+        <span id="dl-items-text" style="font-size:11px;color:var(--muted)"></span>
+        <span id="dl-eta-text"   style="font-size:11px;color:var(--yellow);font-weight:600"></span>
+      </div>
+      <div style="background:var(--bg3);border-radius:4px;height:6px;margin-bottom:10px;overflow:hidden">
+        <div id="dl-bar" style="height:6px;border-radius:4px;background:var(--accent);width:0%;transition:width .5s"></div>
+      </div>
+      <div id="dl-status-line" style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--blue)"></div>
+      <div id="dl-log-wrap" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;font-family:monospace">
+        <div id="dl-log"></div>
+      </div>
     </div>
   </div>
-  <button id="btn-download" class="success" onclick="startDownload()" style="width:100%">
-    Download Historical Data
-  </button>
 
-  <!-- Progress area -->
-  <div id="dl-progress" style="display:none;margin-top:14px">
-    <!-- top row: items done / ETA -->
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
-      <span id="dl-items-text" style="font-size:11px;color:var(--muted)"></span>
-      <span id="dl-eta-text"   style="font-size:11px;color:var(--yellow);font-weight:600"></span>
-    </div>
-    <!-- progress bar -->
-    <div style="background:var(--bg3);border-radius:4px;height:6px;margin-bottom:10px;overflow:hidden">
-      <div id="dl-bar" style="height:6px;border-radius:4px;background:var(--accent);width:0%;transition:width .5s"></div>
-    </div>
-    <div id="dl-status-line" style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--blue)"></div>
-    <div id="dl-log-wrap" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;font-family:monospace">
-      <div id="dl-log"></div>
-    </div>
-  </div>
-  </div><!-- /dl-section -->
 </div>
 
 <!-- Main dashboard (hidden until connected) -->
@@ -1206,43 +1254,60 @@ updateClock();
   document.getElementById('o-expiry').value = d.toISOString().split('T')[0];
 })();
 
-// ── DB availability (checked on page load, before any Breeze login) ───────
+// ── DB mode wizard ─────────────────────────────────────────────────────────
 let _dbAvailable = false;
 
-async function checkDbStatus() {
-  try {
-    const r = await fetch('/api/db/status');
-    const d = await r.json();
-    _dbAvailable = d.available;
-
-    const dot    = document.getElementById('db-dot');
-    const txt    = document.getElementById('db-status-text');
-    const badge  = document.getElementById('db-mode-badge');
-    const dlSec  = document.getElementById('dl-section');
-    const memInf = document.getElementById('db-memory-info');
-
-    if (d.available) {
-      dot.className = 'ok';
-      txt.textContent = `PostgreSQL connected — ${d.candles_count.toLocaleString()} candles, ${d.symbols_count} symbols`;
-      badge.textContent = 'Full Persistence';
-      badge.className = 'full';
-      dlSec.style.display = 'block';
-      memInf.style.display = 'none';
-    } else {
-      dot.className = 'err';
-      txt.textContent = d.reason || 'PostgreSQL not available';
-      badge.textContent = 'In-Memory Mode';
-      badge.className = 'memory';
-      dlSec.style.display = 'none';
-      memInf.style.display = 'block';
-    }
-  } catch(e) {
-    document.getElementById('db-status-text').textContent = 'Could not reach server';
+function setDbMode(mode) {
+  document.getElementById('card-nodb').classList.toggle('selected', mode === 'none');
+  document.getElementById('card-pg').classList.toggle('selected',   mode === 'pg');
+  document.getElementById('db-fields').style.display = mode === 'pg' ? 'block' : 'none';
+  document.getElementById('dl-section').style.display = 'none';
+  document.getElementById('db-test-result').textContent = '';
+  if (mode === 'none') {
+    _dbAvailable = false;
+    fetch('/api/db/disable', {method: 'POST'}).catch(() => {});
   }
 }
 
-// Run on page load — no Breeze credentials needed
-checkDbStatus();
+async function testDbConnection() {
+  const btn = document.getElementById('btn-db-test');
+  const res = document.getElementById('db-test-result');
+  btn.disabled = true;
+  res.className = '';
+  res.textContent = 'Testing…';
+  try {
+    const r = await fetch('/api/db/configure', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        host:     document.getElementById('db-host').value.trim() || 'localhost',
+        port:     parseInt(document.getElementById('db-port').value) || 5432,
+        dbname:   document.getElementById('db-name').value.trim() || 'trading_data',
+        user:     document.getElementById('db-user').value.trim() || 'postgres',
+        password: document.getElementById('db-pass').value,
+      }),
+    });
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(_) { d = {}; }
+    if (d.ok) {
+      res.className = 'ok';
+      res.textContent = `Connected — ${(d.candles_count||0).toLocaleString()} candles, ${d.symbols_count||0} symbols`;
+      _dbAvailable = true;
+      document.getElementById('dl-section').style.display = 'block';
+    } else {
+      res.className = 'err';
+      const msg = d.error || d.detail || text.slice(0, 200) || `HTTP ${r.status}`;
+      res.textContent = 'Failed: ' + msg;
+      _dbAvailable = false;
+    }
+  } catch(e) {
+    res.className = 'err';
+    res.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // ── Connect / Disconnect ───────────────────────────────────────────────────
 let _appConnected = false;   // guards against duplicate onConnected() calls
