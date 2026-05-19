@@ -100,23 +100,28 @@ class ChainSnapshotCollector:
         log.info("Chain: %-12s  expiry=%s  rows=%d  atm=%d  spot=%.2f",
                  symbol, expiry, len(rows), atm, spot)
 
+    # Breeze NSE cash codes differ from NFO/internal codes for some indices
+    _SPOT_CODE_MAP = {"BANKNIFTY": "CNXBAN"}
+
     def _get_spot(self, symbol: str, exchange: str, is_index: bool = False) -> float:
-        # Breeze requires product_type="others" for index quotes, "cash" for equities
-        product = "others" if is_index else "cash"
+        breeze_code = self._SPOT_CODE_MAP.get(symbol, symbol)
+        # For indices try product_type="" (SDK default) first, then "cash"
+        product_types = ["", "cash"] if is_index else ["cash"]
         last_resp = {}
-        for attempt in range(3):
-            last_resp = self._api.get_quotes(
-                stock_code=symbol,
-                exchange_code=exchange,
-                expiry_date="",
-                product_type=product,
-                right="",
-                strike_price="",
-            )
-            if last_resp.get("Status") == 200 and last_resp.get("Success"):
-                return float(last_resp["Success"][0]["ltp"])
-            time.sleep(1.0)
-        raise RuntimeError(f"Spot fetch failed for {symbol}: {last_resp}")
+        for pt in product_types:
+            for attempt in range(2):
+                last_resp = self._api.get_quotes(
+                    stock_code=breeze_code,
+                    exchange_code="NSE",
+                    expiry_date="",
+                    product_type=pt,
+                    right="",
+                    strike_price="",
+                )
+                if last_resp.get("Status") == 200 and last_resp.get("Success"):
+                    return float(last_resp["Success"][0]["ltp"])
+                time.sleep(0.5)
+        raise RuntimeError(f"Spot fetch failed for {symbol} (breeze={breeze_code}): {last_resp}")
 
     def _fetch_chain(self, symbol: str, expiry: date, exchange: str) -> pd.DataFrame:
         resp = self._api.get_option_chain_quotes(

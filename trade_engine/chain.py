@@ -39,5 +39,5 @@ class OptionChainFetcher:
         rounded   = round(spot / step) * step
         available = chain["strike_price"].unique()
         atm       = int(min(available, key=lambda s: abs(s - rounded)))
-        log.info("Spot %.2f → ATM %d", spot, atm)
+        log.info("Spot %.2f -> ATM %d", spot, atm)
         return atm

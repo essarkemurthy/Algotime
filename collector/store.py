@@ -328,6 +328,193 @@ class DataStore:
                 "settle", "volume", "oi", "oi_change", "underlying"]
         return [dict(zip(cols, r)) for r in rows]
 
+    # ── watchlist snapshot ────────────────────────────────────────────────────
+
+    def ensure_watchlist_state_table(self) -> None:
+        self._exec("""
+            CREATE TABLE IF NOT EXISTS watchlist_state (
+                symbol      TEXT          PRIMARY KEY,
+                ltp         NUMERIC(10,2),
+                prev_close  NUMERIC(10,2),
+                updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+            )
+        """)
+
+    def get_latest_ltp(self, symbols: list) -> list:
+        """Return the most-recent spot_ticks row for each requested symbol."""
+        if not symbols:
+            return []
+        rows = self._queryall(
+            """SELECT DISTINCT ON (symbol) symbol, ltp, ts
+               FROM spot_ticks
+               WHERE symbol = ANY(%s)
+               ORDER BY symbol, ts DESC""",
+            [symbols],
+        )
+        return [{"symbol": r[0], "ltp": float(r[1]), "ts": r[2]} for r in rows]
+
+    def get_watchlist_state(self, symbols: list) -> list:
+        """Return persisted ltp + prev_close for watchlist symbols."""
+        if not symbols:
+            return []
+        rows = self._queryall(
+            "SELECT symbol, ltp, prev_close, updated_at FROM watchlist_state WHERE symbol = ANY(%s)",
+            [symbols],
+        )
+        return [
+            {"symbol": r[0], "ltp": float(r[1]) if r[1] is not None else None,
+             "prev_close": float(r[2]) if r[2] is not None else None, "ts": r[3]}
+            for r in rows
+        ]
+
+    def upsert_watchlist_state(self, rows: list) -> None:
+        """Persist ltp + prev_close per symbol (one row per symbol, upserted)."""
+        if not rows:
+            return
+        self.ensure_watchlist_state_table()
+        self._execvalues(
+            """INSERT INTO watchlist_state (symbol, ltp, prev_close, updated_at)
+               VALUES %s
+               ON CONFLICT (symbol) DO UPDATE
+                 SET ltp=EXCLUDED.ltp, prev_close=EXCLUDED.prev_close, updated_at=EXCLUDED.updated_at""",
+            [(r["symbol"], r["ltp"], r.get("prev_close"), r["ts"]) for r in rows],
+            template="(%s, %s, %s, %s)",
+        )
+
+    def upsert_watchlist_snapshot(self, rows: list) -> None:
+        """Persist a manual quote snapshot (symbol, ltp) into spot_ticks."""
+        if not rows:
+            return
+        self._execvalues(
+            """INSERT INTO spot_ticks (ts, symbol, ltp, volume)
+               VALUES %s ON CONFLICT DO NOTHING""",
+            [(r["ts"], r["symbol"], r["ltp"], 0) for r in rows],
+            template="(%s, %s, %s, %s)",
+        )
+
+    # ── security master ───────────────────────────────────────────────────────
+
+    def ensure_security_master_table(self) -> None:
+        self._exec("""
+            CREATE TABLE IF NOT EXISTS security_master (
+                exchange_code  TEXT        NOT NULL,
+                stock_code     TEXT        NOT NULL,
+                product_type   TEXT        NOT NULL DEFAULT '',
+                expiry_date    TEXT        NOT NULL DEFAULT '',
+                strike_price   TEXT        NOT NULL DEFAULT '',
+                option_type    TEXT        NOT NULL DEFAULT '',
+                stock_name     TEXT,
+                series         TEXT,
+                isin           TEXT,
+                lot_size       TEXT,
+                tick_size      TEXT,
+                face_value     TEXT,
+                updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (exchange_code, stock_code, product_type,
+                             expiry_date, strike_price, option_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_sec_master_code
+                ON security_master (stock_code, exchange_code);
+            CREATE INDEX IF NOT EXISTS idx_sec_master_isin
+                ON security_master (isin) WHERE isin IS NOT NULL AND isin <> '';
+            CREATE INDEX IF NOT EXISTS idx_sec_master_name
+                ON security_master (stock_name);
+        """)
+
+    def upsert_security_master(self, rows: list) -> None:
+        if not rows:
+            return
+        self.ensure_security_master_table()
+        sql = """
+            INSERT INTO security_master
+                (exchange_code, stock_code, product_type, expiry_date,
+                 strike_price, option_type, stock_name, series, isin,
+                 lot_size, tick_size, face_value, updated_at)
+            VALUES %s
+            ON CONFLICT (exchange_code, stock_code, product_type,
+                         expiry_date, strike_price, option_type)
+            DO UPDATE SET
+                stock_name  = EXCLUDED.stock_name,
+                series      = EXCLUDED.series,
+                isin        = EXCLUDED.isin,
+                lot_size    = EXCLUDED.lot_size,
+                tick_size   = EXCLUDED.tick_size,
+                face_value  = EXCLUDED.face_value,
+                updated_at  = EXCLUDED.updated_at
+        """
+        now = datetime.utcnow()
+        data = [
+            (
+                r["exchange_code"], r["stock_code"],
+                r.get("product_type") or "",
+                r.get("expiry_date")  or "",
+                r.get("strike_price") or "",
+                r.get("option_type")  or "",
+                r.get("stock_name"),  r.get("series"),
+                r.get("isin"),        r.get("lot_size"),
+                r.get("tick_size"),   r.get("face_value"),
+                now,
+            )
+            for r in rows
+        ]
+        self._execvalues(sql, data, template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+
+    def search_security_master(
+        self,
+        query: str = "",
+        exchange: str = "",
+        product_type: str = "",
+        limit: int = 50,
+    ) -> list:
+        conditions = []
+        params: list = []
+        if query:
+            conditions.append("(stock_code ILIKE %s OR stock_name ILIKE %s)")
+            params += [f"%{query}%", f"%{query}%"]
+        if exchange:
+            conditions.append("exchange_code = %s")
+            params.append(exchange.upper())
+        if product_type:
+            conditions.append("product_type ILIKE %s")
+            params.append(product_type)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(limit)
+        rows = self._queryall(
+            f"""SELECT exchange_code, stock_code, product_type, stock_name,
+                       series, isin, expiry_date, strike_price, option_type,
+                       lot_size, tick_size
+                FROM security_master
+                {where}
+                ORDER BY exchange_code, stock_code
+                LIMIT %s""",
+            params,
+        )
+        cols = ["exchange_code", "stock_code", "product_type", "stock_name",
+                "series", "isin", "expiry_date", "strike_price", "option_type",
+                "lot_size", "tick_size"]
+        return [dict(zip(cols, r)) for r in rows]
+
+    def security_master_stats(self) -> dict:
+        rows = self._queryall(
+            """SELECT exchange_code, product_type, COUNT(*) AS cnt
+               FROM security_master
+               GROUP BY exchange_code, product_type
+               ORDER BY exchange_code, product_type""",
+            [],
+        )
+        updated = self._queryall(
+            "SELECT MAX(updated_at) FROM security_master", []
+        )
+        last_update = updated[0][0].isoformat() if updated and updated[0][0] else None
+        return {
+            "last_updated": last_update,
+            "breakdown": [
+                {"exchange": r[0], "product_type": r[1], "count": r[2]}
+                for r in rows
+            ],
+            "total": sum(r[2] for r in rows),
+        }
+
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self) -> None:

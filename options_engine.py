@@ -226,7 +226,7 @@ class OptionChainFetcher:
         rounded = round(spot / step) * step
         available = chain["strike_price"].unique()
         atm = int(min(available, key=lambda s: abs(s - rounded)))
-        log.info("Spot %.2f → ATM %d", spot, atm)
+        log.info("Spot %.2f -> ATM %d", spot, atm)
         return atm
 
 
@@ -304,7 +304,7 @@ class GreeksEngine:
 
 
 class IVRankCalc:
-    """Rolling ATM IV history → IV Rank and IV Percentile."""
+    """Rolling ATM IV history -> IV Rank and IV Percentile."""
 
     def __init__(self, cfg: EngineConfig) -> None:
         self.cfg = cfg
@@ -387,7 +387,7 @@ class OrderRouter:
         if resp.get("Status") != 200:
             raise RuntimeError(f"Order failed for {leg.symbol}: {resp}")
         oid = resp["Success"]["order_id"]
-        log.info("ORDER %s %s %s %d → id=%s", leg.action.upper(), leg.right, leg.symbol, leg.strike, oid)
+        log.info("ORDER %s %s %s %d -> id=%s", leg.action.upper(), leg.right, leg.symbol, leg.strike, oid)
         return oid
 
     def execute(self, legs: list) -> None:

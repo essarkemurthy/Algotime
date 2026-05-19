@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
 except ImportError:
     pass
 
@@ -155,7 +155,7 @@ _trigger_tasks: Dict[str, asyncio.Task]     = {}
 _main_loop:  Optional[asyncio.AbstractEventLoop] = None
 
 # ── Strategy runner state ─────────────────────────────────────────────────────
-_active_strategies: Dict[str, dict] = {}   # strategy_id → {instance, cfg, mode, auto_exec}
+_active_strategies: Dict[str, dict] = {}   # strategy_id -> {instance, cfg, mode, auto_exec}
 _strategy_signals: deque = deque(maxlen=500)
 
 _ws_subscriptions: set            = set()
@@ -202,7 +202,7 @@ _SYMBOL_ALIASES: Dict[str, str] = {
     "FIN NIFTY":   "FINNIFTY",
     # MIDCPNIFTY
     "MIDCAP NIFTY":"MIDCPNIFTY",
-    # Equities — common display names → Breeze scrip codes
+    # Equities — common display names -> Breeze scrip codes
     "RELIANCE":    "RELIND",
     "RELIANCE INDUSTRIES": "RELIND",
     "HDFC BANK":   "HDFBAN",
@@ -229,9 +229,24 @@ _TOTAL_PREMIUM_CAP: float = float(os.getenv("TOTAL_PREMIUM_CAP", "78000"))
 # ── DB store (optional — graceful degradation when PostgreSQL not configured) ──
 _db_store = None   # collector.store.DataStore | None
 
+def _build_db_url() -> str:
+    """Return DB_URL from env, constructing from parts if DB_URL not set."""
+    url = os.getenv("DB_URL", "")
+    if url:
+        return url
+    host = os.getenv("DB_HOST", "localhost")
+    port = os.getenv("DB_PORT", "5432")
+    user = os.getenv("DB_USER", "postgres")
+    pwd  = os.getenv("DB_PASSWORD", "")
+    name = os.getenv("DB_NAME", "trading_data")
+    if pwd:
+        return f"postgresql://{user}:{pwd}@{host}:{port}/{name}"
+    return ""
+
+
 def _init_db_store() -> None:
     global _db_store
-    db_url = os.getenv("DB_URL", "")
+    db_url = _build_db_url()
     if not db_url:
         return
     try:
@@ -252,6 +267,12 @@ _TICK_FLUSH_SEC = 5
 import queue as _queue
 import statistics as _statistics
 _candle_write_queue: "_queue.Queue[dict]" = _queue.Queue(maxsize=50_000)
+
+# ── Security master state ────────────────────────────────────────────────────
+_sm_running:  bool      = False
+_sm_log:      List[str] = []
+_sm_status:   dict      = {"status": "idle", "current": "", "error": "", "last_ok": None}
+_sm_task                = None  # asyncio Task reference
 
 # ── Historical download state ─────────────────────────────────────────────────
 _download_running: bool      = False
@@ -294,15 +315,13 @@ class _DownloadLogHandler(logging.Handler):
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
-    {"stock": "NIFTY",     "exchange": "NSX", "label": "NIFTY 50"},     # NSX = NSE index feed
-    {"stock": "BANKNIFTY", "exchange": "NSX", "label": "BANK NIFTY"},   # NSX = NSE index feed
-    {"stock": "RELIND",    "exchange": "NSE", "label": "RELIANCE"},      # Breeze scrip code
-    {"stock": "HDFBAN",    "exchange": "NSE", "label": "HDFC BANK"},     # Breeze scrip code
-    {"stock": "TCS",       "exchange": "NSE", "label": "TCS"},
+    {"stock": "NIFTY",    "exchange": "NSE", "label": "NIFTY 50"},
+    {"stock": "CNXBAN",   "exchange": "NSE", "label": "BANK NIFTY"},   # Breeze NSE cash code for Bank Nifty
+    {"stock": "RELIND",   "exchange": "NSE", "label": "RELIANCE"},
+    {"stock": "HDFCBANK", "exchange": "NSE", "label": "HDFC BANK"},
+    {"stock": "TCS",      "exchange": "NSE", "label": "TCS"},
 ]
 
-# Exchange to use for Breeze WebSocket subscription per symbol.
-# Indices need "NSX" (NSE index feed); regular equities use "NSE".
 _SYMBOL_EXCHANGE: Dict[str, str] = {w["stock"]: w["exchange"] for w in WATCHLIST}
 
 # ── Market hours (IST) ────────────────────────────────────────────────────────
@@ -323,8 +342,8 @@ def _is_market_hours() -> bool:
     t = _now_ist().time()
     return _MARKET_OPEN <= t <= _MARKET_CLOSE
 
-# ── Live candle accumulator (tick → OHLCV, written to 'candles' table) ────────
-# Intervals to build in-process (minutes → DB label)
+# ── Live candle accumulator (tick -> OHLCV, written to 'candles' table) ────────
+# Intervals to build in-process (minutes -> DB label)
 _CANDLE_IVLS: Dict[int, str] = {1: "1m", 5: "5m", 15: "15m", 30: "30m", 1440: "1d"}
 
 # {symbol: {interval_min: {ts, open, high, low, close, volume}}}
@@ -572,6 +591,9 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
         if isinstance(token_result, Exception):
             log.error("Token lookup failed for %s/%s: %s", stock, exchange, token_result)
             return False
+        if not isinstance(token_result, (tuple, list)) or len(token_result) < 2:
+            log.error("Unexpected token response for %s/%s: %r", stock, exchange, token_result)
+            return False
         eq_token, _ = token_result
         if not eq_token or not isinstance(eq_token, str) or "False" in eq_token:
             log.error("No valid token for %s/%s (token=%r) — symbol may not exist in Breeze master",
@@ -591,10 +613,10 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
         )
         log.debug("subscribe_feeds response for %s: %s", stock, resp)
 
-        # Store token → cache_key mapping so _on_tick can route ticks correctly
+        # Store token -> cache_key mapping so _on_tick can route ticks correctly
         _token_to_symbol[eq_token] = cache_key or stock
         _ws_subscriptions.add(sub_key)
-        log.info("WS subscribed: %s → token %s", cache_key or stock, eq_token)
+        log.info("WS subscribed: %s -> token %s", cache_key or stock, eq_token)
         return True
     except Exception as exc:
         log.error("WS subscribe failed for %s/%s: %s", stock, exchange, exc)
@@ -623,12 +645,11 @@ def _ws_unsubscribe(stock: str, exchange: str, product: str = "cash",
 
 
 def _setup_ws_feeds() -> None:
-    """Open Breeze WebSocket and subscribe watchlist + any existing option legs.
+    """Open Breeze WebSocket and subscribe option legs for open positions.
+    Watchlist prices come from REST (Update button) + DB seed — not WS.
     Must be called in a thread (blocking SDK calls)."""
     _session.api.on_ticks = _on_tick
     _session.api.ws_connect()
-    for w in WATCHLIST:
-        _ws_subscribe(w["stock"], w["exchange"], cache_key=w["stock"])
     for pos in _positions:
         if pos.get("is_open") and pos.get("right"):
             expiry_str = SymbolBuilder.breeze_dt(date.fromisoformat(pos["expiry"]))
@@ -683,8 +704,8 @@ _EXCH_IDX = {0: "BSE", 1: "NSE", 2: "NDX", 3: "MCX", 4: "NFO", 5: "BFO"}
 def _build_symbol_index() -> None:
     """Extract symbols from the SDK's in-memory security master.
 
-    NSE/BSE equity  → one entry per stock_code, token preserved.
-    NFO/BFO/MCX/NDX → deduplicated to one entry per (underlying, exchange, product_type)
+    NSE/BSE equity  -> one entry per stock_code, token preserved.
+    NFO/BFO/MCX/NDX -> deduplicated to one entry per (underlying, exchange, product_type)
                        so the dropdown shows 'RELIANCE Futures (NFO)' instead of
                        thousands of individual strike/expiry contracts.
     """
@@ -744,7 +765,7 @@ def _build_symbol_index() -> None:
         _SYMBOL_CACHE.parent.mkdir(exist_ok=True)
         with open(_SYMBOL_CACHE, "w", encoding="utf-8") as f:
             json.dump(entries, f)
-        log.info("Symbol index saved → %s", _SYMBOL_CACHE)
+        log.info("Symbol index saved -> %s", _SYMBOL_CACHE)
     except Exception as exc:
         log.warning("Could not save symbol index: %s", exc)
 
@@ -767,10 +788,25 @@ def _load_symbol_index() -> None:
 _CHAIN_SNAP_INTERVAL_SEC = int(os.getenv("CHAIN_SNAP_SEC", "300"))  # default 5 min
 
 
+def _is_market_hours() -> bool:
+    """True only during NSE trading hours: Mon–Fri, 09:00–15:35 IST."""
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(IST)
+    if now.weekday() >= 5:       # Saturday=5, Sunday=6
+        return False
+    hm = now.hour * 100 + now.minute
+    return 900 <= hm <= 1535
+
+
 async def _chain_snapshot_loop() -> None:
-    """Every CHAIN_SNAP_SEC, fetch full option chains + PCR and persist to DB."""
+    """Every CHAIN_SNAP_SEC, fetch full option chains + PCR and persist to DB.
+    Skipped entirely outside NSE market hours to avoid burning Breeze quota."""
     await asyncio.sleep(60)   # give connection 60 s to settle before first run
     while True:
+        if not _is_market_hours():
+            log.debug("Chain snapshot skipped — outside market hours.")
+            await asyncio.sleep(_CHAIN_SNAP_INTERVAL_SEC)
+            continue
         if _session and _session._api and _db_store:
             try:
                 from collector.chain import ChainSnapshotCollector
@@ -877,16 +913,6 @@ async def _intraday_monitor_loop() -> None:
 
         # ── Market-open announcement (once per day, at 9:15 exactly) ───────
         if not _announced_open and t >= _MARKET_OPEN:
-            # Auto-subscribe watchlist feeds if Breeze session is live
-            if _session and _session._api:
-                try:
-                    for w in WATCHLIST:
-                        _ws_subscribe(w["stock"], w["exchange"],
-                                      cache_key=w["stock"])
-                    log.info("Market open: auto-subscribed %d watchlist feeds.",
-                             len(WATCHLIST))
-                except Exception as exc:
-                    log.warning("Market-open WS subscribe error: %s", exc)
             await broadcast({
                 "type":     "market_open",
                 "time":     now.strftime("%H:%M:%S"),
@@ -1017,10 +1043,93 @@ async def _paper_monitor_loop() -> None:
 
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
+async def _security_master_loop() -> None:
+    """
+    Downloads the ICICI Direct security master daily at 08:30 IST (03:00 UTC).
+    On first start, runs immediately if today's data hasn't been fetched yet.
+    """
+    global _sm_running, _sm_log, _sm_status
+
+    IST_OFFSET = 5 * 3600 + 30 * 60  # UTC+5:30 in seconds
+    TARGET_IST_HOUR, TARGET_IST_MIN = 8, 30  # 08:30 IST
+
+    def _seconds_until_next_run() -> float:
+        now_utc = datetime.now(timezone.utc)
+        now_ist_ts = now_utc.timestamp() + IST_OFFSET
+        now_ist = datetime.utcfromtimestamp(now_ist_ts)
+        # Next 08:30 IST in UTC
+        target_ist = now_ist.replace(hour=TARGET_IST_HOUR, minute=TARGET_IST_MIN, second=0, microsecond=0)
+        if now_ist >= target_ist:
+            target_ist = target_ist.replace(day=target_ist.day + 1)
+        return (target_ist - now_ist).total_seconds()
+
+    def _run_sm():
+        global _sm_running, _sm_status
+        from collector.security_master import SecurityMasterDownloader
+        db_url = os.environ.get("DB_URL", "")
+        if not db_url or not _db_store:
+            _sm_status.update(status="error", error="DB not configured", current="")
+            return
+        _sm_running = True
+        _sm_log.clear()
+        _sm_status.update(status="running", error="", current="Starting…")
+        try:
+            def _cb(msg: str):
+                _sm_log.append(msg)
+                if len(_sm_log) > 200:
+                    del _sm_log[0]
+                _sm_status["current"] = msg[:120]
+            SecurityMasterDownloader(db_url=db_url, progress_cb=_cb).run()
+            _sm_status.update(status="complete", current="Done",
+                              last_ok=datetime.now().isoformat(timespec="seconds"), error="")
+        except Exception as exc:
+            log.error("Security master refresh failed: %s", exc)
+            _sm_status.update(status="error", current="", error=str(exc))
+        finally:
+            _sm_running = False
+
+    # Run immediately on startup if no data yet
+    if _db_store:
+        try:
+            stats = _db_store.security_master_stats()
+            if stats.get("total", 0) == 0:
+                log.info("Security master table empty — running initial download.")
+                await asyncio.to_thread(_run_sm)
+        except Exception:
+            pass
+
+    while True:
+        wait = _seconds_until_next_run()
+        log.info("Security master: next refresh in %.0f min (08:30 IST).", wait / 60)
+        await asyncio.sleep(wait)
+        if not _sm_running:
+            await asyncio.to_thread(_run_sm)
+
+
+async def _auto_connect_breeze(api_key: str, api_secret: str, session_token: str) -> None:
+    """Auto-connect Breeze session from .env credentials at startup."""
+    global _session, _suggestion_engine
+    await asyncio.sleep(1)   # let the server finish binding before connecting
+    if _session and _session._api:
+        return
+    try:
+        cfg = EngineConfig(api_key=api_key, api_secret=api_secret, session_token=session_token)
+        _session = BreezeSession(cfg)
+        await asyncio.to_thread(_session.connect)
+        await asyncio.to_thread(_setup_ws_feeds)
+        await asyncio.to_thread(_build_symbol_index)
+        _suggestion_engine = SuggestionEngine(_ltp_cache)
+        await broadcast({"type": "status", "connected": True})
+        log.info("Breeze auto-connected from .env credentials.")
+    except Exception as exc:
+        _session = None
+        log.warning("Breeze auto-connect failed (bad session token?): %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _broadcast_task, _chain_snap_task, _strategy_task, _main_loop
-    global _candle_flush_task, _intraday_monitor_task, _paper_monitor_task
+    global _candle_flush_task, _intraday_monitor_task, _paper_monitor_task, _sm_task
     _main_loop              = asyncio.get_event_loop()
     _broadcast_task         = asyncio.create_task(_broadcast_loop())
     _chain_snap_task        = asyncio.create_task(_chain_snapshot_loop())
@@ -1030,10 +1139,22 @@ async def lifespan(app: FastAPI):
     _paper_monitor_task     = asyncio.create_task(_paper_monitor_loop())
     _load_symbol_index()
     _init_db_store()   # connect to PostgreSQL if DB_URL is set
+    if _db_store:
+        try:
+            _db_store.ensure_watchlist_state_table()
+        except Exception as _e:
+            log.warning("watchlist_state table init failed: %s", _e)
+    _sm_task                = asyncio.create_task(_security_master_loop())
     # Start background writer threads (no-op if DB unavailable)
     threading.Thread(target=_tick_writer_thread,   daemon=True, name="tick-writer").start()
     threading.Thread(target=_candle_writer_thread, daemon=True, name="candle-writer").start()
-    log.info("Dashboard running → http://localhost:8000")
+    # Auto-connect Breeze if all credentials are present in .env
+    _env_key   = os.getenv("BREEZE_API_KEY", "")
+    _env_sec   = os.getenv("BREEZE_API_SECRET", "")
+    _env_tok   = os.getenv("BREEZE_SESSION_TOKEN", "")
+    if _env_key and _env_sec and _env_tok:
+        asyncio.create_task(_auto_connect_breeze(_env_key, _env_sec, _env_tok))
+    log.info("Dashboard running -> http://localhost:8000")
     yield
     if _broadcast_task:
         _broadcast_task.cancel()
@@ -1047,6 +1168,8 @@ async def lifespan(app: FastAPI):
         _intraday_monitor_task.cancel()
     if _paper_monitor_task:
         _paper_monitor_task.cancel()
+    if _sm_task:
+        _sm_task.cancel()
     for t in _trigger_tasks.values():
         t.cancel()
     # Flush remaining buffered ticks before exit
@@ -1078,6 +1201,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+
+@app.get("/live")
+async def live_page():
+    return FileResponse("static/live.html")
 
 
 @app.get("/strategies")
@@ -1129,6 +1257,24 @@ def _record_order(action: str, symbol: str, qty: int, price: float, order_id: st
     }
     _order_log.append(entry)
     return entry
+
+
+# ── Credentials helper ───────────────────────────────────────────────────────
+
+@app.get("/api/credentials")
+async def get_credentials():
+    """Return credentials from .env for UI pre-fill. Safe on localhost."""
+    return {
+        "api_key":       os.getenv("BREEZE_API_KEY", ""),
+        "api_secret":    os.getenv("BREEZE_API_SECRET", ""),
+        "session_token": os.getenv("BREEZE_SESSION_TOKEN", ""),
+        "db_url":        os.getenv("DB_URL", ""),
+        "db_host":       os.getenv("DB_HOST", "localhost"),
+        "db_port":       os.getenv("DB_PORT", "5432"),
+        "db_user":       os.getenv("DB_USER", "postgres"),
+        "db_password":   os.getenv("DB_PASSWORD", ""),
+        "db_name":       os.getenv("DB_NAME", "trading_data"),
+    }
 
 
 # ── Connect / disconnect ──────────────────────────────────────────────────────
@@ -1444,7 +1590,7 @@ async def place_manual_order(req: ManualOrderReq):
 
     log_entry = _record_order(req.action, symbol, req.quantity, entry_price, order_id)
     await broadcast({"type": "order", "data": log_entry})
-    log.info("Manual order: %s %s ×%d → %s", req.action.upper(), symbol, req.quantity, order_id)
+    log.info("Manual order: %s %s ×%d -> %s", req.action.upper(), symbol, req.quantity, order_id)
     return {"status": "placed", "order_id": order_id, "symbol": symbol}
 
 
@@ -1676,7 +1822,7 @@ def _breeze_error_msg(resp: Optional[dict]) -> str:
     """Extract a human-readable error from a Breeze API response."""
     if not resp:
         return "No response from Breeze"
-    err = resp.get("Error", "")
+    err = resp.get("Error") or ""
     if "Checksum" in err or "Authentication" in err:
         return "Session expired — please Disconnect and reconnect with a fresh session token."
     if "Limit exceed" in err:
@@ -1853,6 +1999,8 @@ async def get_breeze_margins(exchange_code: str = "NSE"):
     return {"margins": None, "warning": _breeze_error_msg(resp)}
 
 
+_INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "CNXBAN", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
+
 @app.get("/api/breeze/quote")
 async def get_breeze_quote(
     stock_code:    str,
@@ -1862,25 +2010,52 @@ async def get_breeze_quote(
     right:         str = "",
     strike_price:  str = "",
 ):
-    """Fetch live quote for any symbol/instrument — read-only."""
+    """Fetch live quote for any symbol/instrument — read-only.
+    For index symbols (BANKNIFTY etc.) that return empty on NSE-cash,
+    automatically retries using the nearest weekly futures on NFO."""
     _require_session()
-    try:
+
+    async def _query(ec, pt, exp="", r="", sp=""):
         await asyncio.to_thread(_limiter.acquire, "get_quotes")
-        resp = await asyncio.to_thread(
+        return await asyncio.to_thread(
             _session.api.get_quotes,
             stock_code=stock_code.upper(),
-            exchange_code=exchange_code.upper(),
-            expiry_date=expiry_date,
-            product_type=product_type,
-            right=right,
-            strike_price=strike_price,
+            exchange_code=ec,
+            expiry_date=exp,
+            product_type=pt,
+            right=r,
+            strike_price=sp,
         )
+
+    # ── Primary attempt ───────────────────────────────────────────────
+    try:
+        resp = await _query(exchange_code.upper(), product_type,
+                            expiry_date, right, strike_price)
     except Exception as exc:
-        return {"quote": None, "warning": str(exc)}
-    if resp and resp.get("Status") == 200:
-        data = resp.get("Success") or []
-        return {"quote": data[0] if data else None, "warning": None}
-    return {"quote": None, "warning": _breeze_error_msg(resp)}
+        resp = None
+        primary_warn = str(exc)
+    else:
+        primary_warn = _breeze_error_msg(resp)
+
+    data = (resp or {}).get("Success") or [] if resp and resp.get("Status") == 200 else []
+    if data:
+        return {"quote": data[0], "warning": None, "source": "cash"}
+
+    # ── Index spot retry: Breeze indices work without product_type (empty string)
+    # Try both "" and "cash" — the SDK default differs from explicit "cash" for indices.
+    if stock_code.upper() in _INDEX_SYMBOLS:
+        for pt in ("", "cash"):
+            try:
+                await asyncio.sleep(0.3)
+                resp_retry = await _query("NSE", pt)
+                data_retry = (resp_retry or {}).get("Success") or [] \
+                             if resp_retry and resp_retry.get("Status") == 200 else []
+                if data_retry:
+                    return {"quote": data_retry[0], "warning": None, "source": f"nse_{pt or 'default'}"}
+            except Exception:
+                pass
+
+    return {"quote": None, "warning": primary_warn}
 
 
 # ── Research calls ───────────────────────────────────────────────────────────
@@ -1993,7 +2168,7 @@ async def act_on_research(call_id: str):
     call["status"] = "acted"
     await broadcast({
         "type":    "alert",
-        "message": f"RESEARCH → TRIGGER: {call['stock_code']} {call['recommendation']} @ ₹{trigger:,.2f}",
+        "message": f"RESEARCH -> TRIGGER: {call['stock_code']} {call['recommendation']} @ ₹{trigger:,.2f}",
     })
     return {"status": "acted", "trigger_key": key}
 
@@ -2306,13 +2481,13 @@ async def search_symbols(q: str = "", exchange: str = "", limit: int = 30):
             return True
         code = s["stock_code"].upper()
         name = s["company_name"].upper()
-        # Any word is a code prefix → match
+        # Any word is a code prefix -> match
         if any(code.startswith(w) for w in words):
             return True
-        # All words appear somewhere in the name → match
+        # All words appear somewhere in the name -> match
         if all(w in name or w in code for w in words):
             return True
-        # Single long word is a substring of the name → match
+        # Single long word is a substring of the name -> match
         if len(words) == 1 and len(words[0]) >= 4 and words[0] in name:
             return True
         return False
@@ -3089,13 +3264,13 @@ def _sig_gap_go(sym: str, ltp: float, candles: list) -> dict:
                 "entry": ltp, "sl": round(today_open * 0.994, 2),
                 "target": round(ltp * 1.020, 2),
                 "confidence": 0.72,
-                "reason": f"Gap up +{gap_pct:.1f}% (prev ₹{prev_close:.0f} → open ₹{today_open:.0f}). Price continuing higher — momentum buy."}
+                "reason": f"Gap up +{gap_pct:.1f}% (prev ₹{prev_close:.0f} -> open ₹{today_open:.0f}). Price continuing higher — momentum buy."}
     if gap_pct < -1.5 and cont_down:
         return {"signal": "SHORT", "ltp": ltp, "gap_pct": gap_pct,
                 "entry": ltp, "sl": round(today_open * 1.006, 2),
                 "target": round(ltp * 0.980, 2),
                 "confidence": 0.68,
-                "reason": f"Gap down {gap_pct:.1f}% (prev ₹{prev_close:.0f} → open ₹{today_open:.0f}). Selling continuing — momentum short."}
+                "reason": f"Gap down {gap_pct:.1f}% (prev ₹{prev_close:.0f} -> open ₹{today_open:.0f}). Selling continuing — momentum short."}
     if abs(gap_pct) > 1.5:
         return {"signal": "WAIT", "ltp": ltp, "gap_pct": gap_pct,
                 "reason": f"Gap {'up' if gap_pct > 0 else 'down'} {abs(gap_pct):.1f}% but price not continuing in gap direction. May fill gap — wait."}
@@ -3141,7 +3316,7 @@ def _nearest_expiry_from_db(sym: str) -> Optional[date]:
 
 
 def _sig_iv_rank(sym: str, ltp: float) -> dict:
-    """HIGH IV Rank (≥70%) → sell premium (Iron Condor). LOW (≤30%) → buy premium (Long Straddle)."""
+    """HIGH IV Rank (≥70%) -> sell premium (Iron Condor). LOW (≤30%) -> buy premium (Long Straddle)."""
     if not _db_store:
         return {"signal": "NO_DATA", "reason": "No DB connected."}
     try:
@@ -3200,7 +3375,7 @@ def _sig_iv_rank(sym: str, ltp: float) -> dict:
 
 
 def _sig_pcr_sentiment(sym: str, ltp: float) -> dict:
-    """PCR ≥1.3 → contrarian LONG (Bull Call Spread). PCR ≤0.7 → contrarian SHORT (Bear Put Spread)."""
+    """PCR ≥1.3 -> contrarian LONG (Bull Call Spread). PCR ≤0.7 -> contrarian SHORT (Bear Put Spread)."""
     if not _db_store:
         return {"signal": "NO_DATA", "reason": "No DB connected."}
     try:
@@ -3242,7 +3417,7 @@ def _sig_pcr_sentiment(sym: str, ltp: float) -> dict:
 
 
 def _sig_max_pain(sym: str, ltp: float) -> dict:
-    """LTP far from max pain with ≤10 DTE → expect drift toward max pain."""
+    """LTP far from max pain with ≤10 DTE -> expect drift toward max pain."""
     if not _db_store:
         return {"signal": "NO_DATA", "reason": "No DB connected."}
     try:
@@ -3330,19 +3505,6 @@ async def _run_scan(sym_list: list) -> dict:
     """Evaluate all equity and options strategies for every symbol in sym_list."""
     now_str = _now_ist().strftime("%H:%M:%S")
     results: list = []
-
-    # Auto-subscribe any un-subscribed symbols to Breeze WebSocket for live data.
-    # Uses NSX for index symbols (NIFTY/BANKNIFTY), NSE for equities.
-    # Fire-and-forget so it never blocks the scan itself.
-    if _session and _session._api:
-        for sym in sym_list:
-            exch    = _SYMBOL_EXCHANGE.get(sym, "NSE")
-            sub_key = f"{sym}|{exch}|cash|||"
-            if sub_key not in _ws_subscriptions:
-                asyncio.create_task(
-                    asyncio.to_thread(_ws_subscribe, sym, exch, "cash",
-                                      "", "", "", sym)
-                )
 
     for sym in sym_list:
         live_ltp = _ltp_cache.get(sym)
@@ -3471,7 +3633,7 @@ async def paper_strategy_enter(req: PaperStrategyReq):
     from trade_engine.option_strategies import (
         STRATEGY_BUILDERS, STRATEGY_NAMES, STRIKE_STEPS, LOT_SIZES,
     )
-    stock = _normalize_symbol(req.stock)   # resolve "HDFC BANK" → "HDFCBANK" etc.
+    stock = _normalize_symbol(req.stock)   # resolve "HDFC BANK" -> "HDFCBANK" etc.
 
     builder = STRATEGY_BUILDERS.get(req.strategy_id)
     if not builder:
@@ -3654,6 +3816,216 @@ async def strategy_list():
 @app.get("/api/strategy/signals")
 async def strategy_signals(limit: int = 100):
     return {"signals": list(_strategy_signals)[:limit]}
+
+
+# ── Watchlist LTP snapshot (persist & restore across restarts) ───────────────
+
+# Legacy Breeze code aliases: old NFO/scrip code -> canonical NSE cash code used now.
+# Used so page-seed still works when DB has rows under the old code.
+_WL_ALIASES: Dict[str, str] = {
+    "HDFCBANK": "HDFBAN",   # old WS/candle data stored as HDFBAN
+    "CNXBAN":   "BANKNIFTY", # old data stored as BANKNIFTY; Breeze NSE cash code is CNXBAN
+}
+
+@app.get("/api/watchlist/ltp")
+async def watchlist_ltp(symbols: str = "NIFTY,CNXBAN,RELIND,TCS,HDFCBANK"):
+    """
+    Return last-known LTP + prev_close for watchlist symbols.
+    Priority: 1) live cache  2) watchlist_state (has prev_close)  3) spot_ticks  4) candles
+    """
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    result: dict = {}
+
+    # 1. Live WebSocket cache
+    for sym in syms:
+        if sym in _ltp_cache:
+            result[sym] = {"ltp": _ltp_cache[sym], "source": "live"}
+
+    # 2. watchlist_state — best source: has both ltp and prev_close from last Update
+    missing = [s for s in syms if s not in result]
+    if missing and _db_store:
+        try:
+            alias_lookup: Dict[str, str] = {}
+            lookup_codes = []
+            for sym in missing:
+                lookup_codes.append(sym)
+                alias = _WL_ALIASES.get(sym)
+                if alias:
+                    lookup_codes.append(alias)
+                    alias_lookup[alias] = sym
+            rows = await asyncio.to_thread(_db_store.get_watchlist_state, lookup_codes)
+            for row in rows:
+                canonical = alias_lookup.get(row["symbol"], row["symbol"])
+                if canonical not in result and row["ltp"]:
+                    result[canonical] = {
+                        "ltp":        row["ltp"],
+                        "prev_close": row["prev_close"],
+                        "ts":         row["ts"].isoformat() if row["ts"] else None,
+                        "source":     "state",
+                    }
+        except Exception as exc:
+            log.warning("watchlist_ltp state lookup failed: %s", exc)
+
+    # 3. spot_ticks fallback (ltp only, no prev_close)
+    missing = [s for s in syms if s not in result]
+    if missing and _db_store:
+        try:
+            alias_lookup2: Dict[str, str] = {}
+            lookup_codes2 = []
+            for sym in missing:
+                lookup_codes2.append(sym)
+                alias = _WL_ALIASES.get(sym)
+                if alias:
+                    lookup_codes2.append(alias)
+                    alias_lookup2[alias] = sym
+            rows = await asyncio.to_thread(_db_store.get_latest_ltp, lookup_codes2)
+            for row in rows:
+                canonical = alias_lookup2.get(row["symbol"], row["symbol"])
+                if canonical not in result:
+                    result[canonical] = {
+                        "ltp":    row["ltp"],
+                        "ts":     row["ts"].isoformat() if row["ts"] else None,
+                        "source": "db",
+                    }
+        except Exception as exc:
+            log.warning("watchlist_ltp DB fallback failed: %s", exc)
+
+    # 4. Candles fallback
+    still_missing = [s for s in syms if s not in result]
+    if still_missing and _db_store:
+        for sym in still_missing:
+            for code in [sym, _WL_ALIASES.get(sym)]:
+                if not code:
+                    continue
+                try:
+                    ltp = await asyncio.to_thread(_db_ltp_fallback, code)
+                    if ltp:
+                        result[sym] = {"ltp": ltp, "source": "candle"}
+                        break
+                except Exception:
+                    pass
+
+    return result
+
+
+@app.post("/api/watchlist/snapshot")
+async def store_watchlist_snapshot(body: dict):
+    """
+    Persist a manual Breeze quote snapshot.
+    Body: { prices: { SYMBOL: { ltp, prev_close } } }
+    Writes into live LTP cache + spot_ticks + watchlist_state (persists prev_close).
+    """
+    prices = body.get("prices", {})
+    if not prices:
+        return {"ok": False, "message": "No prices provided."}
+
+    ts = datetime.now(timezone.utc)
+    tick_rows  = []
+    state_rows = []
+    for sym, data in prices.items():
+        ltp = data.get("ltp")
+        if ltp is None:
+            continue
+        sym_upper  = sym.upper()
+        prev_close = data.get("prev_close")
+        _ltp_cache[sym_upper] = float(ltp)
+        tick_rows.append({"ts": ts, "symbol": sym_upper, "ltp": float(ltp)})
+        state_rows.append({
+            "ts": ts, "symbol": sym_upper,
+            "ltp": float(ltp),
+            "prev_close": float(prev_close) if prev_close else None,
+        })
+
+    if _db_store:
+        try:
+            await asyncio.to_thread(_db_store.upsert_watchlist_snapshot, tick_rows)
+        except Exception as exc:
+            log.warning("watchlist tick write failed: %s", exc)
+        try:
+            await asyncio.to_thread(_db_store.upsert_watchlist_state, state_rows)
+            log.info("watchlist_state saved: %s", [r["symbol"] for r in state_rows])
+        except Exception as exc:
+            log.warning("watchlist state write failed: %s", exc)
+
+    return {"ok": True, "stored": len(tick_rows)}
+
+
+# ── Security master endpoints ─────────────────────────────────────────────────
+
+@app.post("/api/data/security_master/refresh")
+async def security_master_refresh():
+    """Trigger an immediate security master download (runs in background thread)."""
+    global _sm_running
+    if _sm_running:
+        return {"ok": False, "message": "Refresh already in progress."}
+    db_url = os.environ.get("DB_URL", "")
+    if not db_url or not _db_store:
+        raise HTTPException(503, "Database not configured.")
+
+    def _run():
+        global _sm_running, _sm_status
+        from collector.security_master import SecurityMasterDownloader
+        _sm_running = True
+        _sm_log.clear()
+        _sm_status.update(status="running", error="", current="Starting…")
+        try:
+            def _cb(msg: str):
+                _sm_log.append(msg)
+                if len(_sm_log) > 200:
+                    del _sm_log[0]
+                _sm_status["current"] = msg[:120]
+            SecurityMasterDownloader(db_url=db_url, progress_cb=_cb).run()
+            _sm_status.update(status="complete", current="Done",
+                              last_ok=datetime.now().isoformat(timespec="seconds"), error="")
+        except Exception as exc:
+            log.error("Security master manual refresh failed: %s", exc)
+            _sm_status.update(status="error", current="", error=str(exc))
+        finally:
+            _sm_running = False
+
+    threading.Thread(target=_run, daemon=True, name="sm-refresh").start()
+    return {"ok": True, "message": "Security master refresh started."}
+
+
+@app.get("/api/data/security_master/status")
+async def security_master_status():
+    """Return current refresh status and last-updated info."""
+    stats: dict = {}
+    if _db_store:
+        try:
+            stats = _db_store.security_master_stats()
+        except Exception:
+            pass
+    return {
+        **_sm_status,
+        "running": _sm_running,
+        "log": list(_sm_log[-50:]),
+        "db_stats": stats,
+    }
+
+
+@app.get("/api/data/security_master/search")
+async def security_master_search(
+    q:            str = "",
+    exchange:     str = "",
+    product_type: str = "",
+    limit:        int = 50,
+):
+    """
+    Search security master by stock code or name.
+    ?q=RELIND  ->  all rows matching RELIND
+    ?q=HDFC&exchange=NSE&product_type=cash  ->  NSE cash instruments with HDFC
+    """
+    if not _db_store:
+        raise HTTPException(503, "Database not configured.")
+    limit = min(limit, 500)
+    try:
+        rows = _db_store.search_security_master(
+            query=q, exchange=exchange, product_type=product_type, limit=limit
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return {"results": rows, "count": len(rows)}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

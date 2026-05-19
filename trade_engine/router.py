@@ -59,7 +59,7 @@ class OrderRouter:
         if resp.get("Status") != 200:
             raise RuntimeError(f"Order failed for {leg.symbol}: {resp}")
         oid = resp["Success"]["order_id"]
-        log.info("ORDER %s %s %d → id=%s", leg.action.upper(), leg.symbol, leg.strike, oid)
+        log.info("ORDER %s %s %d -> id=%s", leg.action.upper(), leg.symbol, leg.strike, oid)
         return oid
 
     def execute(self, legs: List[Leg]) -> None:

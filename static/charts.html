@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Chart Workspace — Breeze</title>
+<title>Charts — TechUltime</title>
+<link rel="stylesheet" href="/static/colors_and_type.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root {
@@ -15,9 +16,47 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, monospace; font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-  /* ── Header ── */
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-  header .logo { font-size: 14px; font-weight: 700; letter-spacing: .5px; }
+  /* ── App bar (TechUltime light) ── */
+  .tu-appbar {
+    flex-shrink: 0;
+    background: rgba(250, 247, 241, 0.97);
+    border-bottom: 1px solid rgba(33,31,24,0.1);
+    display: flex; align-items: center; gap: 28px;
+    height: 56px; padding: 0 24px;
+    z-index: 30;
+  }
+  .tu-brand {
+    display: flex; align-items: center; gap: 9px;
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 20px; letter-spacing: -0.02em; color: #14130E;
+    text-decoration: none; flex-shrink: 0;
+  }
+  .tu-brand-orb {
+    width: 20px; height: 20px; border-radius: 999px;
+    background: radial-gradient(circle at 30% 30%, #7FA59B, #2E544C 70%);
+    box-shadow: inset 0 -2px 4px rgba(0,0,0,0.18), 0 0 0 2px #F3EDE0;
+  }
+  .tu-brand b { font-weight: 500; }
+  .tu-nav { display: flex; gap: 2px; }
+  .tu-nav a {
+    text-decoration: none; color: #4A4538;
+    font-family: "Manrope", -apple-system, sans-serif;
+    font-size: 14px; font-weight: 500;
+    padding: 7px 11px; border-radius: 8px;
+    transition: background 0.2s, color 0.2s;
+  }
+  .tu-nav a:hover { background: #F3EDE0; color: #14130E; }
+  .tu-nav a.active { color: #14130E; background: #F3EDE0; }
+  .tu-spacer { flex: 1; }
+  .tu-session {
+    display: flex; align-items: center; gap: 14px;
+    font-family: "Manrope", sans-serif; font-size: 13px; color: #4A4538;
+  }
+  .tu-conn-dot {
+    width: 7px; height: 7px; border-radius: 999px; background: #B66A5A;
+  }
+  .tu-conn-dot.live { background: #5F8A6B; }
+  .tu-clock { font-family: "JetBrains Mono", monospace; color: #14130E; }
   header .spacer { flex: 1; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block; }
   .dot.green { background: var(--green); }
@@ -115,15 +154,25 @@
 </head>
 <body>
 
-<!-- Header -->
-<header>
-  <span class="logo">⚡ Chart Workspace</span>
-  <a href="/" class="back">← Dashboard</a>
-  <div class="spacer"></div>
-  <span id="conn-dot" class="dot"></span>
-  <span id="conn-text" style="font-size:12px;color:var(--muted)">Disconnected</span>
-  <span id="clock" style="font-family:monospace;font-size:12px;color:var(--muted)"></span>
-</header>
+<!-- App bar -->
+<nav class="tu-appbar">
+  <a class="tu-brand" href="/">
+    <div class="tu-brand-orb"></div>
+    <b>TechUltime</b>
+  </a>
+  <div class="tu-nav">
+    <a href="/live">Live</a>
+    <a href="/charts" class="active">Charts</a>
+    <a href="/paper">Paper</a>
+    <a href="/strategies">Strategies</a>
+  </div>
+  <div class="tu-spacer"></div>
+  <div class="tu-session">
+    <div class="tu-conn-dot" id="conn-dot"></div>
+    <span id="conn-text">Disconnected</span>
+    <span class="tu-clock" id="clock"></span>
+  </div>
+</nav>
 
 <div id="workspace">
 
@@ -408,7 +457,7 @@ function handleWS(msg) {
 
 function setConnected(c) {
   _connected = c;
-  document.getElementById('conn-dot').className  = 'dot' + (c ? ' green' : '');
+  document.getElementById('conn-dot').className  = 'tu-conn-dot' + (c ? ' live' : '');
   document.getElementById('conn-text').textContent = c ? 'Connected' : 'Disconnected';
   if (c) subscribeAll();
 }

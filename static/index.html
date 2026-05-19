@@ -1756,7 +1756,7 @@ async function apiConnect() {
     session_token: document.getElementById('session-token').value.trim(),
   };
   if (!body.api_key || !body.api_secret || !body.session_token) {
-    showAlert('Please fill in all credentials.'); return;
+    showAlert('Please fill in all credentials.'); return false;
   }
   try {
     const r = await fetch('/api/connect', {
@@ -1764,9 +1764,15 @@ async function apiConnect() {
       body: JSON.stringify(body)
     });
     const d = await r.json();
-    if (!r.ok) { showAlert('Connection failed: ' + (d.detail || d.message)); return; }
+    if (!r.ok) {
+      showAlert('Connection failed: ' + (d.detail || d.message));
+      document.getElementById('session-token').focus();
+      document.getElementById('session-token').select();
+      return false;
+    }
     onConnected();
-  } catch(e) { showAlert('Error: ' + e.message); }
+    return true;
+  } catch(e) { showAlert('Error: ' + e.message); return false; }
 }
 
 async function apiDisconnect() {
@@ -4201,14 +4207,55 @@ async function stopTickWatch() {
   setTickView('table');
 }
 
-// ── Init: check if already connected ──────────────────────────────────────
+// ── Init: pre-fill credentials from .env, auto-connect if all present ────────
 (async function init() {
+  // 1. Pre-fill credential fields from .env
+  try {
+    const cr = await fetch('/api/credentials');
+    const creds = await cr.json();
+    if (creds.api_key)       document.getElementById('api-key').value       = creds.api_key;
+    if (creds.api_secret)    document.getElementById('api-secret').value    = creds.api_secret;
+    if (creds.session_token) document.getElementById('session-token').value = creds.session_token;
+    if (creds.db_host)       document.getElementById('db-host').value       = creds.db_host;
+    if (creds.db_port)       document.getElementById('db-port').value       = creds.db_port;
+    if (creds.db_name)       document.getElementById('db-name').value       = creds.db_name;
+    if (creds.db_user)       document.getElementById('db-user').value       = creds.db_user;
+    if (creds.db_password)   document.getElementById('db-pass').value       = creds.db_password;
+  } catch(e) {}
+
+  // 2. Check if server already connected (startup auto-connect may have succeeded)
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    if (d.connected) onConnected();
-    else connectWS(); // still connect WS for future init message
+    if (d.connected) { onConnected(); return; }
   } catch(e) {}
+
+  // 3. All fields filled — attempt auto-connect
+  const key = document.getElementById('api-key').value.trim();
+  const sec = document.getElementById('api-secret').value.trim();
+  const tok = document.getElementById('session-token').value.trim();
+  let autoConnectFailed = false;
+  if (key && sec && tok) {
+    const ok = await apiConnect();
+    if (ok) return;
+    autoConnectFailed = true;
+  }
+
+  // 4. Failed or missing credentials — show connect panel
+  connectWS();
+  document.getElementById('connect-panel').style.display = 'block';
+  document.getElementById('main').style.display = 'none';
+  const tokEl = document.getElementById('session-token');
+  const keyEl = document.getElementById('api-key');
+  if (!key || !sec) {
+    keyEl.focus(); keyEl.select();
+    showAlert('Breeze credentials not found in .env — please enter them below.');
+  } else {
+    tokEl.focus(); tokEl.select();
+    showAlert(autoConnectFailed
+      ? 'Session token expired — enter today\'s token from ICICI login.'
+      : 'Session token missing — enter today\'s token from ICICI login.');
+  }
 })();
 </script>
 </body>

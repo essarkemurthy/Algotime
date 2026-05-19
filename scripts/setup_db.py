@@ -151,6 +151,40 @@ CREATE TABLE IF NOT EXISTS iv_daily (
     PRIMARY KEY (date, symbol, expiry)
 );
 CREATE INDEX IF NOT EXISTS idx_iv_daily_sym ON iv_daily (symbol, date DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ICICI Direct / Breeze security master — refreshed daily at 08:30 IST
+-- PK covers all derivative dimensions; empty-string defaults avoid NULL-in-PK.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS security_master (
+    exchange_code  TEXT          NOT NULL,
+    stock_code     TEXT          NOT NULL,
+    product_type   TEXT          NOT NULL DEFAULT '',
+    expiry_date    TEXT          NOT NULL DEFAULT '',
+    strike_price   TEXT          NOT NULL DEFAULT '',
+    option_type    TEXT          NOT NULL DEFAULT '',
+    stock_name     TEXT,
+    series         TEXT,
+    isin           TEXT,
+    lot_size       TEXT,
+    tick_size      TEXT,
+    face_value     TEXT,
+    updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (exchange_code, stock_code, product_type, expiry_date, strike_price, option_type)
+);
+CREATE INDEX IF NOT EXISTS idx_sec_master_code   ON security_master (stock_code, exchange_code);
+CREATE INDEX IF NOT EXISTS idx_sec_master_isin   ON security_master (isin) WHERE isin IS NOT NULL AND isin <> '';
+CREATE INDEX IF NOT EXISTS idx_sec_master_name   ON security_master (stock_name);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Watchlist state: persists ltp + prev_close across restarts (one row per symbol)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS watchlist_state (
+    symbol      TEXT          PRIMARY KEY,
+    ltp         NUMERIC(10,2),
+    prev_close  NUMERIC(10,2),
+    updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
 """
 
 
