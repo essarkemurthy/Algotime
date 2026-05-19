@@ -179,6 +179,9 @@
   .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: white; box-shadow: var(--shadow-1); transition: transform var(--dur-base) var(--ease-out); }
   .toggle.on { background: var(--tu-teal-500); }
   .toggle.on::after { transform: translateX(14px); }
+  .sim-stat { background: var(--bg-sunken); border-radius: var(--r-md); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .sim-stat .sc-val { font-size: 20px; font-weight: 700; font-family: var(--font-mono); color: var(--fg-1); line-height: 1; }
+  .sim-stat .sc-lbl { font-size: 10px; font-weight: 500; color: var(--fg-3); text-transform: uppercase; letter-spacing: .05em; }
   .pill-dot { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; color: var(--fg-2); background: var(--bg-sunken); padding: 2px 9px; border-radius: var(--r-pill); }
   .pill-dot::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: var(--tu-success); }
   .pill-dot.idle::before { background: var(--neutral); }
@@ -573,6 +576,26 @@
           <div style="padding:32px;text-align:center;color:var(--fg-3);font-size:13px">Loading strategies…</div>
         </div>
       </div>
+
+      <!-- Simulated Breeze API call monitor -->
+      <div class="card" id="sim-calls-card">
+        <div class="card-head">
+          <div class="card-title">Simulated Breeze API calls <span class="count" id="sim-total">—</span></div>
+          <div class="card-actions" style="font-size:11px;color:var(--fg-3)">paper mode · live estimate</div>
+        </div>
+        <div style="padding:12px 16px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;" id="sim-calls-grid">
+          <div class="sim-stat" id="sc-orders"><span class="sc-val">—</span><span class="sc-lbl">Orders placed</span></div>
+          <div class="sim-stat" id="sc-t1"><span class="sc-val">—</span><span class="sc-lbl">T1 exits</span></div>
+          <div class="sim-stat" id="sc-t2"><span class="sc-val">—</span><span class="sc-lbl">T2 exits</span></div>
+          <div class="sim-stat" id="sc-sl"><span class="sc-val">—</span><span class="sc-lbl">SL exits</span></div>
+          <div class="sim-stat" id="sc-eod"><span class="sc-val">—</span><span class="sc-lbl">EOD square-offs</span></div>
+          <div class="sim-stat" id="sc-cap"><span class="sc-val">—</span><span class="sc-lbl">Daily cap exits</span></div>
+        </div>
+        <div style="padding:0 16px 14px;font-size:11px;color:var(--fg-3);border-top:1px solid var(--border);padding-top:10px;display:flex;justify-content:space-between;align-items:center;">
+          <span>Real Breeze quota: <b id="sc-real-today">—</b>/day · <b id="sc-real-min">—</b>/min used</span>
+          <span>WS live: <b id="sc-ws-subs">—</b> symbols</span>
+        </div>
+      </div>
     </div>
 
     <!-- Row 2 — Options signal feed + trades -->
@@ -756,6 +779,7 @@ function connectWS() {
       if (msg.type === 'intraday_signals' || msg.type === 'strategy_alert') onSignal(msg);
       if (msg.type === 'paper_strategy_entered' || msg.type === 'paper_strategy_closed') onSignal(msg);
       if (msg.type === 'market_open') loadScan();
+      if (msg.type === 'quota') renderSimCalls(msg);
     } catch(_){}
   };
 }
@@ -912,41 +936,50 @@ function populateFeedFromScan(rows) {
 
 // ── Strategies ───────────────────────────────────────────────────────
 const DEFAULT_EQ_STRATS = [
-  { id:'orb',         name:'ORB',              desc:'Opening Range Breakout · 15m · entry on first-candle breakout with ATR stop',      segment:'equity' },
-  { id:'vwap_rev',    name:'VWAP Reversion',   desc:'Mean-reversion to VWAP · 5m · fade moves >1.5σ from VWAP with tight stop',         segment:'equity' },
-  { id:'supertrend',  name:'Supertrend',        desc:'ATR-based trend follower · 15m · factor 3 · ride sustained intraday trends',       segment:'equity' },
-  { id:'rsi2',        name:'RSI(2)',            desc:'Short-term mean-reversion · 5m · enter on RSI(2)<10 or >90 with 9-EMA exit',      segment:'equity' },
-  { id:'ema_cross',   name:'9/21 EMA Cross',   desc:'Dual EMA crossover · 5m · long on 9>21 cross, short on 9<21 cross with volume filter', segment:'equity' },
+  { id:'orb',         name:'ORB',              desc:'Opening Range Breakout · 15m · entry on first-candle high/low breakout, ATR stop',     segment:'equity', risk:'Medium' },
+  { id:'vwap',        name:'VWAP Reversal',    desc:'Mean-reversion to VWAP · 5m · fade moves >1.5σ from VWAP, tight stop',                segment:'equity', risk:'Low'    },
+  { id:'ema_cross',   name:'9/21 EMA Cross',   desc:'9-EMA crosses 21-EMA on 5m · long on golden cross, short on death cross, volume filter', segment:'equity', risk:'Low' },
+  { id:'sr_reversal', name:'S&R Reversal',     desc:'Price rejects key support/resistance with reversal candle + volume surge',              segment:'equity', risk:'Medium' },
+  { id:'gap_go',      name:'Gap & Go',         desc:'Gap ≥1.5% from prev close · follow-through momentum · tight stop',                     segment:'equity', risk:'Medium' },
+];
+
+const DEFAULT_OPT_STRATS = [
+  { id:'zero_dte',   name:'0DTE Expiry Scalper', desc:'ATM option scalping on expiry day · VWAP + ORB + OI buildup · 5m/15m · target 25% / SL 35%',                  segment:'options', risk:'High' },
+  { id:'ivr_condor', name:'IVR Iron Condor',      desc:'Sell iron condor when IV Rank > 50 · collect premium in a defined range · close at 50% profit or 200% loss', segment:'options', risk:'Medium' },
+  { id:'vix_regime', name:'VIX Regime Switcher',  desc:'VIX < 13 → sell premium · VIX > 18 → buy straddle · 13–18 → iron condor · auto-adapts, no manual config',   segment:'options', risk:'Medium' },
+  { id:'gamma_scalp',name:'Gamma Scalper',         desc:'Long ATM straddle + delta-neutral futures hedge · profits when realised vol > implied vol · intraday',       segment:'options', risk:'Medium' },
+  { id:'momentum',   name:'Momentum Breakout',     desc:'Buy CE/PE on 15m chart N-period breakout · auto-picks call or put by direction · Nifty 50 stocks',          segment:'options', risk:'Medium' },
 ];
 
 async function loadStrategies() {
   let strats = [];
   try {
-    const r = await fetch('/api/paper/strategies');
+    const r = await fetch('/api/strategy/list');
     const d = await r.json();
-    strats = d.strategies || d.runs || [];
-  } catch(_) {
-    try {
-      const r = await fetch('/api/strategy/list');
-      const d = await r.json();
-      strats = d.runs || [];
-    } catch(_) {}
-  }
-  let equity = strats.filter(s => s.segment !== 'options' && s.type !== 'options');
-  // Seed defaults when backend has no equity strategies configured yet
+    strats = d.runs || [];
+  } catch(_) {}
+
+  let equity = strats.filter(s => s.segment === 'equity');
   if (!equity.length) {
     equity = DEFAULT_EQ_STRATS.map(d => ({
       strategy_id: d.id, name: d.name, description: d.desc,
-      segment: d.segment, active: false, running: false, in_trade: false,
-      signal_count: 0, acted: 0, wins: 0, trades: 0, pnl: null,
+      segment: 'equity', risk: d.risk, active: false, running: false,
+      signal_count: 0, acted: 0, pnl: null,
     }));
   }
-  const options = strats.filter(s => s.segment === 'options' || s.type === 'options');
+  let options = strats.filter(s => s.segment === 'options');
+  if (!options.length) {
+    options = DEFAULT_OPT_STRATS.map(d => ({
+      strategy_id: d.id, name: d.name, description: d.desc, risk: d.risk,
+      segment: 'options', active: false, running: false,
+      signal_count: 0, acted: 0, pnl: null,
+    }));
+  }
   renderStratList('strategy-list-eq', equity);
   renderStratList('strategy-list-opt', options);
-  const eqArmed = equity.filter(s => s.active||s.running).length;
-  const optArmed = options.filter(s => s.active||s.running).length;
-  document.getElementById('strat-count-eq').textContent = equity.length ? `${equity.length} · ${eqArmed} armed` : '0';
+  const eqArmed  = equity.filter(s => s.active || s.running).length;
+  const optArmed = options.filter(s => s.active || s.running).length;
+  document.getElementById('strat-count-eq').textContent  = equity.length  ? `${equity.length} · ${eqArmed} armed`  : '0';
   document.getElementById('strat-count-opt').textContent = options.length ? `${options.length} · ${optArmed} armed` : '0';
 }
 
@@ -965,9 +998,14 @@ function renderStratList(listId, strats) {
     const pillCls = s.in_trade ? 'armed' : on ? '' : 'idle';
     const pillLbl = s.in_trade ? 'In trade' : on ? 'Armed' : 'Paused';
     const id = s.strategy_id || s.id || '';
+    const risk = s.risk || '';
+    const riskBadge = risk ? `<span style="font-size:10px;font-weight:600;letter-spacing:.04em;padding:2px 7px;border-radius:99px;margin-left:6px;${
+      risk==='High'   ? 'background:#fde8e8;color:#c0392b;' :
+      risk==='Medium' ? 'background:#fef3cd;color:#856404;' :
+                        'background:#d4edda;color:#155724;'}">${risk}</span>` : '';
     return `<div class="strategy">
       <div>
-        <div class="name">${s.name||id} <span class="pill-dot ${pillCls}">${pillLbl}</span></div>
+        <div class="name">${s.name||id}${riskBadge} <span class="pill-dot ${pillCls}">${pillLbl}</span></div>
         <div class="desc">${s.description||s.desc||''}</div>
         <div class="stats">
           Signals <b>${s.signal_count??s.signals??0}</b> · Acted <b>${s.acted??s.orders??0}</b> · Win <b>${s.wins??'—'}/${s.trades??'—'}</b> · <span class="${pnlCls}">${pnlTxt}</span>
@@ -980,10 +1018,31 @@ function renderStratList(listId, strats) {
 
 async function toggleStrategy(id, currentlyOn) {
   try {
-    const url = currentlyOn ? '/api/strategy/stop' : '/api/strategy/start';
-    await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({strategy_id:id}) });
+    let resp, data;
+    if (currentlyOn) {
+      resp = await fetch('/api/strategy/stop', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({strategy_id: id}),
+      });
+      data = await resp.json();
+    } else {
+      resp = await fetch('/api/strategy/start', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({strategy_id: id, auto_exec: true, mode: 'paper'}),
+      });
+      data = await resp.json();
+      if (!data.ok && data.error) {
+        console.warn('Strategy start failed:', data.error);
+        // Brief inline feedback via the button label
+        const btn = document.querySelector(`.toggle[onclick*="'${id}'"]`);
+        if (btn) { btn.title = data.error; setTimeout(() => btn.title = '', 4000); }
+        return;
+      }
+    }
     await loadStrategies();
-  } catch(_){}
+  } catch(e) {
+    console.error('toggleStrategy error:', e);
+  }
 }
 
 // ── Orders & Trades ──────────────────────────────────────────────────
@@ -1020,6 +1079,27 @@ function setOrderFilter(f, el) {
   document.querySelectorAll('.ob-chip').forEach(c => c.classList.remove('on'));
   if (el) el.classList.add('on');
   renderOrderBook();
+}
+
+function renderSimCalls(msg) {
+  const sc = msg.sim_calls || {};
+  const q  = msg.data     || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.querySelector('.sc-val').textContent = val ?? '—'; };
+  set('sc-orders', sc.orders_placed ?? 0);
+  set('sc-t1',     sc.t1_exits      ?? 0);
+  set('sc-t2',     sc.t2_exits      ?? 0);
+  set('sc-sl',     sc.sl_exits      ?? 0);
+  set('sc-eod',    sc.eod_exits     ?? 0);
+  set('sc-cap',    sc.daily_cap_exits ?? 0);
+  const total = sc.total ?? 0;
+  const totEl = document.getElementById('sim-total');
+  if (totEl) totEl.textContent = total > 0 ? `${total} calls` : '0 calls';
+  const rdEl = document.getElementById('sc-real-today');
+  if (rdEl) rdEl.textContent = q.calls_today ?? '—';
+  const rmEl = document.getElementById('sc-real-min');
+  if (rmEl) rmEl.textContent = q.calls_this_min ?? '—';
+  const wsEl = document.getElementById('sc-ws-subs');
+  if (wsEl) wsEl.textContent = msg.ws_subs ?? '?';
 }
 
 function renderOrderBook() {
@@ -1275,8 +1355,8 @@ async function refreshWatchlist() {
         const l = parseFloat(q.ltp ?? q.last_rate ?? q.last_traded_price ?? 0);
         if (!l) continue;
         ltp = l;
-        // Breeze cash: `close` = yesterday's close; futures_proxy: `close` = settle price
-        prevClose = parseFloat(q.close ?? q.previous_close ?? q.prev_close ?? 0) || null;
+        // _prev_close is normalised by the backend; fall back to raw Breeze fields
+        prevClose = parseFloat(q._prev_close ?? q.prev_close ?? q.previous_close ?? q.close ?? 0) || null;
         break;
       } catch (err) {
         console.error(`[${stock}] exception:`, err);
@@ -1323,7 +1403,9 @@ async function refreshWatchlist() {
       }
     }
 
-    snapshot[stock] = { ltp, prev_close: prevClose };
+    // Only include prev_close when we actually have it — null would overwrite a good DB value
+    if (prevClose) snapshot[stock] = { ltp, prev_close: prevClose };
+    else           snapshot[stock] = { ltp };
     await new Promise(res => setTimeout(res, 300));
   }
 

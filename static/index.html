@@ -539,6 +539,7 @@
 <div id="connect-panel">
 
   <!-- ── STEP 1: DATABASE ──────────────────────────────────────────────────── -->
+  <div id="db-setup-section">
   <div class="setup-step"><span class="step-num">1</span> Database <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">(optional)</span></div>
 
   <div class="db-choice-grid">
@@ -585,17 +586,21 @@
       <span id="db-test-result"></span>
     </div>
   </div>
+  </div><!-- /db-setup-section -->
 
   <!-- ── STEP 2: BREEZE API ────────────────────────────────────────────────── -->
-  <div class="setup-step" style="margin-top:18px"><span class="step-num">2</span> Breeze API</div>
+  <div id="breeze-setup-section">
+  <div class="setup-step" style="margin-top:18px"><span class="step-num" id="breeze-step-num">2</span> Breeze API</div>
 
-  <div class="form-row">
-    <label>API Key</label>
-    <input id="api-key" type="text" placeholder="Your ICICI Breeze API Key">
-  </div>
-  <div class="form-row">
-    <label>API Secret</label>
-    <input id="api-secret" type="password" placeholder="API Secret">
+  <div id="breeze-key-secret-rows">
+    <div class="form-row">
+      <label>API Key</label>
+      <input id="api-key" type="text" placeholder="Your ICICI Breeze API Key">
+    </div>
+    <div class="form-row">
+      <label>API Secret</label>
+      <input id="api-secret" type="password" placeholder="API Secret">
+    </div>
   </div>
   <div class="form-row">
     <label>Session Token <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(regenerate each day from ICICI login)</span></label>
@@ -607,6 +612,7 @@
   <p style="margin-top:8px;font-size:11px;color:var(--muted)">
     Credentials are sent only to your local server — never shared externally.
   </p>
+  </div><!-- /breeze-setup-section -->
 
   <!-- ── STEP 3: DOWNLOAD (only when DB connected) ─────────────────────────── -->
   <div id="dl-section" style="display:none">
@@ -4207,30 +4213,44 @@ async function stopTickWatch() {
   setTickView('table');
 }
 
-// ── Init: pre-fill credentials from .env, auto-connect if all present ────────
+// ── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
-  // 1. Pre-fill credential fields from .env
+  // 1. Load credentials from .env and status in parallel
+  let creds = {}, status = {};
   try {
-    const cr = await fetch('/api/credentials');
-    const creds = await cr.json();
-    if (creds.api_key)       document.getElementById('api-key').value       = creds.api_key;
-    if (creds.api_secret)    document.getElementById('api-secret').value    = creds.api_secret;
-    if (creds.session_token) document.getElementById('session-token').value = creds.session_token;
-    if (creds.db_host)       document.getElementById('db-host').value       = creds.db_host;
-    if (creds.db_port)       document.getElementById('db-port').value       = creds.db_port;
-    if (creds.db_name)       document.getElementById('db-name').value       = creds.db_name;
-    if (creds.db_user)       document.getElementById('db-user').value       = creds.db_user;
-    if (creds.db_password)   document.getElementById('db-pass').value       = creds.db_password;
+    [creds, status] = await Promise.all([
+      fetch('/api/credentials').then(r => r.json()),
+      fetch('/api/status').then(r => r.json()),
+    ]);
   } catch(e) {}
 
-  // 2. Check if server already connected (startup auto-connect may have succeeded)
-  try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
-    if (d.connected) { onConnected(); return; }
-  } catch(e) {}
+  // 2. Both connected at startup — go straight to dashboard
+  if (status.connected && status.db_connected !== false) {
+    onConnected(); return;
+  }
 
-  // 3. All fields filled — attempt auto-connect
+  // 3. Pre-fill all form fields from .env values
+  if (creds.api_key)       document.getElementById('api-key').value       = creds.api_key;
+  if (creds.api_secret)    document.getElementById('api-secret').value    = creds.api_secret;
+  if (creds.session_token) document.getElementById('session-token').value = creds.session_token;
+  if (creds.db_host)       document.getElementById('db-host').value       = creds.db_host;
+  if (creds.db_port)       document.getElementById('db-port').value       = creds.db_port;
+  if (creds.db_name)       document.getElementById('db-name').value       = creds.db_name;
+  if (creds.db_user)       document.getElementById('db-user').value       = creds.db_user;
+  if (creds.db_password)   document.getElementById('db-pass').value       = creds.db_password;
+
+  // 4. DB already connected on server — hide DB section entirely
+  const dbOk = status.db_connected || !!(creds.db_url || creds.db_password);
+  if (dbOk) {
+    document.getElementById('db-setup-section').style.display = 'none';
+  }
+
+  // 5. Renumber Breeze step if DB is hidden
+  if (dbOk) {
+    document.getElementById('breeze-step-num').textContent = '1';
+  }
+
+  // 6. All three Breeze fields present — attempt silent auto-connect
   const key = document.getElementById('api-key').value.trim();
   const sec = document.getElementById('api-secret').value.trim();
   const tok = document.getElementById('session-token').value.trim();
@@ -4241,20 +4261,23 @@ async function stopTickWatch() {
     autoConnectFailed = true;
   }
 
-  // 4. Failed or missing credentials — show connect panel
+  // 7. Show only the panel for what's actually missing
   connectWS();
   document.getElementById('connect-panel').style.display = 'block';
   document.getElementById('main').style.display = 'none';
-  const tokEl = document.getElementById('session-token');
-  const keyEl = document.getElementById('api-key');
-  if (!key || !sec) {
-    keyEl.focus(); keyEl.select();
-    showAlert('Breeze credentials not found in .env — please enter them below.');
+
+  if (!dbOk) {
+    // DB not configured — focus DB section
+    document.getElementById('db-host').focus();
+    if (!keyOk) showAlert('Enter your PostgreSQL and Breeze credentials to continue.');
+    else        showAlert('PostgreSQL not configured — enter connection details below.');
   } else {
+    // DB fine — only Breeze token needed
+    const tokEl = document.getElementById('session-token');
     tokEl.focus(); tokEl.select();
     showAlert(autoConnectFailed
-      ? 'Session token expired — enter today\'s token from ICICI login.'
-      : 'Session token missing — enter today\'s token from ICICI login.');
+      ? 'Session token expired — enter today\'s token from ICICI Direct.'
+      : 'Enter your Breeze session token to continue.');
   }
 })();
 </script>

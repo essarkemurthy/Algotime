@@ -158,6 +158,19 @@ _main_loop:  Optional[asyncio.AbstractEventLoop] = None
 _active_strategies: Dict[str, dict] = {}   # strategy_id -> {instance, cfg, mode, auto_exec}
 _strategy_signals: deque = deque(maxlen=500)
 
+# ── Simulated Breeze call counter (paper trading) ──────────────────────────────
+# Tracks every order/exit that WOULD be sent to Breeze in live mode so the user
+# can estimate real API quota usage before going live.
+_sim_calls: dict = {
+    "date":           "",   # YYYY-MM-DD — reset daily
+    "orders_placed":  0,    # BUY / SELL entry orders
+    "t1_exits":       0,    # T1 partial-exit orders
+    "t2_exits":       0,    # T2 partial-exit orders
+    "sl_exits":       0,    # SL-hit full exits
+    "eod_exits":      0,    # EOD 15:20 square-offs
+    "daily_cap_exits":0,    # daily-loss-cap forced exits
+}
+
 _ws_subscriptions: set            = set()
 _token_to_symbol:  Dict[str, str] = {}
 
@@ -328,7 +341,7 @@ _SYMBOL_EXCHANGE: Dict[str, str] = {w["stock"]: w["exchange"] for w in WATCHLIST
 _IST           = timezone(timedelta(hours=5, minutes=30))
 _MARKET_OPEN   = _time(9, 15)
 _MARKET_CLOSE  = _time(15, 31)
-_SCAN_INTERVAL = int(os.getenv("INTRADAY_SCAN_SEC", "60"))
+_SCAN_INTERVAL = int(os.getenv("INTRADAY_SCAN_SEC", "15"))
 
 _intraday_scan_cache: dict = {}    # last server-side scan payload (broadcast to UI)
 _intraday_monitor_task = None      # asyncio.Task handle
@@ -659,7 +672,43 @@ def _setup_ws_feeds() -> None:
                 right_str, str(pos["strike"]), expiry_str,
                 cache_key=pos["symbol"],
             )
+    # Also subscribe all WATCHLIST symbols so strategies get live LTP ticks
+    for w in WATCHLIST:
+        _ws_subscribe(w["stock"], w["exchange"], "cash")
     log.info("Breeze WS feeds active — subscribed %d symbols.", len(_ws_subscriptions))
+
+
+def _subscribe_watchlist_feeds() -> None:
+    """Subscribe all WATCHLIST symbols to Breeze WebSocket for live LTP.
+    Safe to call multiple times — _ws_subscribe is idempotent via _ws_subscriptions."""
+    if not (_session and _session._api):
+        return
+    for w in WATCHLIST:
+        _ws_subscribe(w["stock"], w["exchange"], "cash")
+    log.info("Watchlist WS subscriptions refreshed (%d symbols).", len(WATCHLIST))
+
+
+def _reset_sim_calls() -> None:
+    """Reset simulated call counters at the start of each trading day."""
+    today = date.today().isoformat()
+    if _sim_calls["date"] == today:
+        return
+    _sim_calls.update({
+        "date":            today,
+        "orders_placed":   0,
+        "t1_exits":        0,
+        "t2_exits":        0,
+        "sl_exits":        0,
+        "eod_exits":       0,
+        "daily_cap_exits": 0,
+    })
+    log.info("Simulated Breeze call counter reset for %s.", today)
+
+
+def _sim_total() -> int:
+    return (_sim_calls["orders_placed"] + _sim_calls["t1_exits"] +
+            _sim_calls["t2_exits"]      + _sim_calls["sl_exits"] +
+            _sim_calls["eod_exits"]     + _sim_calls["daily_cap_exits"])
 
 
 async def _broadcast_loop() -> None:
@@ -675,7 +724,12 @@ async def _broadcast_loop() -> None:
         await broadcast({"type": "ltp", "data": _ltp_cache.copy()})
         await broadcast({"type": "pnl", "data": pnl_data})
         if _tick % 10 == 0:
-            await broadcast({"type": "quota", "data": _limiter.stats})
+            await broadcast({
+                "type":      "quota",
+                "data":      _limiter.stats,
+                "sim_calls": {**_sim_calls, "total": _sim_total()},
+                "ws_subs":   len(_ws_subscriptions),
+            })
         if pnl_data["total_pnl"] < -(_MAX_DAILY_LOSS * 0.80):
             await broadcast({
                 "type":    "alert",
@@ -833,7 +887,10 @@ async def _strategy_signal_loop() -> None:
     while True:
         for strat_id, run in list(_active_strategies.items()):
             try:
-                instance = run["instance"]
+                instance = run.get("instance")
+                if instance is None:
+                    # Intraday strategies are driven by _intraday_monitor_loop
+                    continue
                 signals  = await asyncio.to_thread(
                     instance.generate_signals,
                     _session, _ltp_cache, _db_store,
@@ -841,6 +898,7 @@ async def _strategy_signal_loop() -> None:
                 for sig in signals:
                     d = sig.to_dict()
                     _strategy_signals.appendleft(d)
+                    run["signal_count"] = run.get("signal_count", 0) + 1
                     await broadcast({"type": "strategy_signal", "signal": d})
                     log.info("Strategy signal [%s] %s %s — %s",
                              strat_id, sig.action, sig.symbol, sig.rationale[:60])
@@ -854,19 +912,138 @@ async def _strategy_signal_loop() -> None:
         await asyncio.sleep(_STRATEGY_POLL_SEC)
 
 
+def _stock_in_trade(symbol: str) -> bool:
+    """True if any open paper position exists for this underlying symbol.
+    Matches both exact stock name and option positions whose stock key starts
+    with the underlying (e.g. 'NIFTY ATM CE' starts with 'NIFTY')."""
+    return any(
+        p.is_open and (p.stock == symbol or p.stock.startswith(symbol + " "))
+        for p in _paper._positions
+    )
+
+
 def _auto_paper_trade(sig) -> None:
-    """Execute a BUY_CALL / BUY_PUT signal as a paper trade."""
+    """Execute a BUY_CALL / BUY_PUT signal as a paper trade with proper sizing, SL, T1, T2."""
     try:
-        if sig.action not in ("BUY_CALL", "BUY_PUT"):
+        if sig.action not in ("BUY_CALL", "BUY_PUT", "BUY_STRADDLE"):
             return
-        ltp = _ltp_cache.get(sig.symbol, 100.0)
+        if _paper.halted:
+            return
+        # Block all strategies from entering while any position is open for this stock
+        if _stock_in_trade(sig.symbol):
+            return
+        spot = _ltp_cache.get(sig.symbol, 0.0)
+        if not spot:
+            return
+
         right = "CE" if sig.action == "BUY_CALL" else "PE"
-        symbol = f"{sig.symbol} ATM {right}"
-        _paper.open_position(symbol=symbol, entry_price=ltp, qty=75,
-                             action="buy", product="options")
-        log.info("Auto paper trade: %s %s @ %.2f", sig.action, sig.symbol, ltp)
+        # Simulate ATM option premium as ~0.5% of spot (paper trade approximation)
+        entry = round(max(50.0, spot * 0.005), 2)
+
+        target_pct = sig.target_pct or 25.0
+        sl_pct     = sig.sl_pct     or 35.0
+        sl_price   = round(entry * (1 - sl_pct / 100), 2)
+        t1_price   = round(entry * (1 + target_pct / 100), 2)
+        t2_price   = round(entry * (1 + target_pct * 2 / 100), 2)
+
+        capital_slot   = max(_paper.cash * 0.05, 50_000)
+        risk_per_trade = min(capital_slot * 0.02, 2_000)
+        lot_size = 75
+        raw_qty  = PaperTrader.calc_qty(capital_slot, risk_per_trade, entry, sl_price)
+        qty      = max(lot_size, round(raw_qty / lot_size) * lot_size)
+
+        # Use the full descriptive name as stock key so the position is
+        # stored as e.g. "NIFTY ATM CE" rather than just "NIFTY"
+        sym_key = f"{sig.symbol} ATM {right}"
+        order = _paper.place_order(
+            stock=sym_key, exchange="NSE", product="options",
+            action="buy", qty=qty, order_type="limit", price=entry,
+            ltp_cache={sym_key: entry},
+            tag=f"auto:{sig.strategy_id}",
+        )
+        pos = next(
+            (p for p in reversed(_paper._positions) if p.is_open and p.stock == sym_key),
+            None,
+        )
+        if pos:
+            t1_qty = qty // 3
+            t2_qty = qty // 3
+            _paper.set_levels(pos.id, sl_price, t1_price, t2_price,
+                              t1_qty, t2_qty, trail_pct=0.004,
+                              tag=f"auto:{sig.strategy_id}")
+        run = _active_strategies.get(sig.strategy_id)
+        if run:
+            run["acted"] = run.get("acted", 0) + 1
+        _sim_calls["orders_placed"] += 1   # would be 1 place_order call to Breeze
+        log.info("Auto paper [%s]: %s %s qty=%d entry=%.2f SL=%.2f T1=%.2f T2=%.2f",
+                 sig.strategy_id, sig.action, sig.symbol,
+                 qty, entry, sl_price, t1_price, t2_price)
     except Exception as exc:
         log.debug("Auto paper trade failed: %s", exc)
+
+
+def _auto_intraday_trade(row: dict) -> None:
+    """Execute an intraday LONG/SHORT signal as a paper equity trade with SL/T1/T2."""
+    try:
+        if _paper.halted:
+            return
+        symbol   = row.get("symbol", "")
+        signal   = row.get("signal", "")
+        strat_id = row.get("strategy", "intraday")
+        ltp      = row.get("ltp") or _ltp_cache.get(symbol)
+        if not ltp or not symbol or signal not in ("LONG", "SHORT"):
+            return
+
+        # Block ALL strategies from entering while any position is open for this stock
+        if _stock_in_trade(symbol):
+            return
+
+        action = "buy" if signal == "LONG" else "sell"
+        sl_pct = 0.008   # 0.8% intraday SL
+        t1_pct = 0.012   # 1.2% T1
+        t2_pct = 0.020   # 2.0% T2
+
+        if action == "buy":
+            sl_price = round(ltp * (1 - sl_pct), 2)
+            t1_price = round(ltp * (1 + t1_pct), 2)
+            t2_price = round(ltp * (1 + t2_pct), 2)
+        else:
+            sl_price = round(ltp * (1 + sl_pct), 2)
+            t1_price = round(ltp * (1 - t1_pct), 2)
+            t2_price = round(ltp * (1 - t2_pct), 2)
+
+        capital_slot   = max(_paper.cash * 0.10, 100_000)
+        risk_per_trade = min(capital_slot * 0.015, 2_500)
+        qty = max(1, PaperTrader.calc_qty(capital_slot, risk_per_trade, ltp, sl_price))
+
+        # Use the scan row's LTP as limit price — guarantees fill even if
+        # the symbol hasn't yet warmed up in _ltp_cache
+        fill_ltp = _ltp_cache.get(symbol, ltp)
+        _paper.place_order(
+            stock=symbol, exchange="NSE", product="cash",
+            action=action, qty=qty, order_type="limit", price=fill_ltp,
+            ltp_cache=_ltp_cache, tag=f"auto:{strat_id}",
+        )
+        pos = next(
+            (p for p in reversed(_paper._positions)
+             if p.is_open and p.stock == symbol and f"auto:{strat_id}" in p.tag),
+            None,
+        )
+        if pos:
+            t1_qty = qty // 3
+            t2_qty = qty // 3
+            _paper.set_levels(pos.id, sl_price, t1_price, t2_price,
+                              t1_qty, t2_qty, trail_pct=0.004,
+                              tag=f"auto:{strat_id}")
+        run = _active_strategies.get(strat_id)
+        if run:
+            run["signal_count"] = run.get("signal_count", 0) + 1
+            run["acted"]        = run.get("acted", 0) + 1
+        _sim_calls["orders_placed"] += 1   # would be 1 place_order call to Breeze
+        log.info("Auto intraday [%s]: %s %s qty=%d entry=%.2f SL=%.2f T1=%.2f T2=%.2f",
+                 strat_id, signal, symbol, qty, ltp, sl_price, t1_price, t2_price)
+    except Exception as exc:
+        log.debug("Auto intraday trade failed: %s", exc)
 
 
 async def _intraday_monitor_loop() -> None:
@@ -913,6 +1090,10 @@ async def _intraday_monitor_loop() -> None:
 
         # ── Market-open announcement (once per day, at 9:15 exactly) ───────
         if not _announced_open and t >= _MARKET_OPEN:
+            # Subscribe WATCHLIST symbols via Breeze WS so strategies get live ticks
+            await asyncio.to_thread(_subscribe_watchlist_feeds)
+            # Reset simulated-call counter for the new trading day
+            _reset_sim_calls()
             await broadcast({
                 "type":     "market_open",
                 "time":     now.strftime("%H:%M:%S"),
@@ -937,6 +1118,14 @@ async def _intraday_monitor_loop() -> None:
                                  f"{r['symbol']}:{r['signal']}:{r['strategy']}"
                                  for r in payload["results"]
                                  if r.get("signal") in ("LONG", "SHORT"))[:6])
+
+                # Auto-execute signals for armed intraday strategies
+                for row in payload.get("results", []):
+                    if row.get("signal") not in ("LONG", "SHORT"):
+                        continue
+                    run = _active_strategies.get(row.get("strategy", ""))
+                    if run and run.get("auto_exec") and run.get("mode") == "paper":
+                        _auto_intraday_trade(row)
 
             except Exception as exc:
                 log.warning("Intraday monitor scan error: %s", exc)
@@ -1024,6 +1213,18 @@ async def _paper_monitor_loop() -> None:
             if events:
                 summary = _paper.summary(eff_ltp)
                 for ev in events:
+                    # Count each exit type as a simulated Breeze order call
+                    ev_type = ev.get("type", "")
+                    if ev_type == "T1_HIT":
+                        _sim_calls["t1_exits"] += 1
+                    elif ev_type == "T2_HIT":
+                        _sim_calls["t2_exits"] += 1
+                    elif ev_type == "SL_HIT":
+                        _sim_calls["sl_exits"] += 1
+                    elif ev_type == "EOD_SQUAREOFF":
+                        _sim_calls["eod_exits"] += 1
+                    elif ev_type == "DAILY_CAP_HIT":
+                        _sim_calls["daily_cap_exits"] += 1
                     await broadcast({
                         "type":    "paper_auto_exit",
                         "event":   ev,
@@ -1323,6 +1524,8 @@ async def get_status():
     rl = _limiter.stats
     return {
         "connected":            bool(_session and _session._api),
+        "db_connected":         bool(_db_store),
+        "breeze_configured":    bool(os.getenv("BREEZE_API_KEY") and os.getenv("BREEZE_API_SECRET")),
         "algo_running":         bool(_algo_task and not _algo_task.done()),
         "live_trading_enabled": _LIVE_TRADING_ENABLED,
         "api_calls_today":      rl["calls_today"],
@@ -2038,22 +2241,26 @@ async def get_breeze_quote(
         primary_warn = _breeze_error_msg(resp)
 
     data = (resp or {}).get("Success") or [] if resp and resp.get("Status") == 200 else []
-    if data:
-        return {"quote": data[0], "warning": None, "source": "cash"}
 
-    # ── Index spot retry: Breeze indices work without product_type (empty string)
-    # Try both "" and "cash" — the SDK default differs from explicit "cash" for indices.
-    if stock_code.upper() in _INDEX_SYMBOLS:
-        for pt in ("", "cash"):
-            try:
-                await asyncio.sleep(0.3)
-                resp_retry = await _query("NSE", pt)
-                data_retry = (resp_retry or {}).get("Success") or [] \
-                             if resp_retry and resp_retry.get("Status") == 200 else []
-                if data_retry:
-                    return {"quote": data_retry[0], "warning": None, "source": f"nse_{pt or 'default'}"}
-            except Exception:
-                pass
+    # ── If primary failed, retry with empty product_type (works for both indices and some equities)
+    if not data:
+        try:
+            await asyncio.sleep(0.3)
+            resp2 = await _query(exchange_code.upper(), "")
+            data = (resp2 or {}).get("Success") or [] if resp2 and resp2.get("Status") == 200 else []
+        except Exception:
+            pass
+
+    if data:
+        q = dict(data[0])
+        # Normalise prev_close — Breeze may use `close`, `previous_close`, or hyphenated keys.
+        # `close` during market hours can be 0 (today's close not settled yet), so prefer
+        # explicit prev_close fields and fall back to `close` only if > 0.
+        pc = (q.get("prev_close") or q.get("previous_close") or q.get("previous-close") or 0)
+        if not pc or float(pc) <= 0:
+            pc = q.get("close") or 0
+        q["_prev_close"] = float(pc) if pc and float(pc) > 0 else 0
+        return {"quote": q, "warning": None, "source": "cash"}
 
     return {"quote": None, "warning": primary_warn}
 
@@ -3099,6 +3306,25 @@ def _db_ltp_fallback(sym: str) -> Optional[float]:
         return None
 
 
+def _db_prev_close(sym: str) -> Optional[float]:
+    """Previous trading day's close from 1d candles (up to 7 calendar days back)."""
+    if not _db_store:
+        return None
+    try:
+        today = datetime.now(timezone.utc).date()
+        for n in range(1, 8):
+            d = today - timedelta(days=n)
+            row = _db_store._queryone(
+                "SELECT close FROM candles WHERE symbol=%s AND \"interval\"='1d' AND ts::date=%s",
+                (sym, d),
+            )
+            if row and row[0] and float(row[0]) > 0:
+                return float(row[0])
+    except Exception:
+        pass
+    return None
+
+
 # ── Strategy evaluators ───────────────────────────────────────────────────────
 
 def _sig_orb(sym: str, ltp: float, candles: list) -> dict:
@@ -3292,6 +3518,39 @@ _INTRADAY_NAMES = {
     "ema_cross":   "EMA Crossover",
     "sr_reversal": "S&R Reversal",
     "gap_go":      "Gap & Go",
+}
+
+_INTRADAY_META = {
+    "orb": {
+        "name": "Opening Range Breakout",
+        "description": "Entry on first-candle 15m high/low breakout. ATR-based stop, 1:1.5 RR.",
+        "segment": "equity",
+        "risk": "Medium",
+    },
+    "vwap": {
+        "name": "VWAP Reversal",
+        "description": "Mean-reversion to VWAP on >1.5σ deviation. Tight stop, intraday.",
+        "segment": "equity",
+        "risk": "Low",
+    },
+    "ema_cross": {
+        "name": "9/21 EMA Crossover",
+        "description": "9-EMA crosses 21-EMA on 5m chart with volume confirmation.",
+        "segment": "equity",
+        "risk": "Low",
+    },
+    "sr_reversal": {
+        "name": "S&R Reversal",
+        "description": "Price rejects key support/resistance with reversal candle + volume surge.",
+        "segment": "equity",
+        "risk": "Medium",
+    },
+    "gap_go": {
+        "name": "Gap & Go",
+        "description": "Gap ≥1.5% from prev close with follow-through momentum. Tight stop.",
+        "segment": "equity",
+        "risk": "Medium",
+    },
 }
 
 
@@ -3699,6 +3958,22 @@ async def paper_strategy_list():
     return {"trades": _paper.strategy_summary(_ltp_cache)}
 
 
+@app.get("/api/paper/sim-calls")
+async def paper_sim_calls():
+    """Return simulated Breeze API call counts for the current trading day.
+    Shows how many real order/cancel calls WOULD be sent to Breeze in live mode."""
+    return {
+        **_sim_calls,
+        "total": _sim_total(),
+        "real_quota": _limiter.stats,
+        "ws_subscriptions": len(_ws_subscriptions),
+        "watchlist_subscribed": [
+            w["stock"] for w in WATCHLIST
+            if f"{w['stock']}|{w['exchange']}|cash|||" in _ws_subscriptions
+        ],
+    }
+
+
 @app.get("/api/paper/strategy/plan")
 async def paper_strategy_plan(
     strategy_id: str,
@@ -3763,28 +4038,43 @@ class StrategyStartReq(BaseModel):
 @app.post("/api/strategy/start")
 async def strategy_start(req: StrategyStartReq):
     from trade_engine.strategy_signals import STRATEGY_REGISTRY
-    cls = STRATEGY_REGISTRY.get(req.strategy_id)
-    if not cls:
+    cls         = STRATEGY_REGISTRY.get(req.strategy_id)
+    is_intraday = req.strategy_id in _INTRADAY_META
+
+    if not cls and not is_intraday:
         return {"ok": False, "error": f"Unknown strategy: {req.strategy_id}"}
     if req.strategy_id in _active_strategies:
         return {"ok": False, "error": "Already running"}
     if req.mode == "live" and not (_session and _session._api):
         return {"ok": False, "error": "Live mode requires an active Breeze session"}
 
-    instance = cls(req.params)
+    # Auto-assign watchlist symbols if caller didn't specify any
+    params = dict(req.params)
+    if not params.get("symbols"):
+        if is_intraday:
+            params["symbols"] = [w["stock"] for w in WATCHLIST]
+        else:
+            # Options/index strategies default to indices
+            params["symbols"] = ["NIFTY", "CNXBAN"]
+
+    instance = cls(params) if cls else None
+    symbols  = params.get("symbols", [])
+
     _active_strategies[req.strategy_id] = {
-        "instance":  instance,
-        "cfg":       req.params,
-        "mode":      req.mode,
-        "auto_exec": req.auto_exec,
-        "symbols":   req.params.get("symbols", []),
-        "started_at": datetime.now().isoformat(),
+        "instance":     instance,
+        "cfg":          params,
+        "mode":         req.mode,
+        "auto_exec":    req.auto_exec,
+        "symbols":      symbols,
+        "started_at":   datetime.now().isoformat(),
         "signal_count": 0,
+        "acted":        0,
+        "intraday":     is_intraday,
     }
-    log.info("Strategy started: %s  mode=%s  symbols=%s",
-             req.strategy_id, req.mode, req.params.get("symbols"))
+    log.info("Strategy started: %s  mode=%s  auto_exec=%s  symbols=%s",
+             req.strategy_id, req.mode, req.auto_exec, symbols)
     return {"ok": True, "strategy_id": req.strategy_id,
-            "mode": req.mode, "symbols": req.params.get("symbols", [])}
+            "mode": req.mode, "symbols": symbols}
 
 
 @app.post("/api/strategy/stop")
@@ -3799,17 +4089,69 @@ async def strategy_stop(body: dict):
 
 @app.get("/api/strategy/list")
 async def strategy_list():
-    runs = [
-        {
+    from trade_engine.strategy_signals import STRATEGY_REGISTRY
+
+    running_ids = set(_active_strategies.keys())
+    runs: list = []
+
+    # Running strategies — fully enriched with runtime stats
+    for sid, run in _active_strategies.items():
+        cls  = STRATEGY_REGISTRY.get(sid)
+        meta = _INTRADAY_META.get(sid, {})
+        runs.append({
             "strategy_id":  sid,
+            "name":         meta.get("name") or (getattr(cls, "name", None) if cls else None) or sid,
+            "description":  meta.get("description") or (getattr(cls, "description", None) if cls else None) or "",
+            "segment":      meta.get("segment", "options"),
+            "risk":         meta.get("risk") or (getattr(cls, "risk", None) if cls else None) or "Medium",
             "mode":         run["mode"],
             "symbols":      run["symbols"],
             "started_at":   run["started_at"],
-            "signal_count": run["signal_count"],
+            "signal_count": run.get("signal_count", 0),
+            "acted":        run.get("acted", 0),
             "auto_exec":    run["auto_exec"],
-        }
-        for sid, run in _active_strategies.items()
-    ]
+            "running":      True,
+            "active":       True,
+        })
+
+    # Stopped options strategies (from STRATEGY_REGISTRY)
+    for sid, cls in STRATEGY_REGISTRY.items():
+        if sid not in running_ids:
+            runs.append({
+                "strategy_id":  sid,
+                "name":         getattr(cls, "name", sid),
+                "description":  getattr(cls, "description", ""),
+                "segment":      "options",
+                "risk":         getattr(cls, "risk", "Medium"),
+                "mode":         "paper",
+                "symbols":      [],
+                "started_at":   None,
+                "signal_count": 0,
+                "acted":        0,
+                "auto_exec":    False,
+                "running":      False,
+                "active":       False,
+            })
+
+    # Stopped intraday equity strategies
+    for sid, meta in _INTRADAY_META.items():
+        if sid not in running_ids:
+            runs.append({
+                "strategy_id":  sid,
+                "name":         meta["name"],
+                "description":  meta["description"],
+                "segment":      "equity",
+                "risk":         meta["risk"],
+                "mode":         "paper",
+                "symbols":      [],
+                "started_at":   None,
+                "signal_count": 0,
+                "acted":        0,
+                "auto_exec":    False,
+                "running":      False,
+                "active":       False,
+            })
+
     return {"runs": runs}
 
 
@@ -3865,6 +4207,18 @@ async def watchlist_ltp(symbols: str = "NIFTY,CNXBAN,RELIND,TCS,HDFCBANK"):
                     }
         except Exception as exc:
             log.warning("watchlist_ltp state lookup failed: %s", exc)
+
+    # Patch any result entry that has ltp but no prev_close — try 1d candles for all aliases
+    for sym in list(result):
+        if result[sym].get("prev_close"):
+            continue
+        for code in [sym, _WL_ALIASES.get(sym)]:
+            if not code:
+                continue
+            pc = await asyncio.to_thread(_db_prev_close, code)
+            if pc:
+                result[sym]["prev_close"] = pc
+                break
 
     # 3. spot_ticks fallback (ltp only, no prev_close)
     missing = [s for s in syms if s not in result]

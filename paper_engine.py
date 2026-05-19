@@ -13,10 +13,16 @@ Professional features (added):
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time as _time
+from datetime import datetime, time as _time, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger("paper")
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _now_ist() -> datetime:
+    return datetime.now(tz=_IST)
 
 
 @dataclass
@@ -319,7 +325,7 @@ class PaperTrader:
 
         # ── EOD square-off at 15:20 IST — algo closes all positions ─────────
         eod_open = [p for p in self._positions if p.is_open]
-        if eod_open and datetime.now().time() >= _time(15, 20):
+        if eod_open and _now_ist().time() >= _time(15, 20):
             for pos in eod_open:
                 ltp = ltp_cache.get(pos.symbol) or ltp_cache.get(pos.stock) or pos.avg_price
                 try:
@@ -671,7 +677,7 @@ class PaperTrader:
         """
         events: List[dict] = []
         summary = self.strategy_summary(ltp_cache)
-        now_time = datetime.now().time()
+        now_time = _now_ist().time()
         is_eod   = now_time >= _time(15, 20)
 
         for trade in list(self._strategy_trades):

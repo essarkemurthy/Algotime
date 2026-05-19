@@ -376,7 +376,9 @@ class DataStore:
             """INSERT INTO watchlist_state (symbol, ltp, prev_close, updated_at)
                VALUES %s
                ON CONFLICT (symbol) DO UPDATE
-                 SET ltp=EXCLUDED.ltp, prev_close=EXCLUDED.prev_close, updated_at=EXCLUDED.updated_at""",
+                 SET ltp=EXCLUDED.ltp,
+                     prev_close=COALESCE(EXCLUDED.prev_close, watchlist_state.prev_close),
+                     updated_at=EXCLUDED.updated_at""",
             [(r["symbol"], r["ltp"], r.get("prev_close"), r["ts"]) for r in rows],
             template="(%s, %s, %s, %s)",
         )
