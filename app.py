@@ -287,6 +287,65 @@ _sm_log:      List[str] = []
 _sm_status:   dict      = {"status": "idle", "current": "", "error": "", "last_ok": None}
 _sm_task                = None  # asyncio Task reference
 
+# In-memory symbol cache — populated whenever the master is downloaded or loaded from file.
+# stock_code (Breeze short name) → full row dict
+_sm_mem:      dict[str, dict] = {}
+# Reverse: UPPER(company name) → stock_code  (used for name-to-code lookups)
+_sm_name_idx: dict[str, str]  = {}
+_SM_CACHE_PATH = Path("data") / "security_master_cache.json"
+
+
+def _populate_sm_cache(rows: list) -> None:
+    """Build in-memory symbol lookup tables from security master rows."""
+    global _sm_mem, _sm_name_idx
+    _sm_mem.clear()
+    _sm_name_idx.clear()
+    for r in rows:
+        code = (r.get("stock_code") or "").strip().upper()
+        if not code:
+            continue
+        _sm_mem[code] = r
+        name = (r.get("stock_name") or "").strip().upper()
+        if name:
+            _sm_name_idx[name] = code
+    log.info("SM memory cache: %d symbols (%d name lookups).", len(_sm_mem), len(_sm_name_idx))
+
+
+def _save_sm_local(rows: list) -> None:
+    """Persist parsed rows to local JSON so cache survives without DB."""
+    try:
+        _SM_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        with open(_SM_CACHE_PATH, "w", encoding="utf-8") as fh:
+            _json.dump({"saved_at": datetime.now().isoformat(timespec="seconds"), "rows": rows}, fh)
+        log.info("SM cache saved to %s (%d rows).", _SM_CACHE_PATH, len(rows))
+    except Exception as exc:
+        log.warning("SM cache save failed: %s", exc)
+
+
+def _load_sm_local() -> bool:
+    """Load security master cache from local JSON file. Returns True if successful."""
+    try:
+        if not _SM_CACHE_PATH.exists():
+            return False
+        import json as _json
+        with open(_SM_CACHE_PATH, "r", encoding="utf-8") as fh:
+            data = _json.load(fh)
+        rows = data.get("rows", [])
+        if rows:
+            _populate_sm_cache(rows)
+            log.info("SM cache loaded from local file: %d rows (saved %s).", len(rows), data.get("saved_at", "?"))
+            return True
+    except Exception as exc:
+        log.warning("SM local cache load failed: %s", exc)
+    return False
+
+
+def _sm_on_rows(rows: list) -> None:
+    """Callback wired into SecurityMasterDownloader — populate cache and save locally."""
+    _populate_sm_cache(rows)
+    _save_sm_local(rows)
+
 # ── Historical download state ─────────────────────────────────────────────────
 _download_running: bool      = False
 _download_log:     List[str] = []
@@ -1268,9 +1327,6 @@ async def _security_master_loop() -> None:
         global _sm_running, _sm_status
         from collector.security_master import SecurityMasterDownloader
         db_url = os.environ.get("DB_URL", "")
-        if not db_url or not _db_store:
-            _sm_status.update(status="error", error="DB not configured", current="")
-            return
         _sm_running = True
         _sm_log.clear()
         _sm_status.update(status="running", error="", current="Starting…")
@@ -1280,7 +1336,7 @@ async def _security_master_loop() -> None:
                 if len(_sm_log) > 200:
                     del _sm_log[0]
                 _sm_status["current"] = msg[:120]
-            SecurityMasterDownloader(db_url=db_url, progress_cb=_cb).run()
+            SecurityMasterDownloader(db_url=db_url, progress_cb=_cb, row_cb=_sm_on_rows).run()
             _sm_status.update(status="complete", current="Done",
                               last_ok=datetime.now().isoformat(timespec="seconds"), error="")
         except Exception as exc:
@@ -1288,6 +1344,10 @@ async def _security_master_loop() -> None:
             _sm_status.update(status="error", current="", error=str(exc))
         finally:
             _sm_running = False
+
+    # Always try local file first (fast, works without DB)
+    if not _sm_mem:
+        _load_sm_local()
 
     # Run immediately on startup if no data yet
     if _db_store:
@@ -1298,6 +1358,10 @@ async def _security_master_loop() -> None:
                 await asyncio.to_thread(_run_sm)
         except Exception:
             pass
+    elif not _sm_mem:
+        # No DB and no local file — download once anyway (saves to local file only)
+        log.info("No DB and no local SM cache — downloading security master.")
+        await asyncio.to_thread(_run_sm)
 
     while True:
         wait = _seconds_until_next_run()
@@ -4328,7 +4392,7 @@ async def security_master_refresh():
                 if len(_sm_log) > 200:
                     del _sm_log[0]
                 _sm_status["current"] = msg[:120]
-            SecurityMasterDownloader(db_url=db_url, progress_cb=_cb).run()
+            SecurityMasterDownloader(db_url=db_url, progress_cb=_cb, row_cb=_sm_on_rows).run()
             _sm_status.update(status="complete", current="Done",
                               last_ok=datetime.now().isoformat(timespec="seconds"), error="")
         except Exception as exc:
@@ -4370,16 +4434,98 @@ async def security_master_search(
     ?q=RELIND  ->  all rows matching RELIND
     ?q=HDFC&exchange=NSE&product_type=cash  ->  NSE cash instruments with HDFC
     """
-    if not _db_store:
-        raise HTTPException(503, "Database not configured.")
     limit = min(limit, 500)
-    try:
-        rows = _db_store.search_security_master(
-            query=q, exchange=exchange, product_type=product_type, limit=limit
-        )
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
-    return {"results": rows, "count": len(rows)}
+    if _db_store:
+        try:
+            rows = _db_store.search_security_master(
+                query=q, exchange=exchange, product_type=product_type, limit=limit
+            )
+            return {"results": rows, "count": len(rows), "source": "db"}
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+    # Fall back to in-memory cache
+    if not _sm_mem:
+        raise HTTPException(503, "Security master not loaded. Call /api/data/security_master/refresh first.")
+    q_up = q.upper()
+    ex_up = exchange.upper()
+    pt_lo = product_type.lower()
+    results = []
+    for code, r in _sm_mem.items():
+        if ex_up and r.get("exchange_code", "").upper() != ex_up:
+            continue
+        if pt_lo and pt_lo not in (r.get("product_type") or "").lower():
+            continue
+        if q_up and q_up not in code and q_up not in (r.get("stock_name") or "").upper():
+            continue
+        results.append(r)
+        if len(results) >= limit:
+            break
+    return {"results": results, "count": len(results), "source": "memory"}
+
+
+@app.get("/api/data/security_master/symbols")
+async def security_master_symbols(
+    exchange:     str = "NSE",
+    product_type: str = "cash",
+    q:            str = "",
+    limit:        int = 200,
+):
+    """
+    List symbols with their Breeze short names (stock_code) and company names.
+
+    Breeze API accepts stock_code (short name) for all order/quote/subscribe calls.
+    Examples: RELIND = Reliance, HDFCBANK = HDFC Bank, TCS = TCS, CNXBAN = Bank Nifty
+
+    Works with DB or in-memory cache (populated at startup / on refresh).
+    """
+    limit = min(limit, 1000)
+    if _db_store:
+        try:
+            rows = _db_store.search_security_master(
+                query=q, exchange=exchange, product_type=product_type, limit=limit
+            )
+            return {
+                "symbols": [
+                    {"stock_code": r["stock_code"], "company_name": r.get("stock_name") or r["stock_code"],
+                     "exchange": r["exchange_code"], "product_type": r.get("product_type", ""),
+                     "lot_size": r.get("lot_size"), "isin": r.get("isin")}
+                    for r in rows
+                ],
+                "count": len(rows),
+                "note": "stock_code is the Breeze short name used in all API calls.",
+                "source": "db",
+            }
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+    if not _sm_mem:
+        raise HTTPException(503, "Security master not loaded. Call /api/data/security_master/refresh first.")
+    q_up = q.upper()
+    ex_up = exchange.upper()
+    pt_lo = product_type.lower()
+    out = []
+    for code, r in _sm_mem.items():
+        if ex_up and r.get("exchange_code", "").upper() != ex_up:
+            continue
+        if pt_lo and pt_lo not in (r.get("product_type") or "").lower():
+            continue
+        if q_up and q_up not in code and q_up not in (r.get("stock_name") or "").upper():
+            continue
+        out.append({
+            "stock_code":   code,
+            "company_name": (r.get("stock_name") or code),
+            "exchange":     r.get("exchange_code", ""),
+            "product_type": r.get("product_type", ""),
+            "lot_size":     r.get("lot_size"),
+            "isin":         r.get("isin"),
+        })
+        if len(out) >= limit:
+            break
+    return {
+        "symbols": out,
+        "count": len(out),
+        "note": "stock_code is the Breeze short name used in all API calls.",
+        "source": "memory",
+    }
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

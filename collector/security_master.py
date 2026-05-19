@@ -125,12 +125,18 @@ def _parse_rows(text: str) -> List[dict]:
 
 
 class SecurityMasterDownloader:
-    def __init__(self, db_url: str, progress_cb: Optional[Callable[[str], None]] = None) -> None:
-        self._store = DataStore(db_url)
+    def __init__(
+        self,
+        db_url: str,
+        progress_cb: Optional[Callable[[str], None]] = None,
+        row_cb: Optional[Callable[[List[dict]], None]] = None,
+    ) -> None:
+        self._store = DataStore(db_url) if db_url else None
         self._cb = progress_cb or (lambda msg: log.info(msg))
+        self._row_cb = row_cb  # called with parsed rows before DB upsert
 
     def run(self) -> int:
-        """Download, parse, upsert. Returns number of rows upserted."""
+        """Download, parse, upsert. Returns number of rows parsed."""
         self._cb("Security master: downloading…")
         try:
             resp = requests.get(_URL, timeout=_TIMEOUT)
@@ -151,10 +157,22 @@ class SecurityMasterDownloader:
             text = zf.read(csv_name).decode("utf-8", errors="replace")
 
         rows = _parse_rows(text)
-        self._cb(f"Security master: {len(rows):,} instruments parsed, upserting to DB…")
+        self._cb(f"Security master: {len(rows):,} instruments parsed.")
 
-        self._store.upsert_security_master(rows)
-        self._cb(f"Security master: done — {len(rows):,} rows upserted at {datetime.now().strftime('%H:%M:%S')}")
+        # Notify caller with rows (used to populate in-memory cache + local file)
+        if self._row_cb:
+            try:
+                self._row_cb(rows)
+            except Exception as exc:
+                log.warning("row_cb failed: %s", exc)
+
+        if self._store:
+            self._cb("Security master: upserting to DB…")
+            self._store.upsert_security_master(rows)
+            self._cb(f"Security master: done — {len(rows):,} rows upserted at {datetime.now().strftime('%H:%M:%S')}")
+        else:
+            self._cb(f"Security master: done (no DB) — {len(rows):,} rows at {datetime.now().strftime('%H:%M:%S')}")
+
         return len(rows)
 
 
