@@ -168,6 +168,196 @@
   .alert-item { padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:12px; }
   .alert-target { background:#1a3a1a; border:1px solid var(--green); color:var(--green); }
   .alert-sl     { background:#3a1a1a; border:1px solid var(--red);   color:var(--red); }
+
+  /* ── Intraday Strategy Panel ─────────────────────────────────────────── */
+  #intraday-panel h3 { color: var(--green); border-color: #1a4a2a; }
+  .intra-strat-grid {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+  }
+  .intra-card {
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+    cursor: pointer; transition: all .15s; background: var(--bg3);
+    flex: 1; min-width: 100px; text-align: center;
+  }
+  .intra-card:hover  { border-color: var(--green); }
+  .intra-card.active { border-color: var(--green); background: #0d2b18; }
+  .intra-card .ic-icon  { font-size: 20px; margin-bottom: 4px; }
+  .intra-card .ic-name  { font-size: 12px; font-weight: 700; }
+  .intra-card .ic-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .intra-card .ic-stats { font-size: 10px; color: var(--green); margin-top: 5px;
+    font-family: monospace; background: #0a1f10; padding: 2px 6px; border-radius: 4px; }
+  .intra-desc {
+    background: var(--bg3); border-radius: 6px; padding: 10px 14px;
+    font-size: 12px; color: var(--muted); line-height: 1.65; margin-bottom: 12px;
+    border-left: 3px solid var(--green);
+  }
+  .intra-signal-box {
+    border-radius: 8px; padding: 14px; margin-top: 12px;
+    border: 1px solid var(--border); background: var(--bg3);
+  }
+  .intra-signal-box.long  { border-color: var(--green); background: #0a1f10; }
+  .intra-signal-box.short { border-color: var(--red);   background: #1f0a0a; }
+  .intra-signal-box.wait  { border-color: var(--yellow); }
+  .signal-badge { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
+  .signal-badge.long  { color: var(--green); }
+  .signal-badge.short { color: var(--red); }
+  .signal-badge.wait  { color: var(--yellow); }
+  .intra-levels {
+    display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; font-size: 12px;
+  }
+  .intra-levels span { background: var(--bg2); padding: 3px 8px; border-radius: 5px; }
+  .lvl-entry  { color: var(--blue); }
+  .lvl-sl     { color: var(--red); }
+  .lvl-target { color: var(--green); }
+  .lvl-info   { color: var(--muted); }
+  .intra-reason { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 6px; line-height: 1.5; }
+  .confidence-bar {
+    height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden;
+  }
+  .confidence-fill { height: 100%; border-radius: 2px; transition: width .4s; }
+
+  /* ── Signal Monitor ──────────────────────────────────────────────────── */
+  .monitor-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0 8px; margin-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .monitor-title { font-size: 12px; font-weight: 700; color: var(--green);
+    text-transform: uppercase; letter-spacing: .5px; display: flex; align-items: center; gap: 8px; }
+  .monitor-badge { background: var(--green); color: #000; font-size: 10px; font-weight: 800;
+    padding: 2px 7px; border-radius: 10px; display: none; }
+  .monitor-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .monitor-countdown { font-size: 11px; font-family: monospace; color: var(--muted);
+    background: var(--bg3); padding: 3px 10px; border-radius: 5px; min-width: 90px; text-align: center; }
+  #monitor-start-btn { background: #1a4a2a; border-color: var(--green); color: var(--green);
+    font-weight: 700; padding: 5px 14px; }
+  #monitor-start-btn.running { background: #3a1a1a; border-color: var(--red); color: var(--red); }
+
+  /* Signals table */
+  .signal-table-wrap { margin-top: 8px; overflow-x: auto; }
+  .signal-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 640px; }
+  .signal-table th { color: var(--muted); font-weight: 500; text-align: left;
+    padding: 5px 8px; border-bottom: 1px solid var(--border);
+    background: var(--bg3); white-space: nowrap; font-size: 11px; }
+  .signal-table td { padding: 6px 8px; border-bottom: 1px solid #1c2128; vertical-align: middle; }
+  .signal-table tr:last-child td { border-bottom: none; }
+  .signal-table tr.sig-long  { background: #0a1a0f; }
+  .signal-table tr.sig-short { background: #1a0a0a; }
+  .signal-table tr.sig-wait  { opacity: .55; }
+  .signal-table tr.sig-long:hover,
+  .signal-table tr.sig-short:hover { opacity: 1; cursor: pointer; filter: brightness(1.2); }
+  .sig-pill { display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 800; letter-spacing: .3px; }
+  .sig-pill.long  { background: #1a3a1a; color: var(--green); }
+  .sig-pill.short { background: #3a1a1a; color: var(--red); }
+  .sig-pill.wait  { background: var(--bg3); color: var(--muted); }
+  .mini-conf { display: inline-block; width: 48px; height: 4px;
+    background: var(--border); border-radius: 2px; vertical-align: middle; overflow: hidden; }
+  .mini-conf-fill { height: 100%; border-radius: 2px; }
+  .exec-btn { padding: 2px 10px; font-size: 11px; font-weight: 700; }
+  .exec-btn.long-btn  { border-color: var(--green); color: var(--green); }
+  .exec-btn.long-btn:hover  { background: var(--green); color: #000; }
+  .exec-btn.short-btn { border-color: var(--red); color: var(--red); }
+  .exec-btn.short-btn:hover { background: var(--red); color: #fff; }
+  #monitor-scan-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+
+  /* Capital Plan */
+  .cap-plan-card { margin-bottom: 14px; }
+  .cap-plan-card h3 { color: var(--blue); border-color: #1a2a3a; }
+  .alloc-row { display:flex; gap:8px; align-items:center; margin-bottom:5px; }
+  .alloc-lbl { font-size:11px; color:var(--muted); width:100px; flex-shrink:0; text-align:right; }
+  .alloc-bar { flex:1; height:8px; background:var(--bg3); border-radius:4px; overflow:hidden; min-width:60px; }
+  .alloc-fill { height:100%; border-radius:4px; }
+  .alloc-val { font-size:11px; font-family:monospace; color:var(--text); width:120px; flex-shrink:0; }
+  .slot-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
+  .slot-card { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:10px; }
+  .slot-card .sc-label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+  .slot-card .sc-sym { font-size:13px; font-weight:700; color:var(--text); }
+  .slot-card .sc-strat { font-size:10px; color:var(--muted); }
+  .slot-card .sc-pnl { font-size:16px; font-weight:700; font-family:monospace; margin-top:4px; }
+  .slot-a { border-color:#1a2a3a; } .slot-a .sc-label { color:var(--blue); }
+  .slot-b { border-color:#1a3a1a; } .slot-b .sc-label { color:var(--green); }
+  .slot-c { border-color:#3a2a00; } .slot-c .sc-label { color:var(--paper); }
+  .daily-cap-bar { margin-top:10px; display:flex; gap:8px; align-items:center; font-size:11px; }
+  .daily-cap-bar .dc-lbl { color:var(--muted); white-space:nowrap; }
+  .daily-cap-track { flex:1; height:8px; background:var(--bg3); border-radius:4px; overflow:hidden; }
+  .daily-cap-fill { height:100%; border-radius:4px; background:var(--green); transition:width .5s,background .5s; }
+  .daily-cap-text { color:var(--muted); white-space:nowrap; font-family:monospace; }
+  #daily-halt-badge { display:none; background:var(--red); color:#fff; font-size:10px; font-weight:700;
+    padding:2px 8px; border-radius:5px; margin-left:4px; }
+
+  /* Position sizing display */
+  .sizing-preview { background:var(--bg3); border-radius:6px; padding:8px 12px; margin-top:8px;
+    font-size:12px; color:var(--muted); display:none; }
+  .sizing-preview .sp-qty { font-size:18px; font-weight:700; font-family:monospace; color:var(--green); }
+  .sizing-preview .sp-val { font-family:monospace; color:var(--text); }
+  .sizing-preview .sp-row { display:flex; gap:16px; flex-wrap:wrap; margin-top:4px; }
+
+  /* Live P&L Monitor */
+  #live-pnl-card h3 { color: var(--paper); border-color: #3a2a00; }
+  .lpnl-table { width:100%; border-collapse:collapse; font-size:12px; }
+  .lpnl-table th { color:var(--muted); font-weight:500; text-align:left; padding:4px 8px;
+    border-bottom:1px solid var(--border); background:var(--bg3); white-space:nowrap; font-size:11px; }
+  .lpnl-table td { padding:5px 8px; border-bottom:1px solid #1c2128; vertical-align:middle; }
+  .lpnl-table tr:last-child td { border-bottom:none; }
+  .lpnl-sl-hit  { background:#3a1500 !important; }
+  .lpnl-tgt-hit { background:#0a3a1a !important; }
+  @keyframes flash-red   { 0%,100%{opacity:1} 50%{opacity:.4} }
+  @keyframes flash-green { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .lpnl-flash-red   { animation: flash-red   .6s 4; }
+  .lpnl-flash-green { animation: flash-green .6s 4; }
+  .lpnl-totals { display:flex; gap:24px; padding:8px 10px;
+    background:var(--bg3); border-radius:6px; margin-bottom:10px; font-size:12px; }
+  .lpnl-totals .lt-lbl { color:var(--muted); margin-right:6px; }
+  .lpnl-totals .lt-val { font-family:monospace; font-weight:700; }
+
+  /* ── Auto-trade toggle ───────────────────────────────────────────────── */
+  #auto-trade-btn { display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px;
+    padding:5px 12px; }
+  #auto-trade-btn.active { border-color:var(--green); background:#0a1f10; color:var(--green); }
+  .ats-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; transition:.3s; }
+  #auto-trade-btn.active .ats-dot { background:var(--green); box-shadow:0 0 6px var(--green); animation:ats-pulse 2s infinite; }
+  @keyframes ats-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── Position Cards ──────────────────────────────────────────────────── */
+  .pos-cards { display:flex; flex-direction:column; gap:10px; }
+  .pos-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; transition:border-color .2s,box-shadow .2s; }
+  .pos-card.dir-buy  { border-left:3px solid var(--green); }
+  .pos-card.dir-sell { border-left:3px solid var(--red); }
+  .pos-card.sl-near  { box-shadow:0 0 10px rgba(248,81,73,.4); animation:flash-red 1s infinite; }
+  .pos-card.t2-hit   { box-shadow:0 0 8px rgba(63,185,80,.25); }
+  .pos-card-hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; }
+  .pc-sym { font-size:15px; font-weight:800; font-family:monospace; letter-spacing:.3px; }
+  .pc-tag { font-size:9px; color:var(--muted); margin-top:2px; }
+  .pc-badge { display:inline-block; font-size:10px; font-weight:800; padding:2px 8px;
+    border-radius:4px; letter-spacing:.3px; margin-top:3px; }
+  .pcb-initial  { background:#0a1a2a; color:var(--blue); }
+  .pcb-be       { background:#2a1f00; color:var(--yellow); }
+  .pcb-t1       { background:#1a3a1a; color:var(--green); }
+  .pcb-t2       { background:#0a3a18; color:#6ee7b7; }
+  .pcb-trailing { background:#0a1f3a; color:#7dd3fc; }
+  .pos-prices   { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin:8px 0; }
+  .ppc { background:var(--bg2); border-radius:6px; padding:5px 8px; }
+  .ppc .ppc-l { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; }
+  .ppc .ppc-v { font-size:14px; font-weight:700; font-family:monospace; margin-top:1px; }
+  .pos-pnl-row  { display:flex; align-items:center; justify-content:space-between; margin:6px 0; flex-wrap:wrap; gap:4px; }
+  .pos-pnl-v    { font-size:20px; font-weight:800; font-family:monospace; }
+  .pos-pnl-pct  { font-size:12px; margin-left:6px; }
+  /* Level bar */
+  .plb-wrap     { margin:8px 0; }
+  .plb-labels   { display:flex; justify-content:space-between; font-size:9px; color:var(--muted);
+    margin-bottom:3px; font-family:monospace; }
+  .plb-track    { height:8px; background:var(--bg2); border-radius:4px; position:relative; overflow:visible; }
+  .plb-seg      { position:absolute; height:100%; }
+  .plb-dot      { position:absolute; top:-5px; width:18px; height:18px; border-radius:50%;
+    border:2px solid var(--bg); transform:translateX(-50%); transition:left .4s; z-index:2;
+    box-shadow:0 0 6px rgba(0,0,0,.7); }
+  /* Footer buttons */
+  .pos-footer   { display:flex; gap:6px; align-items:center; margin-top:8px;
+    padding-top:8px; border-top:1px solid var(--border); flex-wrap:wrap; }
+  .pos-footer .pf-btn { padding:3px 10px; font-size:11px; font-weight:700; }
+  .pos-footer .pf-lbl { font-size:10px; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -187,7 +377,77 @@
 
 <div id="alert-bar"></div>
 
+
 <main>
+
+  <!-- ══ Capital Plan ══════════════════════════════════════════════════════ -->
+  <div class="card cap-plan-card" id="cap-plan-card">
+    <h3>📊 Capital Plan — ₹10,00,000
+      <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;margin-left:8px">
+        professional intraday framework · 3 strategy slots · ₹2L each
+      </span>
+    </h3>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <!-- Left: allocation bars -->
+      <div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Capital Allocation</div>
+        <div class="alloc-row">
+          <div class="alloc-lbl">Active trading</div>
+          <div class="alloc-bar"><div class="alloc-fill" style="width:60%;background:#3B82F6"></div></div>
+          <div class="alloc-val">₹6,00,000 (60%)</div>
+        </div>
+        <div class="alloc-row">
+          <div class="alloc-lbl">Margin buffer</div>
+          <div class="alloc-bar"><div class="alloc-fill" style="width:25%;background:#F59E0B"></div></div>
+          <div class="alloc-val">₹2,50,000 (25%)</div>
+        </div>
+        <div class="alloc-row">
+          <div class="alloc-lbl">Reserve / risk</div>
+          <div class="alloc-bar"><div class="alloc-fill" style="width:15%;background:#EF4444"></div></div>
+          <div class="alloc-val">₹1,50,000 (15%)</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">
+          Max 3 concurrent slots · ₹2L per slot · 4× intraday leverage<br>
+          Daily target ₹4,000–6,000 · Stop at ₹8,000 loss
+        </div>
+      </div>
+
+      <!-- Right: strategy slots -->
+      <div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Strategy Slots</div>
+        <div class="slot-grid">
+          <div class="slot-card slot-a">
+            <div class="sc-label">Slot A — EMA Cross</div>
+            <div class="sc-sym">RELIANCE</div>
+            <div class="sc-strat">9/21 EMA + RSI · 5m</div>
+            <div class="sc-pnl" id="slot-a-pnl">₹0</div>
+          </div>
+          <div class="slot-card slot-b">
+            <div class="sc-label">Slot B — VWAP Rev</div>
+            <div class="sc-sym">HDFCBANK</div>
+            <div class="sc-strat">VWAP + ADX · 5m</div>
+            <div class="sc-pnl" id="slot-b-pnl">₹0</div>
+          </div>
+          <div class="slot-card slot-c">
+            <div class="sc-label">Slot C — Supertrend</div>
+            <div class="sc-sym">TATAMOTORS</div>
+            <div class="sc-strat">ST + ADX · 5m · trail</div>
+            <div class="sc-pnl" id="slot-c-pnl">₹0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily loss cap bar -->
+    <div class="daily-cap-bar">
+      <span class="dc-lbl">Daily Loss Used</span>
+      <div class="daily-cap-track"><div class="daily-cap-fill" id="daily-cap-fill" style="width:0%"></div></div>
+      <span class="daily-cap-text" id="daily-cap-text">₹0 / ₹8,000</span>
+      <span id="daily-cap-status" style="font-size:10px;color:var(--green);font-weight:700;margin-left:4px">● Safe</span>
+      <span id="daily-halt-badge">HALTED</span>
+    </div>
+  </div>
 
   <!-- LTP strip -->
   <!-- Market price boxes (5 symbols) -->
@@ -283,31 +543,287 @@
     </div>
   </div>
 
+  <!-- ══ Intraday Equity Strategies ════════════════════════════════════════ -->
+  <div class="card" id="intraday-panel">
+    <h3>⚡ Intraday Equity Strategies
+      <span style="font-size:10px;color:var(--muted);font-weight:400;margin-left:8px;text-transform:none">
+        5 proven setups · paper-trade execution · signal scanner
+      </span>
+    </h3>
+
+    <!-- Strategy selector -->
+    <div class="intra-strat-grid">
+      <div class="intra-card active" id="ic-orb" onclick="selectIntraStrat('orb',this)">
+        <div class="ic-icon">🔼</div>
+        <div class="ic-name">ORB</div>
+        <div class="ic-sub">Opening Range<br>Breakout</div>
+        <div class="ic-stats">55–65% · 0.5–1.5%</div>
+      </div>
+      <div class="intra-card" id="ic-vwap" onclick="selectIntraStrat('vwap',this)">
+        <div class="ic-icon">📈</div>
+        <div class="ic-name">VWAP</div>
+        <div class="ic-sub">VWAP<br>Reversal</div>
+        <div class="ic-stats">60–70% · 0.4–1.2%</div>
+      </div>
+      <div class="intra-card" id="ic-ema_cross" onclick="selectIntraStrat('ema_cross',this)">
+        <div class="ic-icon">⚡</div>
+        <div class="ic-name">EMA Cross</div>
+        <div class="ic-sub">9/21 EMA<br>Crossover (5m)</div>
+        <div class="ic-stats">50–60% · 0.8–2.5%</div>
+      </div>
+      <div class="intra-card" id="ic-sr_reversal" onclick="selectIntraStrat('sr_reversal',this)">
+        <div class="ic-icon">🔄</div>
+        <div class="ic-name">S&amp;R</div>
+        <div class="ic-sub">Support &amp; Resistance<br>Reversal (RSI)</div>
+        <div class="ic-stats">55–65% · 0.5–2.0%</div>
+      </div>
+      <div class="intra-card" id="ic-gap_go" onclick="selectIntraStrat('gap_go',this)">
+        <div class="ic-icon">📊</div>
+        <div class="ic-name">Gap &amp; Go</div>
+        <div class="ic-sub">Gap Continuation<br>&gt;1.5% at open</div>
+        <div class="ic-stats">50–60% · 1.0–3.0%</div>
+      </div>
+    </div>
+
+    <!-- Strategy description -->
+    <div class="intra-desc" id="intra-desc"></div>
+
+    <!-- Config form — professional sizing -->
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Position Sizing — Fixed Fractional</div>
+    <div class="form-grid">
+      <div>
+        <label>Symbol</label>
+        <input id="intra-sym" type="text" value="RELIANCE" placeholder="RELIANCE, INFY…"
+          style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase();calcSizing()">
+      </div>
+      <div>
+        <label>Capital Slot ₹</label>
+        <input id="intra-capital-slot" type="number" value="200000" min="10000" step="10000" oninput="calcSizing()">
+      </div>
+      <div>
+        <label>Risk per Trade ₹</label>
+        <input id="intra-risk" type="number" value="2000" min="100" step="100" oninput="calcSizing()">
+      </div>
+      <div>
+        <label>SL % <span style="font-size:10px;color:var(--muted)">(from entry)</span></label>
+        <input id="intra-sl-pct" type="number" value="0.6" min="0.1" max="5" step="0.1" oninput="calcSizing()">
+      </div>
+      <div>
+        <label>T1 % <span style="font-size:10px;color:var(--muted)">(40% exits)</span></label>
+        <input id="intra-t1-pct" type="number" value="0.6" min="0.1" max="10" step="0.1" oninput="calcSizing()">
+      </div>
+      <div>
+        <label>T2 % <span style="font-size:10px;color:var(--muted)">(40% exits)</span></label>
+        <input id="intra-t2-pct" type="number" value="1.0" min="0.1" max="10" step="0.1" oninput="calcSizing()">
+      </div>
+      <div>
+        <label>Trail % <span style="font-size:10px;color:var(--muted)">(remainder)</span></label>
+        <input id="intra-trail-pct" type="number" value="0.4" min="0.1" max="3" step="0.1">
+      </div>
+    </div>
+
+    <!-- Sizing preview -->
+    <div class="sizing-preview" id="sizing-preview">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span class="sp-qty" id="sp-qty">—</span>
+        <span style="color:var(--muted);font-size:12px">shares</span>
+        <span class="sp-val" id="sp-val"></span>
+      </div>
+      <div class="sp-row">
+        <span id="sp-sl"></span>
+        <span id="sp-t1"></span>
+        <span id="sp-t2"></span>
+        <span id="sp-trail"></span>
+        <span id="sp-risk-check" style="font-size:10px"></span>
+      </div>
+    </div>
+
+    <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
+      <button onclick="evalIntraSignal()"
+        style="background:#1a7a3a;border-color:#2ea853;color:#fff;font-weight:700;padding:7px 20px">
+        Scan Signal
+      </button>
+      <span id="intra-spinner" style="display:none;font-size:11px;color:var(--muted)">Evaluating…</span>
+    </div>
+
+    <!-- Signal result -->
+    <div id="intra-signal-box" class="intra-signal-box" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div>
+          <span id="intra-badge" class="signal-badge"></span>
+          <span id="intra-sym-lbl" style="margin-left:10px;font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div style="text-align:right">
+          <div id="intra-conf-label" style="font-size:10px;color:var(--muted)"></div>
+          <div class="confidence-bar" style="width:120px">
+            <div class="confidence-fill" id="intra-conf-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="intra-levels" id="intra-levels"></div>
+      <div class="intra-reason" id="intra-reason"></div>
+
+      <div id="intra-exec-row" style="display:none;margin-top:12px;display:flex;gap:8px">
+        <button id="intra-buy-btn" class="success"
+          style="padding:8px 22px;font-weight:700;font-size:13px;display:none"
+          onclick="execIntraday('BUY')">▲ Enter LONG (BUY)</button>
+        <button id="intra-sell-btn" class="danger"
+          style="padding:8px 22px;font-weight:700;font-size:13px;display:none"
+          onclick="execIntraday('SELL')">▼ Enter SHORT (SELL)</button>
+      </div>
+    </div>
+
+    <!-- ══ Continuous Signal Monitor ══ -->
+    <div class="monitor-header">
+      <div class="monitor-title">
+        📡 Live Signal Monitor
+        <span class="monitor-badge" id="monitor-badge">0</span>
+      </div>
+      <div class="monitor-controls">
+        <div id="monitor-scan-row">
+          <label style="margin:0;font-size:11px;color:var(--muted);white-space:nowrap">Symbols</label>
+          <input id="monitor-syms" type="text"
+            value="NIFTY,BANKNIFTY,RELIANCE,HDFCBANK,TCS"
+            placeholder="Comma-separated" style="width:260px;font-size:12px">
+          <label style="margin:0;font-size:11px;color:var(--muted);white-space:nowrap">Every</label>
+          <select id="monitor-interval" style="width:80px;font-size:12px">
+            <option value="30">30 s</option>
+            <option value="60" selected>60 s</option>
+            <option value="120">2 min</option>
+            <option value="300">5 min</option>
+          </select>
+        </div>
+        <div class="monitor-countdown" id="monitor-countdown">—</div>
+        <button id="monitor-start-btn" onclick="toggleMonitor()">▶ Start</button>
+        <button id="auto-trade-btn" onclick="toggleAutoTrade()" title="Automatically place paper orders when signals fire">
+          <span class="ats-dot"></span>
+          <span id="auto-trade-lbl">Auto-Trade OFF</span>
+        </button>
+        <button onclick="subscribeLtpForMonitor()" title="Subscribe live LTP for all monitored symbols via Breeze WebSocket" style="font-size:11px;padding:4px 10px">📡 Subscribe LTP</button>
+      </div>
+    </div>
+
+    <div class="signal-table-wrap" id="monitor-table-wrap" style="display:none">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px">
+        Click a LONG / SHORT row to trade manually · <span id="auto-hint" style="color:var(--green);display:none">🤖 Auto-Trade is ON — signals are executed automatically</span><span id="manual-hint">or click <b>BUY / SELL</b> to confirm</span>
+      </div>
+      <table class="signal-table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Strategy</th>
+            <th>Signal</th>
+            <th>Time</th>
+            <th>LTP</th>
+            <th>Entry</th>
+            <th>SL</th>
+            <th>Target</th>
+            <th>R:R</th>
+            <th>Conf</th>
+            <th>Reason</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="monitor-table-body"></tbody>
+      </table>
+      <div id="monitor-scanned-at" style="font-size:10px;color:var(--muted);margin-top:6px;text-align:right"></div>
+    </div>
+  </div>
+
+  <!-- ══ Live P&L Monitor ════════════════════════════════════════════════ -->
+  <div class="card" id="live-pnl-card">
+    <h3>💹 Live P&L Monitor
+      <span style="font-size:10px;font-weight:400;text-transform:none;margin-left:8px;color:var(--muted)">
+        open positions · auto-updates via WebSocket · SL &amp; target alerts
+      </span>
+    </h3>
+    <div class="lpnl-totals">
+      <div><span class="lt-lbl">Unrealised</span><span class="lt-val" id="lpnl-unr">—</span></div>
+      <div><span class="lt-lbl">Realised</span><span class="lt-val" id="lpnl-real">—</span></div>
+      <div><span class="lt-lbl">Total P&L</span><span class="lt-val" id="lpnl-total" style="font-size:14px">—</span></div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="danger" style="padding:3px 10px;font-size:11px" onclick="exitAll()">Exit All</button>
+      </div>
+    </div>
+    <div id="live-pnl-body" style="color:var(--muted);font-size:12px;text-align:center;padding:10px 0">
+      No open positions. Place a trade from the signal monitor to see live P&L here.
+    </div>
+  </div>
+
+  <!-- ══ Options Signal Monitor ══════════════════════════════════════════ -->
+  <div class="card" id="options-signal-monitor">
+    <h3 style="color:var(--blue);border-color:#1a2a3a">
+      📊 Options Signal Monitor
+      <span id="opts-monitor-badge" style="
+        display:none; background:var(--blue); color:#000;
+        font-size:10px; font-weight:800; padding:2px 7px;
+        border-radius:10px; margin-left:8px; vertical-align:middle">0</span>
+      <span style="font-size:10px;color:var(--muted);font-weight:400;margin-left:8px;text-transform:none">
+        IV Rank · PCR Sentiment · Max Pain · auto-updates with market scan
+      </span>
+    </h3>
+
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
+      Signals fire when an options strategy condition is met for any watchlist symbol.
+      Click <strong style="color:var(--blue)">▲ Build</strong> / <strong style="color:var(--blue)">▼ Build</strong> to pre-fill the Strategy Builder below.
+    </div>
+
+    <div style="overflow-x:auto">
+      <table class="signal-table" style="min-width:700px">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Strategy</th>
+            <th>Signal</th>
+            <th>Time</th>
+            <th>LTP</th>
+            <th>Key Metric</th>
+            <th>Suggested Trade</th>
+            <th>Conf</th>
+            <th>Reason</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="opts-monitor-body">
+          <tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">
+            📡 Waiting for first scan… Signals appear here when IV Rank, PCR or Max Pain triggers.
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="opts-scanned-at" style="font-size:10px;color:var(--muted);margin-top:6px;text-align:right"></div>
+  </div>
+
   <!-- ══ Option Strategy Builder ══════════════════════════════════════════ -->
   <div class="card" id="strategy-builder">
     <h3>Option Strategy Builder</h3>
 
-    <!-- 5 strategy selector cards -->
+    <!-- 6 strategy selector cards -->
     <div class="strat-grid">
-      <div class="strat-card" id="sc-iron_condor" onclick="selectStrategy('iron_condor')">
-        <div class="sc-name">Iron Condor</div>
-        <div class="sc-type">Credit · 4 Legs</div>
+      <div class="strat-card" id="sc-iron_condor" onclick="selectStrategy('iron_condor')" title="Defined max loss · Best for capital preservation">
+        <div class="sc-name">Iron Condor <span style="font-size:9px;background:#0d2b18;color:#86efac;padding:1px 4px;border-radius:3px;vertical-align:middle">SAFE</span></div>
+        <div class="sc-type">Credit · 4 Legs · Defined Risk</div>
       </div>
-      <div class="strat-card" id="sc-bull_call_spread" onclick="selectStrategy('bull_call_spread')">
-        <div class="sc-name">Bull Call Spread</div>
-        <div class="sc-type">Debit · Bullish</div>
+      <div class="strat-card" id="sc-bull_call_spread" onclick="selectStrategy('bull_call_spread')" title="Limited loss = debit paid">
+        <div class="sc-name">Bull Call Spread <span style="font-size:9px;background:#0d2b18;color:#86efac;padding:1px 4px;border-radius:3px;vertical-align:middle">SAFE</span></div>
+        <div class="sc-type">Debit · Bullish · Defined Risk</div>
       </div>
-      <div class="strat-card" id="sc-bear_put_spread" onclick="selectStrategy('bear_put_spread')">
-        <div class="sc-name">Bear Put Spread</div>
-        <div class="sc-type">Debit · Bearish</div>
+      <div class="strat-card" id="sc-bear_put_spread" onclick="selectStrategy('bear_put_spread')" title="Limited loss = debit paid">
+        <div class="sc-name">Bear Put Spread <span style="font-size:9px;background:#0d2b18;color:#86efac;padding:1px 4px;border-radius:3px;vertical-align:middle">SAFE</span></div>
+        <div class="sc-type">Debit · Bearish · Defined Risk</div>
       </div>
-      <div class="strat-card" id="sc-covered_call" onclick="selectStrategy('covered_call')">
-        <div class="sc-name">Covered Call</div>
-        <div class="sc-type">Income · Fut+CE</div>
+      <div class="strat-card" id="sc-short_strangle" onclick="selectStrategy('short_strangle')" title="Unlimited loss — use only with strict stop-loss">
+        <div class="sc-name">Short Strangle <span style="font-size:9px;background:#2b0d0d;color:#f87171;padding:1px 4px;border-radius:3px;vertical-align:middle">HIGH RISK</span></div>
+        <div class="sc-type">Credit · High Theta · Unlimited Loss</div>
       </div>
-      <div class="strat-card" id="sc-long_straddle" onclick="selectStrategy('long_straddle')">
-        <div class="sc-name">Long Straddle</div>
-        <div class="sc-type">Debit · Volatile</div>
+      <div class="strat-card" id="sc-covered_call" onclick="selectStrategy('covered_call')" title="Futures downside is large — capital heavy">
+        <div class="sc-name">Covered Call <span style="font-size:9px;background:#2b1a0d;color:#fbbf24;padding:1px 4px;border-radius:3px;vertical-align:middle">CAUTION</span></div>
+        <div class="sc-type">Income · Fut+CE · Partial Hedge</div>
+      </div>
+      <div class="strat-card" id="sc-long_straddle" onclick="selectStrategy('long_straddle')" title="Pay double premium — use only pre-event">
+        <div class="sc-name">Long Straddle <span style="font-size:9px;background:#2b1a0d;color:#fbbf24;padding:1px 4px;border-radius:3px;vertical-align:middle">CAUTION</span></div>
+        <div class="sc-type">Debit · Volatile · Event-only</div>
       </div>
     </div>
 
@@ -536,6 +1052,7 @@ setInterval(tick, 1000); tick();
   document.getElementById('p-expiry').value = d.toISOString().split('T')[0];
 })();
 
+
 // ── WebSocket ──────────────────────────────────────────────────────────────
 function connectWS() {
   if (ws && ws.readyState !== WebSocket.CLOSED) return;
@@ -544,11 +1061,17 @@ function connectWS() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'ltp')                  updateLTPs(msg.data);
     if (msg.type === 'init' && msg.ltp)      updateLTPs(msg.ltp);
-    if (msg.type === 'paper_update')         renderSummary(msg.data);
+    if (msg.type === 'paper_update')         { _lastPaperSummary = msg.data; renderSummary(msg.data); renderLivePnl(msg.data); }
+    if (msg.type === 'paper_pnl')           { _lastPaperSummary = msg.data; renderSummary(msg.data); renderLivePnl(msg.data); }
+    if (msg.type === 'paper_auto_exit')     { _onAutoExit(msg); }
     if (msg.type === 'strategy_alert')       handleStrategyAlert(msg.alert);
     if (msg.type === 'paper_strategy_entered' || msg.type === 'paper_strategy_closed')
                                              loadStrategyTrades();
     if (msg.type === 'pong') {}
+
+    // Server-side intraday monitor events
+    if (msg.type === 'market_open')          onMarketOpen(msg);
+    if (msg.type === 'intraday_signals')     onServerScanResult(msg);
   };
   ws.onopen  = () => { _setWsStatus(true); };
   ws.onclose = () => { ws = null; _setWsStatus(false); setTimeout(connectWS, 3000); };
@@ -589,6 +1112,58 @@ function updateLTPs(data) {
     }
   });
   updateFillPreview();
+  calcSizing();  // refresh sizing preview when LTP updates
+  _patchAndRenderPnl(data);  // update live P&L pane on every tick, no server round-trip
+}
+
+function _patchAndRenderPnl(tickData) {
+  if (!_lastPaperSummary) return;
+  const positions = _lastPaperSummary.open_positions;
+  if (!positions || !positions.length) return;
+
+  // Check if any open position symbol is in this tick batch
+  const affectedSyms = new Set(positions.map(p => p.symbol));
+  const hasMatch = Object.keys(tickData).some(sym => affectedSyms.has(sym));
+  if (!hasMatch) return;
+
+  // Build a patched summary: replace LTP and unrealised for affected positions
+  let totalUnrealised = 0;
+  const patchedPositions = positions.map(p => {
+    const ltp = tickData[p.symbol] ?? ltpCache[p.symbol] ?? p.ltp ?? p.avg_price;
+    const unr = p.direction === 'buy'
+      ? (ltp - p.avg_price) * p.qty
+      : (p.avg_price - ltp) * p.qty;
+    totalUnrealised += unr;
+    return { ...p, ltp: Math.round(ltp * 100) / 100, unrealised: Math.round(unr * 100) / 100 };
+  });
+
+  const patchedSummary = {
+    ..._lastPaperSummary,
+    open_positions:  patchedPositions,
+    unrealised_pnl:  Math.round(totalUnrealised * 100) / 100,
+    total_pnl:       Math.round((totalUnrealised + _lastPaperSummary.realised_pnl) * 100) / 100,
+  };
+
+  // Update portfolio bar tiles and live P&L pane — NOT renderSummary (avoid full redraw)
+  document.getElementById('pf-unr').innerHTML  = pnlSpan(patchedSummary.unrealised_pnl);
+  const tot = patchedSummary.total_pnl;
+  const pnlCls = tot >= 0 ? 'pnl-pos' : 'pnl-neg';
+  document.getElementById('pf-pct').innerHTML =
+    `<span class="${pnlCls}">${tot >= 0 ? '+' : ''}${((tot / _lastPaperSummary.starting_capital) * 100).toFixed(2)}%</span>`;
+  renderLivePnl(patchedSummary);
+}
+
+function _onAutoExit(msg) {
+  const ev  = msg.event || {};
+  const s   = msg.summary;
+  const clr = ev.type === 'SL_HIT'       ? '#f85149'
+             : ev.type === 'T1_HIT'       ? '#d29922'
+             : ev.type === 'T2_HIT'       ? '#3fb950'
+             : ev.type === 'DAILY_CAP_HIT'? '#f85149'
+             : ev.type === 'EOD_SQUAREOFF'? '#58a6ff'
+             : '#58a6ff';
+  if (ev.message) showAlert(`🤖 Auto: ${ev.message}`, clr);
+  if (s) { renderSummary(s); renderLivePnl(s); }
 }
 
 function _setWsStatus(live) {
@@ -688,7 +1263,7 @@ async function paperPlaceOrder() {
     if (!r.ok) { showAlert('Order failed: ' + (d.detail||''), '#f87171'); return; }
     showAlert(`✓ Paper ${body.action.toUpperCase()} ${body.stock_code} ×${body.quantity} @ ₹${d.order.fill_price.toLocaleString('en-IN')}`, '#86efac');
     appendOrderLog(d.order);
-    renderSummary(d.summary);
+    if (d.summary) { _lastPaperSummary = d.summary; renderSummary(d.summary); renderLivePnl(d.summary); }
   } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
 }
 
@@ -700,16 +1275,20 @@ async function exitPaperPosition(posId) {
     const d = await r.json();
     if (!r.ok) { showAlert('Exit failed: ' + (d.detail||''), '#f87171'); return; }
     showAlert('✓ Position exited', '#86efac');
-    renderSummary(d.summary);
+    if (d.summary) {
+      _lastPaperSummary = d.summary;
+      renderSummary(d.summary);
+      renderLivePnl(d.summary);
+    }
   } catch(e) { showAlert('Error: ' + e.message, '#f87171'); }
 }
 
 async function exitAll() {
-  const rows = document.querySelectorAll('#open-pos-body tr[data-id]');
-  if (!rows.length) { showAlert('No open positions to exit'); return; }
-  if (!confirm(`Exit all ${rows.length} open paper position(s)?`)) return;
-  for (const row of rows) {
-    await fetch(`/api/paper/exit/${row.dataset.id}`, {method:'POST'});
+  const openPos = _lastPaperSummary?.open_positions || [];
+  if (!openPos.length) { showAlert('No open positions to exit'); return; }
+  if (!confirm(`Exit all ${openPos.length} open paper position(s) at market?`)) return;
+  for (const p of openPos) {
+    await fetch(`/api/paper/exit/${p.id}`, {method:'POST'});
   }
   await loadSummary();
   showAlert('✓ All positions exited', '#86efac');
@@ -837,10 +1416,233 @@ async function confirmReset() {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+function _updateDailyCapBar(s) {
+  const realised = s.realised_pnl || 0;
+  const cap      = s.daily_loss_cap || 8000;
+  const loss     = Math.max(0, -realised);
+  const pct      = Math.min(100, (loss / cap) * 100);
+
+  const fill   = document.getElementById('daily-cap-fill');
+  const text   = document.getElementById('daily-cap-text');
+  const status = document.getElementById('daily-cap-status');
+  const halt   = document.getElementById('daily-halt-badge');
+
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.style.background = pct > 75 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--green)';
+  }
+  if (text) text.textContent = `₹${loss.toLocaleString('en-IN',{maximumFractionDigits:0})} / ₹${cap.toLocaleString('en-IN')}`;
+  if (status) {
+    if (s.halted) {
+      status.textContent = ''; status.style.display = 'none';
+      if (halt) halt.style.display = 'inline-block';
+    } else {
+      status.textContent = pct > 75 ? '⚠ Near cap' : pct > 50 ? '◉ Warning' : '● Safe';
+      status.style.color = pct > 75 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--green)';
+      if (halt) halt.style.display = 'none';
+    }
+  }
+
+  // Update slot P&L tiles — correlate by symbol tag
+  _updateSlotPnl(s);
+}
+
+function _updateSlotPnl(s) {
+  const allPos = [...(s.open_positions || []), ...(s.closed_positions || [])];
+  const slots = {
+    a: { syms: ['RELIANCE'], el: 'slot-a-pnl' },
+    b: { syms: ['HDFCBANK', 'ICICIBANK'], el: 'slot-b-pnl' },
+    c: { syms: ['TATAMOTORS', 'TCS'], el: 'slot-c-pnl' },
+  };
+  for (const [, cfg] of Object.entries(slots)) {
+    const pnl = allPos
+      .filter(p => cfg.syms.includes(p.symbol))
+      .reduce((sum, p) => sum + (p.unrealised || 0) + (p.realised_pnl || 0), 0);
+    const el = document.getElementById(cfg.el);
+    if (el) {
+      el.textContent = (pnl >= 0 ? '+' : '') + '₹' + Math.round(Math.abs(pnl)).toLocaleString('en-IN');
+      el.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+  }
+}
+
+function _renderLevelBar(p, ltp) {
+  const isBuy = p.direction === 'buy';
+  const sl = p.sl_price, t1 = p.t1_price, t2 = p.t2_price, entry = p.avg_price;
+  if (!sl && !t1 && !t2) return '';
+
+  const prices = [sl, entry, t1, t2, ltp].filter(v => v != null && v > 0);
+  const lo = Math.min(...prices) * 0.997;
+  const hi = Math.max(...prices) * 1.003;
+  const range = hi - lo;
+  if (range <= 0) return '';
+
+  const pct = v => v != null ? Math.max(0, Math.min(100, ((v - lo) / range) * 100)) : null;
+  const slPct = pct(sl), entryPct = pct(entry), t1Pct = pct(t1), t2Pct = pct(t2), ltpPct = pct(ltp);
+
+  const fmtS = v => v != null ? '₹' + Math.round(v).toLocaleString('en-IN') : '';
+
+  // Colored zones
+  let segs = '';
+  if (isBuy) {
+    if (slPct != null && entryPct != null)
+      segs += `<div class="plb-seg" style="left:${Math.min(slPct,entryPct)}%;width:${Math.abs(entryPct-slPct)}%;background:#3a1500;border-radius:4px 0 0 4px"></div>`;
+    if (entryPct != null && t1Pct != null)
+      segs += `<div class="plb-seg" style="left:${Math.min(entryPct,t1Pct)}%;width:${Math.abs(t1Pct-entryPct)}%;background:#1f1a00"></div>`;
+    if (t1Pct != null && t2Pct != null)
+      segs += `<div class="plb-seg" style="left:${Math.min(t1Pct,t2Pct)}%;width:${Math.abs(t2Pct-t1Pct)}%;background:#1a3a1a;border-radius:0 4px 4px 0"></div>`;
+  } else {
+    if (t2Pct != null && t1Pct != null)
+      segs += `<div class="plb-seg" style="left:${Math.min(t2Pct,t1Pct)}%;width:${Math.abs(t1Pct-t2Pct)}%;background:#1a3a1a;border-radius:4px 0 0 4px"></div>`;
+    if (t1Pct != null && entryPct != null)
+      segs += `<div class="plb-seg" style="left:${Math.min(t1Pct,entryPct)}%;width:${Math.abs(entryPct-t1Pct)}%;background:#1f1a00"></div>`;
+    if (entryPct != null && slPct != null)
+      segs += `<div class="plb-seg" style="left:${Math.min(entryPct,slPct)}%;width:${Math.abs(slPct-entryPct)}%;background:#3a1500;border-radius:0 4px 4px 0"></div>`;
+  }
+
+  // Level markers (thin vertical lines)
+  const mkr = (p, clr) => p != null ? `<div style="position:absolute;left:${p}%;top:0;height:100%;width:2px;background:${clr};z-index:1;opacity:.65"></div>` : '';
+  const markers = mkr(slPct,'var(--red)') + mkr(entryPct,'var(--blue)') + mkr(t1Pct,'var(--yellow)') + mkr(t2Pct,'var(--green)');
+
+  // LTP dot color
+  const ltpColor = ltp != null && sl != null && ((isBuy && ltp <= sl) || (!isBuy && ltp >= sl))
+    ? '#f85149'
+    : ltp != null && t2 != null && p.t2_hit
+    ? '#3fb950'
+    : '#58a6ff';
+
+  return `<div class="plb-wrap">
+    <div class="plb-labels">
+      <span style="color:var(--red)">${fmtS(isBuy ? sl : t2)}</span>
+      <span style="color:var(--blue)">Entry ${fmtS(entry)}</span>
+      <span style="color:var(--green)">${fmtS(isBuy ? t2 : sl)}</span>
+    </div>
+    <div class="plb-track">
+      ${segs}${markers}
+      ${ltpPct != null ? `<div class="plb-dot" style="left:${ltpPct}%;background:${ltpColor}"></div>` : ''}
+    </div>
+  </div>`;
+}
+
+function _renderPositionCard(p) {
+  const ltp = p.ltp || p.avg_price;
+  const isBuy = p.direction === 'buy';
+  const unr = p.unrealised || 0;
+  const pnlPct = p.avg_price > 0 ? ((ltp - p.avg_price) / p.avg_price * 100 * (isBuy ? 1 : -1)) : 0;
+  const fmtR = v => v != null ? `₹${Number(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
+
+  // Status badge
+  let statusCls = 'pcb-initial', statusTxt = 'Initial';
+  if (p.t2_hit && p.trail_pct)  { statusCls = 'pcb-trailing'; statusTxt = `Trailing ${(p.trail_pct*100).toFixed(1)}%`; }
+  else if (p.t2_hit)             { statusCls = 'pcb-t2';       statusTxt = 'T2 Hit'; }
+  else if (p.t1_hit)             { statusCls = 'pcb-t1';       statusTxt = 'T1 Hit / BE'; }
+  else if (p.sl_price != null && Math.abs(p.sl_price - p.avg_price) < 0.01) { statusCls = 'pcb-be'; statusTxt = 'Breakeven SL'; }
+
+  const dirBadge = isBuy
+    ? `<span style="background:#1a3a1a;color:var(--green);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:800">▲ LONG</span>`
+    : `<span style="background:#3a1a1a;color:var(--red);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:800">▼ SHORT</span>`;
+
+  const chg = ltp - p.avg_price;
+  const chgStyle = (isBuy ? chg >= 0 : chg <= 0) ? 'color:var(--green)' : 'color:var(--red)';
+  const ltpStyle = (isBuy ? ltp >= p.avg_price : ltp <= p.avg_price) ? 'color:var(--green)' : 'color:var(--red)';
+  const pnlCls = unr >= 0 ? 'pnl-pos' : 'pnl-neg';
+  const pnlSign = unr >= 0 ? '+' : '−';
+
+  const slNear = p.sl_price != null && Math.abs(ltp - p.sl_price) / ltp < 0.005;
+  const cardClass = `pos-card dir-${p.direction}${slNear?' sl-near':''}${p.t2_hit?' t2-hit':''}`;
+
+  // Tier chips
+  const tierChips = [
+    p.sl_price != null ? `<span style="font-size:10px;padding:1px 7px;background:#3a1500;color:var(--red);border-radius:3px">SL ${fmtR(p.sl_price)}</span>` : null,
+    p.t1_price != null ? `<span style="font-size:10px;padding:1px 7px;background:${p.t1_hit?'#1a3a1a':'#2a1f00'};color:${p.t1_hit?'var(--green)':'var(--yellow)'};border-radius:3px">${p.t1_hit?'✓T1':'T1'} ${fmtR(p.t1_price)}</span>` : null,
+    p.t2_price != null ? `<span style="font-size:10px;padding:1px 7px;background:${p.t2_hit?'#0a3a18':'var(--bg2)'};color:${p.t2_hit?'#6ee7b7':'var(--muted)'};border-radius:3px">${p.t2_hit?'✓T2':'T2'} ${fmtR(p.t2_price)}</span>` : null,
+  ].filter(Boolean).join(' ');
+
+  const levelBar = _renderLevelBar(p, ltp);
+
+  return `<div class="${cardClass}">
+    <div class="pos-card-hdr">
+      <div>
+        <div class="pc-sym">${p.symbol} <span style="font-size:11px;color:var(--muted);font-weight:400">×${p.qty}</span></div>
+        <div class="pc-tag">${p.tag || '—'} · ${p.opened_at || ''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        ${dirBadge}
+        <span class="pc-badge ${statusCls}">${statusTxt}</span>
+      </div>
+    </div>
+
+    <div class="pos-prices">
+      <div class="ppc">
+        <div class="ppc-l">Entry</div>
+        <div class="ppc-v">${fmtR(p.avg_price)}</div>
+      </div>
+      <div class="ppc">
+        <div class="ppc-l">LTP</div>
+        <div class="ppc-v" style="${ltpStyle}">${fmtR(ltp)}</div>
+      </div>
+      <div class="ppc">
+        <div class="ppc-l">Change</div>
+        <div class="ppc-v" style="${chgStyle}">${chg>=0?'+':''}${fmtR(Math.abs(chg))}
+          <span style="font-size:11px">(${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%)</span>
+        </div>
+      </div>
+    </div>
+
+    ${levelBar}
+
+    <div class="pos-pnl-row">
+      <div>
+        <span class="${pnlCls} pos-pnl-v">${pnlSign}${fmtR(Math.abs(unr))}</span>
+        <span class="pos-pnl-pct ${pnlCls}">(${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%)</span>
+      </div>
+      ${tierChips ? `<div style="display:flex;gap:4px;flex-wrap:wrap">${tierChips}</div>` : ''}
+    </div>
+
+    <div class="pos-footer">
+      <button class="pf-btn success" onclick="partialExitPos('${p.id}',0.25,this)">Exit 25%</button>
+      <button class="pf-btn success" onclick="partialExitPos('${p.id}',0.50,this)">Exit 50%</button>
+      <button class="pf-btn danger"  onclick="exitPaperPosition('${p.id}')">Exit ALL</button>
+      <span class="pf-lbl" style="margin-left:auto">Qty: ${p.qty} · P&amp;L: <span class="${pnlCls}" style="font-family:monospace">${pnlSign}${fmtR(Math.abs(unr))}</span></span>
+    </div>
+  </div>`;
+}
+
+function renderLivePnl(s) {
+  const positions = s.open_positions || [];
+  const unr  = s.unrealised_pnl || 0;
+  const real  = s.realised_pnl  || 0;
+  const tot   = (s.total_pnl != null) ? s.total_pnl : (unr + real);
+
+  document.getElementById('lpnl-unr').innerHTML   = pnlSpan(unr);
+  document.getElementById('lpnl-real').innerHTML  = pnlSpan(real);
+  document.getElementById('lpnl-total').innerHTML = pnlSpan(tot);
+
+  _updateDailyCapBar(s);
+
+  const body = document.getElementById('live-pnl-body');
+  if (!positions.length) {
+    body.innerHTML = `<div style="color:var(--muted);padding:20px 0;text-align:center">
+      <div style="font-size:24px;margin-bottom:8px">📭</div>
+      No open positions. Use the Signal Monitor above to place paper trades.
+      ${_autoTradeEnabled ? '<div style="color:var(--green);margin-top:6px">🤖 Auto-Trade is ON — trades will fire automatically on signals.</div>' : ''}
+    </div>`;
+    return;
+  }
+
+  body.innerHTML = `<div class="pos-cards">${positions.map(p => _renderPositionCard(p)).join('')}</div>`;
+}
+
 async function loadSummary() {
   try {
     const r = await fetch('/api/paper/summary');
-    if (r.ok) renderSummary(await r.json());
+    if (r.ok) {
+      const s = await r.json();
+      _lastPaperSummary = s;
+      renderSummary(s);
+      renderLivePnl(s);
+      _updateDailyCapBar(s);
+    }
   } catch(e) {}
 }
 
@@ -897,6 +1699,7 @@ function onSymbolSelect() {
 
 const STRATEGY_META = {
   iron_condor:      { hasWidth: true,  hasShort: true,  widthLabel: 'Spread Width Steps' },
+  short_strangle:   { hasWidth: false, hasShort: true,  widthLabel: '' },
   bull_call_spread: { hasWidth: true,  hasShort: false, widthLabel: 'Spread Width Steps' },
   bear_put_spread:  { hasWidth: true,  hasShort: false, widthLabel: 'Spread Width Steps' },
   covered_call:     { hasWidth: false, hasShort: true,  widthLabel: '' },
@@ -1093,6 +1896,840 @@ function handleStrategyAlert(alert) {
     cls === 'alert-target' ? '#86efac' : '#f87171');
   loadStrategyTrades();
 }
+
+loadStrategyTrades();
+
+// ── Intraday Equity Strategy Scanner ─────────────────────────────────────────
+
+const _INTRA_NAMES = {
+  orb:         'ORB',
+  vwap:        'VWAP Reversal',
+  ema_cross:   'EMA Crossover',
+  sr_reversal: 'S&R Reversal',
+  gap_go:      'Gap & Go',
+};
+
+const _INTRA_DESC = {
+  orb: `<b>Opening Range Breakout (ORB)</b> — Defines the high/low of the first 15 minutes
+    (9:15–9:30 AM) as the opening range. Goes <span style="color:var(--green)">Long</span>
+    when price breaks above the range high with volume confirmation, and
+    <span style="color:var(--red)">Short</span> on a breakdown below the range low.
+    Works best on trending days with strong opening momentum.`,
+
+  vwap: `<b>VWAP Reversal</b> — Mean-reversion strategy using Volume-Weighted Average Price.
+    <span style="color:var(--green)">Buy</span> when price dips below VWAP and closes a bullish
+    candle (bounce). <span style="color:var(--red)">Sell short</span> when price rises above VWAP
+    and closes a bearish candle (rejection). Works best in range-bound / sideways sessions.`,
+
+  ema_cross: `<b>EMA Crossover (9 / 21, 5-min)</b> — Trend-following strategy.
+    <span style="color:var(--green)">Long</span> when EMA9 freshly crosses above EMA21 on the
+    5-minute chart — signals uptrend start. <span style="color:var(--red)">Short</span> on
+    bearish crossover (EMA9 below EMA21). Best used when market is in a clear directional move.
+    Needs at least 22 five-min candles (~2 hours of data).`,
+
+  sr_reversal: `<b>Support &amp; Resistance Reversal (RSI)</b> — Counter-trend setup.
+    <span style="color:var(--green)">Buy</span> at intraday support when RSI(14) drops below 30
+    (oversold). <span style="color:var(--red)">Sell</span> at resistance when RSI exceeds 70
+    (overbought). Works best in choppy, range-bound markets. Avoid using on strong trending days.`,
+
+  gap_go: `<b>Gap &amp; Go</b> — Momentum strategy for gap days.
+    <span style="color:var(--green)">Buy</span> stocks/indices that open &gt;1.5% above the previous
+    close and continue moving up after open (gap not filling). <span style="color:var(--red)">Short
+    </span> stocks that gap down &gt;1.5% with continued selling. Requires 1D candle data in DB
+    (run NSE Bulk Download first).`,
+};
+
+let _intraStrat = 'orb';
+let _lastIntraSignal = null;
+
+function selectIntraStrat(id, el) {
+  _intraStrat = id;
+  document.querySelectorAll('.intra-card').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('intra-desc').innerHTML = _INTRA_DESC[id] || '';
+  document.getElementById('intra-signal-box').style.display = 'none';
+  _lastIntraSignal = null;
+}
+
+async function evalIntraSignal() {
+  const sym = (document.getElementById('intra-sym').value || '').trim().toUpperCase();
+  if (!sym) { showAlert('Enter a symbol first', '#f85149'); return; }
+
+  document.getElementById('intra-spinner').style.display = 'inline';
+  document.getElementById('intra-signal-box').style.display = 'none';
+
+  try {
+    const r = await fetch(`/api/intraday/signal?symbol=${encodeURIComponent(sym)}&strategy=${_intraStrat}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    _lastIntraSignal = { ...d, _sym: sym };
+    _renderIntraSignal(d, sym);
+  } catch(e) {
+    showAlert('Signal evaluation failed: ' + e.message, '#f85149');
+  } finally {
+    document.getElementById('intra-spinner').style.display = 'none';
+  }
+}
+
+function _renderIntraSignal(d, sym) {
+  const box    = document.getElementById('intra-signal-box');
+  const badge  = document.getElementById('intra-badge');
+  const symLbl = document.getElementById('intra-sym-lbl');
+  const confLbl  = document.getElementById('intra-conf-label');
+  const confFill = document.getElementById('intra-conf-fill');
+  const levels = document.getElementById('intra-levels');
+  const reason = document.getElementById('intra-reason');
+  const buyBtn  = document.getElementById('intra-buy-btn');
+  const sellBtn = document.getElementById('intra-sell-btn');
+  const execRow = document.getElementById('intra-exec-row');
+
+  const sig = d.signal || 'WAIT';
+  box.className  = 'intra-signal-box ' + (sig === 'LONG' ? 'long' : sig === 'SHORT' ? 'short' : 'wait');
+  badge.className = 'signal-badge ' + (sig === 'LONG' ? 'long' : sig === 'SHORT' ? 'short' : 'wait');
+
+  if (sig === 'LONG')  badge.textContent = '▲ LONG';
+  else if (sig === 'SHORT') badge.textContent = '▼ SHORT';
+  else badge.textContent = '⏸ ' + sig;
+
+  const ltpFmt = d.ltp ? `₹${Number(d.ltp).toLocaleString('en-IN',{maximumFractionDigits:2})}` : '—';
+  symLbl.textContent = `${sym}  ·  LTP ${ltpFmt}`;
+
+  const conf = d.confidence || 0;
+  if (conf) {
+    const pct = Math.round(conf * 100);
+    confLbl.textContent = `Confidence ${pct}%`;
+    confFill.style.width = pct + '%';
+    confFill.style.background = conf > 0.65 ? 'var(--green)' : conf > 0.5 ? 'var(--yellow)' : 'var(--red)';
+  } else {
+    confLbl.textContent = '';
+    confFill.style.width = '0';
+  }
+
+  // Levels
+  const fmt = v => v != null ? `₹${Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}` : null;
+  let lvl = '';
+  if (d.entry  != null) lvl += `<span class="lvl-entry">Entry ${fmt(d.entry)}</span>`;
+  if (d.sl     != null) lvl += `<span class="lvl-sl">SL ${fmt(d.sl)}</span>`;
+  if (d.target != null) lvl += `<span class="lvl-target">Target ${fmt(d.target)}</span>`;
+  if (d.vwap   != null) lvl += `<span class="lvl-info">VWAP ${fmt(d.vwap)}</span>`;
+  if (d.orb_high != null) lvl += `<span class="lvl-info">ORB ${fmt(d.orb_low)}–${fmt(d.orb_high)}</span>`;
+  if (d.rsi    != null) lvl += `<span class="lvl-info">RSI ${d.rsi}</span>`;
+  if (d.support != null) lvl += `<span class="lvl-info">S1 ${fmt(d.support)}  R1 ${fmt(d.resistance)}</span>`;
+  if (d.ema9   != null) lvl += `<span class="lvl-info">EMA9/21 ${fmt(d.ema9)} / ${fmt(d.ema21)}</span>`;
+  if (d.gap_pct != null) lvl += `<span class="lvl-info">Gap ${d.gap_pct > 0 ? '+' : ''}${d.gap_pct}%</span>`;
+  levels.innerHTML = lvl;
+
+  reason.textContent = d.reason || '';
+
+  buyBtn.style.display  = sig === 'LONG'  ? 'inline-block' : 'none';
+  sellBtn.style.display = sig === 'SHORT' ? 'inline-block' : 'none';
+  execRow.style.display = (sig === 'LONG' || sig === 'SHORT') ? 'flex' : 'none';
+
+  box.style.display = 'block';
+}
+
+async function execIntraday(action) {
+  if (!_lastIntraSignal) return;
+  const sym = _lastIntraSignal._sym;
+  const ltp = _lastIntraSignal.ltp || 0;
+  if (!ltp) { showAlert('No LTP for ' + sym, '#f85149'); return; }
+
+  const sizing = _calcSizingValues(ltp, action);
+  const { qty, sl, t1, t2, trailPct, t1Qty, t2Qty, posVal } = sizing;
+  const label = _INTRA_NAMES[_intraStrat] || _intraStrat;
+  const fmt = v => `₹${Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}`;
+
+  if (!confirm(
+    `${action} ${qty} shares of ${sym} @ ${fmt(ltp)}\n` +
+    `SL: ${fmt(sl)}  T1: ${fmt(t1)}  T2: ${fmt(t2)}  Trail: ${trailPct}%\n[${label}]`
+  )) return;
+
+  try {
+    const r = await fetch('/api/paper/order', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stock_code: sym, exchange_code: 'NSE', product: 'cash',
+        action: action.toLowerCase(), quantity: qty,
+        order_type: 'market', price: ltp,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || `HTTP ${r.status}`);
+
+    const posId = (d.summary?.open_positions || []).find(p => p.symbol === sym && p.is_open)?.id;
+    if (posId) {
+      await _setPositionLevels(posId, sl, t1, t2, t1Qty, t2Qty, trailPct / 100, label);
+      _slTargetMap[sym] = { sl, t1, t2, action, _slAlerted: false, _tgtAlerted: false };
+    }
+
+    showAlert(`✓ ${action} ${qty}×${sym} @ ${fmt(ltp)}  SL:${fmt(sl)}  T1:${fmt(t1)}  T2:${fmt(t2)}  [${label}]`, '#86efac');
+    document.getElementById('intra-signal-box').style.display = 'none';
+  } catch(e) {
+    showAlert('Order failed: ' + e.message, '#f85149');
+  }
+}
+
+// ── Market-open auto-start ───────────────────────────────────────────────────
+
+function _istNow() {
+  // Returns current time as minutes-since-midnight in IST (UTC+5:30)
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  const istMs = utcMs + 5.5 * 3600000;
+  const ist   = new Date(istMs);
+  return ist.getHours() * 60 + ist.getMinutes();
+}
+
+function onMarketOpen(msg) {
+  const syms = (msg.watchlist || []).join(',');
+  if (syms) document.getElementById('monitor-syms').value = syms;
+  document.getElementById('monitor-table-wrap').style.display = 'block';
+  document.getElementById('monitor-countdown').textContent = '📡 Auto-scanning…';
+  showAlert(`🔔 Market open ${msg.time || ''} — auto-monitoring ${(msg.watchlist || []).length} symbols`, '#86efac');
+  if (!_monitorRunning) {
+    // Stop any existing client-side timer; server is driving scans
+    document.getElementById('monitor-start-btn').textContent = '■ Stop';
+    document.getElementById('monitor-start-btn').classList.add('running');
+    _monitorRunning = true;
+  }
+}
+
+function onServerScanResult(msg) {
+  _lastScanResults = msg.results || [];
+  renderScanTable(_lastScanResults);
+  renderOptionsTable(_lastScanResults);
+
+  const badge = document.getElementById('monitor-badge');
+  if ((msg.actionable || 0) > 0) {
+    badge.textContent     = msg.actionable;
+    badge.style.display   = 'inline-block';
+  } else {
+    badge.style.display   = 'none';
+  }
+
+  document.getElementById('monitor-table-wrap').style.display = 'block';
+  const scannedEl = document.getElementById('monitor-scanned-at');
+  scannedEl.textContent =
+    `Server scan: ${msg.scanned_at || ''}  ·  ${msg.total || 0} evaluations  ·  ${msg.actionable || 0} actionable`;
+  document.getElementById('opts-scanned-at').textContent =
+    `Server scan: ${msg.scanned_at || ''}  ·  Options signals from ${(msg.symbols || []).length} symbols`;
+
+  // Alert and auto-trade on new signals
+  const actionable = (_lastScanResults || []).filter(r => r.signal === 'LONG' || r.signal === 'SHORT');
+  if (actionable.length > 0) {
+    const names = actionable.map(r => `${r.symbol} ▸ ${r.strategy_name || r.strategy} → ${r.signal}`).join('  |  ');
+    showAlert(`🔔 ${actionable.length} signal(s): ${names}`, '#58a6ff');
+  }
+  _autoTradeSignals(_lastScanResults);
+}
+
+// Always auto-start signal monitor on page load
+(function _autoStartMonitor() {
+  document.getElementById('monitor-table-wrap').style.display = 'block';
+  document.getElementById('monitor-countdown').textContent = '📡 Fetching signals…';
+  scanAll().then(() => {
+    if (!_monitorRunning) startMonitor();
+  });
+})();
+
+// ── Continuous Signal Monitor ────────────────────────────────────────────────
+
+let _monitorRunning  = false;
+let _monitorTimerId  = null;
+let _monitorCdTimer  = null;
+let _monitorSecsLeft = 0;
+let _lastScanResults = [];
+let _monitorRowData    = [];   // per-render row objects, indexed by render position
+let _slTargetMap       = {};   // symbol → {sl, t1, t2, action, _slAlerted, _tgtAlerted}
+let _lastPaperSummary  = null; // last full summary — patched with fresh LTP on every tick
+
+// ── Fixed-fractional position sizing ────────────────────────────────────────
+
+function _calcSizingValues(ltp, action) {
+  const capitalSlot = parseFloat(document.getElementById('intra-capital-slot').value) || 200000;
+  const riskPerTrade = parseFloat(document.getElementById('intra-risk').value) || 2000;
+  const slPct  = parseFloat(document.getElementById('intra-sl-pct').value)  / 100;
+  const t1Pct  = parseFloat(document.getElementById('intra-t1-pct').value)  / 100;
+  const t2Pct  = parseFloat(document.getElementById('intra-t2-pct').value)  / 100;
+  const trailPct = parseFloat(document.getElementById('intra-trail-pct').value) || 0.4;
+
+  const isBuy = action === 'BUY';
+  const sl = isBuy
+    ? Math.round(ltp * (1 - slPct) * 100) / 100
+    : Math.round(ltp * (1 + slPct) * 100) / 100;
+  const t1 = isBuy
+    ? Math.round(ltp * (1 + t1Pct) * 100) / 100
+    : Math.round(ltp * (1 - t1Pct) * 100) / 100;
+  const t2 = isBuy
+    ? Math.round(ltp * (1 + t2Pct) * 100) / 100
+    : Math.round(ltp * (1 - t2Pct) * 100) / 100;
+
+  const riskPerShare = Math.abs(ltp - sl);
+  const qtyByRisk   = riskPerShare > 0 ? Math.floor(riskPerTrade / riskPerShare) : 999;
+  const qtyCap      = Math.floor((capitalSlot * 0.40) / ltp);  // 40% of slot cap
+  const qty         = Math.max(1, Math.min(qtyByRisk, qtyCap));
+  const posVal      = Math.round(qty * ltp);
+
+  // 3-tier split: 40% T1, 40% T2, remainder trails
+  const t1Qty = Math.max(1, Math.floor(qty * 0.40));
+  const t2Qty = Math.max(1, Math.min(Math.floor(qty * 0.40), qty - t1Qty - 1));
+
+  return { qty, sl, t1, t2, trailPct, t1Qty, t2Qty, posVal, riskPerShare, qtyByRisk, qtyCap };
+}
+
+function calcSizing() {
+  // Try to get LTP from live cache for the current symbol
+  const sym = (document.getElementById('intra-sym')?.value || '').trim().toUpperCase();
+  const ltp = sym ? (ltpCache[sym] || 0) : 0;
+  if (!ltp) { document.getElementById('sizing-preview').style.display = 'none'; return; }
+
+  const s = _calcSizingValues(ltp, 'BUY');  // show for BUY side as preview
+  const fmt = v => `₹${Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}`;
+  const preview = document.getElementById('sizing-preview');
+  preview.style.display = 'block';
+  document.getElementById('sp-qty').textContent = s.qty;
+  document.getElementById('sp-val').textContent = `position ${fmt(s.posVal)}`;
+  document.getElementById('sp-sl').innerHTML    = `<span style="color:var(--red)">SL ${fmt(s.sl)}</span>`;
+  document.getElementById('sp-t1').innerHTML    = `<span style="color:var(--yellow)">T1 ${fmt(s.t1)} (sell ${s.t1Qty})</span>`;
+  document.getElementById('sp-t2').innerHTML    = `<span style="color:var(--green)">T2 ${fmt(s.t2)} (sell ${s.t2Qty})</span>`;
+  document.getElementById('sp-trail').innerHTML = `<span style="color:var(--muted)">Trail ${s.trailPct}% on ${s.qty - s.t1Qty - s.t2Qty} shares</span>`;
+  const binding = s.qtyByRisk < s.qtyCap ? 'risk-limited' : 'capital-capped (40%)';
+  document.getElementById('sp-risk-check').innerHTML =
+    `<span style="color:var(--muted)">${binding} · risk/share ₹${s.riskPerShare.toFixed(2)}</span>`;
+}
+
+function toggleMonitor() {
+  if (_monitorRunning) {
+    stopMonitor();
+  } else {
+    startMonitor();
+  }
+}
+
+function startMonitor() {
+  _monitorRunning = true;
+  const btn = document.getElementById('monitor-start-btn');
+  btn.textContent = '■ Stop';
+  btn.classList.add('running');
+  document.getElementById('monitor-table-wrap').style.display = 'block';
+  scanAll();
+  _scheduleNext();
+}
+
+function stopMonitor() {
+  _monitorRunning = false;
+  clearTimeout(_monitorTimerId);
+  clearInterval(_monitorCdTimer);
+  _monitorTimerId = null;
+  _monitorCdTimer = null;
+  const btn = document.getElementById('monitor-start-btn');
+  btn.textContent = '▶ Start';
+  btn.classList.remove('running');
+  document.getElementById('monitor-countdown').textContent = '—';
+  // Note: server-side scan continues regardless; re-start to resume client polling
+}
+
+function _scheduleNext() {
+  if (!_monitorRunning) return;
+  const secs = parseInt(document.getElementById('monitor-interval').value) || 60;
+  _monitorSecsLeft = secs;
+  document.getElementById('monitor-countdown').textContent = `Next: ${secs}s`;
+
+  clearInterval(_monitorCdTimer);
+  _monitorCdTimer = setInterval(() => {
+    _monitorSecsLeft--;
+    if (_monitorSecsLeft <= 0) {
+      clearInterval(_monitorCdTimer);
+      document.getElementById('monitor-countdown').textContent = 'Scanning…';
+    } else {
+      document.getElementById('monitor-countdown').textContent = `Next: ${_monitorSecsLeft}s`;
+    }
+  }, 1000);
+
+  clearTimeout(_monitorTimerId);
+  _monitorTimerId = setTimeout(async () => {
+    await scanAll();
+    _scheduleNext();
+  }, secs * 1000);
+}
+
+async function scanAll() {
+  const syms = (document.getElementById('monitor-syms').value || '').trim();
+  if (!syms) return;
+  document.getElementById('monitor-countdown').textContent = 'Scanning…';
+  try {
+    const r = await fetch(`/api/intraday/scan?symbols=${encodeURIComponent(syms)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    _lastScanResults = d.results || [];
+    renderScanTable(_lastScanResults);
+    renderOptionsTable(_lastScanResults);
+
+    const badge = document.getElementById('monitor-badge');
+    if (d.actionable > 0) {
+      badge.textContent = d.actionable;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+    const scannedEl = document.getElementById('monitor-scanned-at');
+    scannedEl.textContent = `Last scan: ${d.scanned_at || ''}  ·  ${d.total || 0} evaluations  ·  ${d.actionable || 0} actionable`;
+    document.getElementById('opts-scanned-at').textContent =
+      `Last scan: ${d.scanned_at || ''}  ·  Options signals from ${d.symbols?.length || 0} symbols`;
+
+    _autoTradeSignals(_lastScanResults);
+  } catch(e) {
+    document.getElementById('monitor-scanned-at').textContent = 'Scan error: ' + e.message;
+  }
+}
+
+function renderOptionsTable(results) {
+  const tbody = document.getElementById('opts-monitor-body');
+  const fmt   = v => v != null ? `₹${Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}` : '—';
+
+  const rows = (results || []).filter(r =>
+    r.type === 'options' && (r.signal === 'LONG' || r.signal === 'SHORT')
+  );
+
+  // Update badge
+  const badge = document.getElementById('opts-monitor-badge');
+  if (rows.length > 0) {
+    badge.textContent   = rows.length;
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">' +
+      '📡 Monitoring… No options signals yet. Triggers: IVR≥70% / IVR≤30% / PCR≥1.3 / PCR≤0.7 / Max Pain drift.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map((r, i) => {
+    const sig     = r.signal;
+    const rowCls  = sig === 'LONG' ? 'sig-long' : 'sig-short';
+    const pillCls = sig === 'LONG' ? 'long' : 'short';
+    const sigText = sig === 'LONG' ? '▲ BUY PREM' : '▼ SELL PREM';
+
+    // Key metric cell — strategy-specific
+    let metric = '—';
+    if (r.iv_rank   != null) metric = `<span style="color:var(--blue);font-weight:700">IVR ${r.iv_rank}%</span>${r.iv != null ? `<br><span style="font-size:10px;color:var(--muted)">ATM IV ${r.iv}%</span>` : ''}`;
+    else if (r.pcr  != null) metric = `<span style="color:var(--blue);font-weight:700">PCR ${r.pcr}</span><br><span style="font-size:10px;color:var(--muted)">C:${(r.call_oi||0).toLocaleString('en-IN')} P:${(r.put_oi||0).toLocaleString('en-IN')}</span>`;
+    else if (r.max_pain != null) metric = `<span style="color:var(--blue);font-weight:700">${fmt(r.max_pain)}</span><br><span style="font-size:10px;color:var(--muted)">${r.dte} DTE · ${r.distance_pct}% away</span>`;
+
+    // Suggested trade
+    const suggestCls = sig === 'LONG' ? 'color:var(--green)' : 'color:var(--red)';
+    const suggest    = r.suggested_strategy_name
+      ? `<span style="${suggestCls};font-weight:700">${r.suggested_strategy_name}</span>`
+      : '—';
+
+    // Confidence bar
+    const conf     = r.confidence || 0;
+    const confPct  = Math.round(conf * 100);
+    const confClr  = conf > 0.65 ? 'var(--green)' : conf > 0.5 ? 'var(--yellow)' : 'var(--red)';
+    const confBar  = conf
+      ? `<div class="mini-conf"><div class="mini-conf-fill" style="width:${confPct}%;background:${confClr}"></div></div> <span style="font-size:10px">${confPct}%</span>`
+      : '—';
+
+    // LTP source
+    const srcBadge = r.ltp_source === 'live'     ? '<span style="font-size:9px;color:var(--green)">●live</span>'
+                   : r.ltp_source === '5m-candle' ? '<span style="font-size:9px;color:var(--yellow)">●5m</span>'
+                   : r.ltp_source === 'db-close'  ? '<span style="font-size:9px;color:var(--muted)">●db</span>'
+                   : '';
+
+    const reason = (r.reason || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    // Store for action handler
+    const idx = (_monitorRowData.push(r) - 1);
+    const btnCls = sig === 'LONG' ? 'long-btn' : 'short-btn';
+
+    return `<tr class="${rowCls}" onclick="highlightMonitorRow(this)">
+      <td style="font-weight:700;white-space:nowrap">${r.symbol} ${srcBadge}</td>
+      <td style="white-space:nowrap">${r.strategy_name || r.strategy}</td>
+      <td><span class="sig-pill ${pillCls}">${sigText}</span></td>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted);white-space:nowrap">${r.triggered_at || '—'}</td>
+      <td style="font-family:monospace;font-weight:600">${fmt(r.ltp)}</td>
+      <td style="line-height:1.5">${metric}</td>
+      <td>${suggest}</td>
+      <td>${confBar}</td>
+      <td style="color:var(--muted);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${reason}">${reason}</td>
+      <td><button class="exec-btn ${btnCls}"
+        onclick="event.stopPropagation();openOptionsFromMonitor(_monitorRowData[${idx}])">
+        ${sig === 'LONG' ? '▲ Build' : '▼ Build'}</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderScanTable(results) {
+  const tbody = document.getElementById('monitor-table-body');
+  const fmt = v => v != null ? `₹${Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}` : '—';
+  _monitorRowData = [];   // reset per render
+
+  // Per-symbol lock: symbols with open positions are excluded from actionable rows
+  const openSyms = new Set((_lastPaperSummary?.open_positions || [])
+    .filter(p => p.is_open).map(p => p.symbol));
+
+  const allSignals = (results || []).filter(r => r.signal === 'LONG' || r.signal === 'SHORT');
+
+  // Deduplicate actionable rows: one row per symbol (highest confidence first)
+  const actionableMap = new Map();  // symbol → best row
+  for (const r of allSignals) {
+    if (openSyms.has(r.symbol)) continue;  // locked — skip from actionable
+    const existing = actionableMap.get(r.symbol);
+    if (!existing || (r.confidence || 0) > (existing.confidence || 0)) {
+      actionableMap.set(r.symbol, r);
+    }
+  }
+  const rows = [...actionableMap.values()];
+
+  // Locked symbols — collect distinct symbols that fired but have open positions
+  const lockedSyms = [...new Set(allSignals.filter(r => openSyms.has(r.symbol)).map(r => r.symbol))];
+
+  if (!rows.length && !lockedSyms.length) {
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:20px">📡 Monitoring… No signals yet. Signals appear here when a strategy triggers.</td></tr>';
+    return;
+  }
+
+  // Locked-symbol banner rows (shown at top)
+  const lockedRows = lockedSyms.map(sym => {
+    const pos = (_lastPaperSummary?.open_positions || []).find(p => p.symbol === sym && p.is_open);
+    const dir = pos ? (pos.direction === 'buy' ? '▲ LONG' : '▼ SHORT') : '';
+    const pnl = pos ? (pos.unrealized_pnl || 0) : 0;
+    const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const pnlStr = pos ? `<span style="color:${pnlColor};font-family:monospace;font-size:11px">P&L ${pnl >= 0 ? '+' : ''}${pnl.toFixed(0)}</span>` : '';
+    return `<tr style="opacity:0.55;background:#0d1117">
+      <td style="font-weight:700;white-space:nowrap;color:var(--muted)">${sym}</td>
+      <td colspan="10" style="color:var(--muted);font-size:11px">
+        🔒 <span style="color:#58a6ff">${dir}</span> position open — monitoring paused for this symbol &nbsp; ${pnlStr}
+      </td>
+      <td></td>
+    </tr>`;
+  }).join('');
+
+  tbody.innerHTML = lockedRows + rows.map(r => {
+    const sig    = r.signal || 'WAIT';
+    const isOpts = r.type === 'options';
+    const rowCls  = sig === 'LONG' ? 'sig-long' : sig === 'SHORT' ? 'sig-short' : 'sig-wait';
+    const pillCls = sig === 'LONG' ? 'long'     : sig === 'SHORT' ? 'short'     : 'wait';
+    const sigText = sig === 'LONG'  ? (isOpts ? '▲ BUY PREM'  : '▲ LONG')
+                  : sig === 'SHORT' ? (isOpts ? '▼ SELL PREM' : '▼ SHORT')
+                  : sig;
+
+    // Type badge
+    const typeBadge = isOpts
+      ? '<span style="font-size:9px;background:#1a1a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;margin-left:4px">📊OPT</span>'
+      : '<span style="font-size:9px;background:#0d2b18;color:var(--green);padding:1px 5px;border-radius:3px;margin-left:4px">📈EQ</span>';
+
+    // Strategy name — show suggested strategy beneath for options
+    const stratLabel = isOpts && r.suggested_strategy_name
+      ? `${r.strategy_name}<br><span style="font-size:10px;color:var(--blue)">${r.suggested_strategy_name}</span>`
+      : (r.strategy_name || r.strategy);
+
+    // Confidence bar
+    const conf = r.confidence || 0;
+    const confPct = Math.round(conf * 100);
+    const confColor = conf > 0.65 ? 'var(--green)' : conf > 0.5 ? 'var(--yellow)' : 'var(--red)';
+    const confBar = conf
+      ? `<div class="mini-conf"><div class="mini-conf-fill" style="width:${confPct}%;background:${confColor}"></div></div> <span style="font-size:10px">${confPct}%</span>`
+      : '—';
+
+    // R:R for equity; options-specific metric (IVR / PCR / DTE) instead
+    let rrStr = '—';
+    if (!isOpts && r.entry != null && r.sl != null && r.target != null) {
+      const risk = Math.abs(r.entry - r.sl), reward = Math.abs(r.target - r.entry);
+      if (risk > 0) {
+        const rr = (reward / risk).toFixed(1);
+        const rrColor = reward/risk >= 2 ? 'var(--green)' : reward/risk >= 1 ? 'var(--yellow)' : 'var(--red)';
+        rrStr = `<span style="color:${rrColor};font-family:monospace;font-weight:700">1:${rr}</span>`;
+      }
+    } else if (r.iv_rank  != null) { rrStr = `<span style="font-size:10px;color:var(--muted)">IVR ${r.iv_rank}%</span>`; }
+      else if (r.pcr       != null) { rrStr = `<span style="font-size:10px;color:var(--muted)">PCR ${r.pcr}</span>`; }
+      else if (r.dte       != null) { rrStr = `<span style="font-size:10px;color:var(--muted)">${r.dte} DTE</span>`; }
+
+    // LTP source badge
+    const srcBadge = r.ltp_source === 'live'      ? '<span style="font-size:9px;color:var(--green);margin-left:3px">●live</span>'
+                   : r.ltp_source === '5m-candle'  ? '<span style="font-size:9px;color:var(--yellow);margin-left:3px">●5m</span>'
+                   : r.ltp_source === 'db-close'   ? '<span style="font-size:9px;color:var(--muted);margin-left:3px">●db</span>'
+                   : '';
+
+    const timeStr = r.triggered_at || '—';
+    const rowIdx  = (_monitorRowData.push(r) - 1);
+
+    // Action button — equity: immediate BUY/SELL; options: open strategy builder
+    let actionBtn = '';
+    if (sig === 'LONG' || sig === 'SHORT') {
+      const btnCls = sig === 'LONG' ? 'long-btn' : 'short-btn';
+      if (isOpts) {
+        actionBtn = `<button class="exec-btn ${btnCls}"
+          onclick="event.stopPropagation();openOptionsFromMonitor(_monitorRowData[${rowIdx}])">
+          ${sig === 'LONG' ? '▲ Build' : '▼ Build'}</button>`;
+      } else {
+        actionBtn = `<button class="exec-btn ${btnCls}"
+          onclick="event.stopPropagation();execFromMonitor(_monitorRowData[${rowIdx}])">
+          ${sig === 'LONG' ? '▲ BUY' : '▼ SELL'}</button>`;
+      }
+    }
+
+    const reason = (r.reason || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    return `<tr class="${rowCls}" onclick="highlightMonitorRow(this)">
+      <td style="font-weight:700;white-space:nowrap">${r.symbol}${srcBadge}${typeBadge}</td>
+      <td style="white-space:nowrap;line-height:1.5">${stratLabel}</td>
+      <td><span class="sig-pill ${pillCls}">${sigText}</span></td>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted);white-space:nowrap">${timeStr}</td>
+      <td style="font-family:monospace;font-weight:600">${fmt(r.ltp)}</td>
+      <td style="font-family:monospace;font-weight:700;color:var(--blue)">${isOpts ? '—' : fmt(r.entry)}</td>
+      <td style="font-family:monospace;font-weight:700;color:var(--red)">${isOpts ? '—' : fmt(r.sl)}</td>
+      <td style="font-family:monospace;font-weight:700;color:var(--green)">${isOpts ? '—' : fmt(r.target)}</td>
+      <td>${rrStr}</td>
+      <td>${confBar}</td>
+      <td style="color:var(--muted);max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${reason}">${reason}</td>
+      <td style="white-space:nowrap">${actionBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function highlightMonitorRow(tr) {
+  document.querySelectorAll('#monitor-table-body tr').forEach(r => r.style.outline = '');
+  tr.style.outline = '1px solid var(--green)';
+}
+
+// ── Auto-Trade ────────────────────────────────────────────────────────────────
+let _autoTradeEnabled = true;   // ON by default — signals fire trades immediately
+const _autoTraded = new Set();  // pos IDs that already got SL/T1/T2 levels this session
+
+function toggleAutoTrade() {
+  _autoTradeEnabled = !_autoTradeEnabled;
+  const btn   = document.getElementById('auto-trade-btn');
+  const lbl   = document.getElementById('auto-trade-lbl');
+  const hint  = document.getElementById('auto-hint');
+  const mhint = document.getElementById('manual-hint');
+  if (_autoTradeEnabled) {
+    btn.classList.add('active');
+    lbl.textContent = 'Auto-Trade ON';
+    if (hint) hint.style.display = 'inline';
+    if (mhint) mhint.style.display = 'none';
+    showAlert('🤖 Auto-Trade ENABLED — LONG/SHORT signals execute automatically', '#3fb950');
+  } else {
+    btn.classList.remove('active');
+    lbl.textContent = 'Auto-Trade OFF';
+    if (hint) hint.style.display = 'none';
+    if (mhint) mhint.style.display = 'inline';
+    showAlert('⏸ Auto-Trade PAUSED — click signal rows to trade manually', '#d29922');
+  }
+}
+
+// Sync button visual state to match the default true value
+document.addEventListener('DOMContentLoaded', () => {
+  const btn  = document.getElementById('auto-trade-btn');
+  const lbl  = document.getElementById('auto-trade-lbl');
+  const hint = document.getElementById('auto-hint');
+  const mhint = document.getElementById('manual-hint');
+  if (btn)  btn.classList.add('active');
+  if (lbl)  lbl.textContent = 'Auto-Trade ON';
+  if (hint) hint.style.display = 'inline';
+  if (mhint) mhint.style.display = 'none';
+});
+
+async function _placeMonitorOrder(row, showConfirm = true) {
+  const sig = row.signal;
+  if (sig !== 'LONG' && sig !== 'SHORT') return;
+  const action  = sig === 'LONG' ? 'BUY' : 'SELL';
+  const sym     = row.symbol;
+  const label   = row.strategy_name || row.strategy || 'Signal';
+  const fmt = v => v != null ? `₹${Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}` : '—';
+
+  // Fill price: strategy entry → scan LTP → live cache (no Breeze API call required)
+  const fillPrice = row.entry || row.ltp || ltpCache[sym] || 0;
+  if (!fillPrice) {
+    if (showConfirm) showAlert(`No price for ${sym} — candle data may not be loaded yet`, '#f85149');
+    return;
+  }
+
+  // Per-symbol lock: one open position per stock at a time
+  const alreadyOpen = (_lastPaperSummary?.open_positions || []).some(p => p.symbol === sym && p.is_open);
+  if (alreadyOpen) {
+    if (!showConfirm) return;
+    showAlert(`${sym} already has an open position — exit first`, '#d29922');
+    return;
+  }
+
+  // ── Levels: use strategy's own SL and target (not recalculated percentages) ──
+  const sl  = row.sl     || 0;   // strategy stop-loss
+  const t1  = row.target || 0;   // strategy first target
+  // T2 = extend by same distance as T1 (2R), capped by direction
+  const t2  = (t1 && sl)
+    ? Math.round((fillPrice + 2 * (t1 - fillPrice)) * 100) / 100
+    : 0;
+
+  // ── Sizing: risk-based on strategy SL distance, bounded by capital slot ──
+  const capitalSlot  = parseFloat(document.getElementById('intra-capital-slot').value) || 200000;
+  const riskPerTrade = parseFloat(document.getElementById('intra-risk').value)          || 2000;
+  const trailPct     = parseFloat(document.getElementById('intra-trail-pct').value)     || 0.4;
+  const riskPerShare = sl > 0 ? Math.abs(fillPrice - sl) : fillPrice * 0.01;
+  const qtyByRisk    = riskPerShare > 0 ? Math.floor(riskPerTrade / riskPerShare) : 1;
+  const qtyCap       = Math.floor((capitalSlot * 0.40) / fillPrice);
+  const qty          = Math.max(1, Math.min(qtyByRisk, qtyCap));
+  const t1Qty        = Math.max(1, Math.floor(qty * 0.40));
+  const t2Qty        = t2 ? Math.max(1, Math.min(Math.floor(qty * 0.40), qty - t1Qty - 1)) : 0;
+  const posVal       = Math.round(qty * fillPrice);
+
+  if (showConfirm) {
+    const rrStr = (sl && t1) ? `1:${((Math.abs(t1-fillPrice)/Math.abs(fillPrice-sl)).toFixed(1))}` : 'N/A';
+    const confirmMsg =
+      `Place paper ${action} order?\n\n` +
+      `Symbol   : ${sym}\n` +
+      `Qty      : ${qty} shares  (position ${fmt(posVal)})\n` +
+      `Entry    : ${fmt(fillPrice)}\n` +
+      `SL       : ${fmt(sl)}  (strategy stop-loss)\n` +
+      `T1       : ${fmt(t1)}  → exit ${t1Qty} shares, SL → breakeven\n` +
+      `T2       : ${fmt(t2 || null)}  → exit ${t2Qty} more shares\n` +
+      `R:R      : ${rrStr}\n` +
+      `Strategy : ${label}`;
+    if (!confirm(confirmMsg)) return;
+  }
+
+  try {
+    const r = await fetch('/api/paper/order', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stock_code: sym, exchange_code: 'NSE', product: 'cash',
+        action: action.toLowerCase(), quantity: qty,
+        order_type: 'market', price: fillPrice,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || `HTTP ${r.status}`);
+
+    const posId = (d.summary?.open_positions || []).find(p => p.symbol === sym && p.is_open)?.id;
+    if (posId && !_autoTraded.has(posId)) {
+      if (sl) await _setPositionLevels(posId, sl, t1, t2, t1Qty, t2Qty, trailPct / 100, label);
+      _slTargetMap[sym] = { sl, t1, t2, action, _slAlerted: false, _tgtAlerted: false };
+      _autoTraded.add(posId);
+    }
+
+    const icon = showConfirm ? '✓' : '🤖 Auto';
+    showAlert(
+      `${icon}: ${action} ${qty}×${sym} @ ${fmt(fillPrice)}  SL:${fmt(sl||null)}  T1:${fmt(t1||null)}  [${label}]`,
+      '#86efac'
+    );
+    if (d.summary) { _lastPaperSummary = d.summary; renderSummary(d.summary); renderLivePnl(d.summary); }
+  } catch(e) {
+    showAlert('Order failed: ' + e.message, '#f85149');
+  }
+}
+
+async function _autoTradeSignals(results) {
+  if (!_autoTradeEnabled) return;
+  // Skip symbols that already have an open position (per-symbol lock)
+  const openSyms = new Set((_lastPaperSummary?.open_positions || [])
+    .filter(p => p.is_open).map(p => p.symbol));
+  // Deduplicate: one trade per symbol (highest confidence wins)
+  const best = new Map();  // symbol → best signal row
+  for (const r of (results || [])) {
+    if (r.signal !== 'LONG' && r.signal !== 'SHORT') continue;
+    if (r.type === 'options') continue;
+    if (openSyms.has(r.symbol)) continue;
+    const existing = best.get(r.symbol);
+    if (!existing || (r.confidence || 0) > (existing.confidence || 0)) {
+      best.set(r.symbol, r);
+    }
+  }
+  for (const row of best.values()) {
+    await _placeMonitorOrder(row, false);
+    await new Promise(res => setTimeout(res, 300));
+  }
+}
+
+async function execFromMonitor(row) {
+  await _placeMonitorOrder(row, true);
+}
+
+async function partialExitPos(posId, pct, btnEl) {
+  const pos = (_lastPaperSummary?.open_positions || []).find(p => p.id === posId);
+  if (!pos) return;
+  const qty = Math.max(1, Math.floor(pos.qty * pct));
+  if (!confirm(`Sell ${qty} shares (${Math.round(pct*100)}%) of ${pos.symbol} at market?`)) return;
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const r = await fetch(`/api/paper/partial-exit/${posId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qty }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    showAlert(`✓ Partial exit: ${qty}×${pos.symbol}`, '#86efac');
+    if (d.summary) { _lastPaperSummary = d.summary; renderSummary(d.summary); renderLivePnl(d.summary); }
+  } catch(e) {
+    showAlert('Partial exit failed: ' + e.message, '#f85149');
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+async function subscribeLtpForMonitor() {
+  const symsRaw = (document.getElementById('monitor-syms').value || '').trim();
+  if (!symsRaw) { showAlert('Enter symbols in the monitor list first', '#d29922'); return; }
+  const syms = symsRaw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  let ok = 0, fail = 0;
+  for (const sym of syms) {
+    try {
+      const r = await fetch('/api/subscribe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock_code: sym, exchange_code: 'NSE', product_type: 'cash', right: '', strike: '', expiry_date: '' }),
+      });
+      if (r.ok) ok++; else fail++;
+    } catch { fail++; }
+  }
+  showAlert(`Subscribed ${ok} symbols${fail ? `, ${fail} failed (Breeze session needed)` : ' — live LTP will update shortly'}`, ok > 0 ? '#86efac' : '#f85149');
+}
+
+async function _setPositionLevels(posId, sl, t1, t2, t1Qty, t2Qty, trailPctDecimal, tag) {
+  try {
+    await fetch('/api/paper/set-levels', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pos_id: posId, sl_price: sl, t1_price: t1, t2_price: t2,
+        t1_qty: t1Qty, t2_qty: t2Qty, trail_pct: trailPctDecimal, tag,
+      }),
+    });
+  } catch(e) {
+    console.warn('set-levels failed:', e.message);
+  }
+}
+
+function openOptionsFromMonitor(row) {
+  const strat = row.suggested_strategy;
+  if (strat) selectStrategy(strat);
+
+  // Pre-select symbol in the strategy builder dropdown
+  const sel = document.getElementById('st-stock-select');
+  if (sel) {
+    const sym = row.symbol;
+    let matched = false;
+    for (const opt of sel.options) {
+      if (opt.value === sym) { sel.value = sym; matched = true; break; }
+    }
+    if (!matched) {
+      sel.value = '__other__';
+      const custom = document.getElementById('st-stock-custom');
+      if (custom) { custom.value = sym; custom.style.display = 'block'; }
+    }
+    onSymbolSelect();
+  }
+
+  // Scroll strategy builder into view
+  const builder = document.getElementById('strategy-builder');
+  if (builder) builder.scrollIntoView({behavior: 'smooth', block: 'start'});
+
+  showAlert(
+    `📊 ${row.symbol} → ${row.suggested_strategy_name || strat} pre-filled. Set expiry & lots, then Preview Legs.`,
+    '#58a6ff'
+  );
+}
+
+// Init first description on load
+document.getElementById('intra-desc').innerHTML = _INTRA_DESC['orb'];
 
 loadStrategyTrades();
 </script>

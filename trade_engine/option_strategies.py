@@ -30,7 +30,7 @@ class Leg:
 STRIKE_STEPS: dict = {
     "NIFTY":      50,  "BANKNIFTY":  100, "FINNIFTY":   50,
     "MIDCPNIFTY": 25,  "SENSEX":     100,
-    "RELIANCE":   50,  "TCS":        50,  "HDFCBANK":   10,
+    "RELIND":     50,  "TCS":        50,  "HDFBAN":     10,
     "INFY":       20,  "ICICIBANK":  10,  "SBIN":       5,
     "BHARTIARTL": 10,  "KOTAKBANK":  10,  "AXISBANK":   10,
     "LT":         50,  "WIPRO":      5,   "MARUTI":     100,
@@ -40,7 +40,7 @@ STRIKE_STEPS: dict = {
 LOT_SIZES: dict = {
     "NIFTY":      75,  "BANKNIFTY":  30,  "FINNIFTY":   40,
     "MIDCPNIFTY": 50,  "SENSEX":     20,
-    "RELIANCE":   250, "TCS":        150, "HDFCBANK":   550,
+    "RELIND":     250, "TCS":        150, "HDFBAN":     550,
     "INFY":       300, "ICICIBANK":  700, "SBIN":       1500,
     "BHARTIARTL": 1851,"KOTAKBANK":  400, "AXISBANK":   625,
     "LT":         375, "WIPRO":      3000,"MARUTI":     15,
@@ -55,7 +55,7 @@ def _atm(spot: float, step: int) -> int:
 # ── 1. Iron Condor ────────────────────────────────────────────────────────────
 
 def iron_condor(spot: float, step: int, lots: int, lot_size: int,
-                short_steps: int = 2, width_steps: int = 2) -> dict:
+                short_steps: int = 3, width_steps: int = 3) -> dict:
     """
     Sell OTM call spread + sell OTM put spread.
     short_steps : distance (in strike steps) of short strikes from ATM
@@ -168,7 +168,36 @@ def covered_call(spot: float, step: int, lots: int, lot_size: int,
     )
 
 
-# ── 5. Long Straddle ──────────────────────────────────────────────────────────
+# ── 5. Short Strangle ────────────────────────────────────────────────────────
+
+def short_strangle(spot: float, step: int, lots: int, lot_size: int,
+                   otm_steps: int = 4) -> dict:
+    """
+    Sell OTM call + sell OTM put (no long hedge).
+    Net credit strategy — max profit = premium collected.
+    Max loss theoretically unlimited; use with stop-loss management.
+    otm_steps : strike steps away from ATM for each short leg (default 4 = 200pts NIFTY)
+    """
+    atm = _atm(spot, step)
+    qty = lots * lot_size
+    sc  = atm + otm_steps * step
+    sp  = atm - otm_steps * step
+
+    legs = [
+        Leg("sell", "options", "CE", sc, qty, f"Sell {sc}CE"),
+        Leg("sell", "options", "PE", sp, qty, f"Sell {sp}PE"),
+    ]
+    return dict(
+        legs=legs, atm=atm,
+        break_even_lower=sp, break_even_upper=sc,
+        max_profit_unit=None,   # = total credit collected
+        max_loss_unit=None,     # unlimited; managed via stop-loss
+        description=f"Short Strangle  {sp}PE / {sc}CE ×{lots}L",
+        strikes=[sp, sc],
+    )
+
+
+# ── 6. Long Straddle ──────────────────────────────────────────────────────────
 
 def long_straddle(spot: float, step: int, lots: int, lot_size: int) -> dict:
     """
@@ -198,6 +227,7 @@ def long_straddle(spot: float, step: int, lots: int, lot_size: int) -> dict:
 
 STRATEGY_BUILDERS = {
     "iron_condor":      iron_condor,
+    "short_strangle":   short_strangle,
     "bull_call_spread": bull_call_spread,
     "bear_put_spread":  bear_put_spread,
     "covered_call":     covered_call,
@@ -206,6 +236,7 @@ STRATEGY_BUILDERS = {
 
 STRATEGY_NAMES = {
     "iron_condor":      "Iron Condor",
+    "short_strangle":   "Short Strangle",
     "bull_call_spread": "Bull Call Spread",
     "bear_put_spread":  "Bear Put Spread",
     "covered_call":     "Covered Call",

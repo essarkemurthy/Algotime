@@ -426,6 +426,18 @@ SELECT pg_reload_conf();
 
 ## Historical Data Download
 
+### Breeze REST API — data availability reference
+
+| Interval | Equity / Cash (NSE) | Futures & Options (NFO) |
+|----------|--------------------|-----------------------|
+| 1m, 5m, 15m, 30m, 1D | **10 years** | **3 years** |
+
+> **Pagination:** Breeze returns up to **1,000 candles per API call**. The backfill engine chunks requests into 25-day windows for intraday intervals and 365-day windows for daily, paging through the full date range automatically.
+>
+> **Daily API call budget:** ~4,500 calls/day (or ~1,000 on some plans). A full 1-year backfill of 5 symbols across all intervals costs ~305 calls — safe to run in a single session. Spread multi-year backfills across multiple days.
+
+---
+
 ### Option A — Breeze Backfill (intraday + daily, credentials required)
 
 From the Charts page, click the **⬇ Data** button to download historical OHLCV for the currently selected symbol from Breeze.

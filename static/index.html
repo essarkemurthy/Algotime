@@ -389,6 +389,26 @@
     background: var(--bg3); border: 1px solid var(--border); color: var(--text);
     border-radius: 6px; padding: 4px 10px; font-size: 12px; height: 28px;
   }
+
+  /* Live order toggle switch */
+  .live-toggle-wrap  { cursor: pointer; }
+  .live-toggle-track {
+    width: 36px; height: 18px; border-radius: 9px; position: relative;
+    transition: background .2s; background: var(--border);
+  }
+  .live-toggle-track.on  { background: var(--green); }
+  .live-toggle-track.off { background: var(--border); }
+  .live-toggle-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    transition: left .2s;
+  }
+  .live-toggle-track.on .live-toggle-thumb { left: 20px; }
+
+  /* Signal log entry colors */
+  .slog-buy  { color: var(--green); }
+  .slog-sell { color: var(--red); }
+  .slog-ts   { color: var(--muted); margin-right: 6px; }
   #tick-table-wrap {
     max-height: 280px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;
   }
@@ -494,6 +514,27 @@
 <!-- Alert bar -->
 <div id="alert-bar"></div>
 
+<!-- Live trading safety banner (read-only — change LIVE_TRADING in .env and restart) -->
+<div id="live-trading-bar" style="
+  display:flex; align-items:center; gap:10px;
+  padding:6px 20px; font-size:12px; font-weight:600;
+  background:#1a0a0a; border-bottom:2px solid var(--red); color:var(--red);">
+  <span id="lt-icon">🔒</span>
+  <span id="lt-text">LIVE TRADING DISABLED — All real orders are blocked. To enable, set LIVE_TRADING=true in .env and restart.</span>
+</div>
+
+<!-- API call budget strip -->
+<div id="api-budget-strip" style="display:none;align-items:center;gap:12px;
+  padding:5px 20px;font-size:11px;background:var(--bg2);border-bottom:1px solid var(--border)">
+  <span style="color:var(--muted);white-space:nowrap;letter-spacing:.3px">BREEZE API TODAY</span>
+  <div style="flex:1;background:var(--bg3);border-radius:3px;height:5px;overflow:hidden;min-width:80px">
+    <div id="api-budget-fill" style="height:5px;border-radius:3px;background:var(--green);width:0%;transition:width .6s"></div>
+  </div>
+  <span id="api-budget-count" style="color:var(--muted);white-space:nowrap">0 / 4500 calls</span>
+  <span id="api-budget-pct" style="font-weight:700;white-space:nowrap;color:var(--green)">0%</span>
+  <span id="api-budget-min" style="color:var(--muted);white-space:nowrap;font-size:10px"></span>
+</div>
+
 <!-- Connect panel -->
 <div id="connect-panel">
 
@@ -587,6 +628,30 @@
     <button id="btn-download" class="success" onclick="startDownload()" style="width:100%">
       Download Historical Data
     </button>
+
+    <!-- Watchlist range backfill -->
+    <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+        Fetch OHLCV (1m / 5m / 15m / 30m / 1d) for a specific date range from Breeze.
+        Symbols tried in order: NIFTY, BANKNIFTY, RELIANCE, HDFCBANK, SBIN, TCS, INFY, TATAMOTORS, SUNPHARMA.
+        Unavailable symbols are skipped automatically.
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:8px">
+        <div class="form-row" style="flex:1;margin-bottom:0">
+          <label>From date</label>
+          <input id="wl-from-date" type="date" title="Start of date range">
+        </div>
+        <div class="form-row" style="flex:1;margin-bottom:0">
+          <label>To date</label>
+          <input id="wl-to-date" type="date" title="End of date range">
+        </div>
+      </div>
+      <button id="btn-watchlist-backfill" onclick="startWatchlistBackfill()"
+        style="width:100%;background:var(--bg3);border:1px solid var(--blue);color:var(--blue);padding:8px;border-radius:6px;cursor:pointer;font-size:13px">
+        📥 Fetch Date-Range History
+      </button>
+    </div>
+
     <!-- Progress -->
     <div id="dl-progress" style="display:none;margin-top:14px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
@@ -633,34 +698,72 @@
   </div>
 
   <!-- Live Ticks -->
-  <div class="card" style="margin-bottom:16px">
+  <div class="card" style="margin-bottom:16px" id="tick-card">
     <h3 style="cursor:pointer;user-select:none" onclick="toggleTickPane()">
       📊 Live Ticks <span id="tick-chevron">▼</span>
       <span id="tick-watching-badge" style="font-size:11px;font-weight:400;color:var(--blue);margin-left:8px"></span>
     </h3>
     <div id="tick-pane">
-      <!-- Symbol + watch controls -->
-      <div class="tick-controls">
-        <div class="sym-wrap">
-          <input type="text" id="tick-symbol-input" placeholder="Symbol or company name…"
-                 style="width:200px" autocomplete="off"
-                 oninput="symSearch(this,'tick-sym-drop','tick')"
-                 onkeydown="symKeyNav(event,'tick-sym-drop','tick')"
-                 onfocus="symSearch(this,'tick-sym-drop','tick')">
-          <div class="sym-dropdown" id="tick-sym-drop"></div>
-        </div>
-        <select id="tick-exchange-filter" style="height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px">
-          <option value="">All</option>
-          <option value="NSE">NSE</option>
-          <option value="BSE">BSE</option>
-          <option value="NFO">NFO</option>
-        </select>
-        <button class="primary" onclick="watchTicks()">Watch</button>
-        <button onclick="stopTickWatch()" id="btn-tick-stop" style="display:none">Stop</button>
-        <span id="tick-count" style="color:var(--muted);font-size:11px;margin-left:4px"></span>
+
+      <!-- Sub-tabs: Equity | F&O -->
+      <div class="ob-tabs" style="margin-bottom:12px">
+        <div class="ob-tab active" id="tick-tab-equity" onclick="switchTickTab('equity')">📈 Equity</div>
+        <div class="ob-tab"        id="tick-tab-fo"     onclick="switchTickTab('fo')">📊 Futures &amp; Options</div>
       </div>
 
-      <!-- Chart toolbar: view / timeframe / indicators -->
+      <!-- ── Equity controls ── -->
+      <div id="tick-panel-equity">
+        <div class="tick-controls">
+          <div class="sym-wrap">
+            <input type="text" id="tick-symbol-input" placeholder="Symbol or company name…"
+                   style="width:200px" autocomplete="off"
+                   oninput="symSearch(this,'tick-sym-drop','tick')"
+                   onkeydown="symKeyNav(event,'tick-sym-drop','tick')"
+                   onfocus="symSearch(this,'tick-sym-drop','tick')">
+            <div class="sym-dropdown" id="tick-sym-drop"></div>
+          </div>
+          <select id="tick-exchange-filter" style="height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px">
+            <option value="NSE">NSE</option>
+            <option value="BSE">BSE</option>
+          </select>
+          <button class="primary" onclick="watchTicks()">Watch</button>
+          <button onclick="stopTickWatch()" id="btn-tick-stop" style="display:none">■ Stop</button>
+          <span id="tick-count" style="color:var(--muted);font-size:11px;margin-left:4px"></span>
+        </div>
+      </div>
+
+      <!-- ── F&O controls ── -->
+      <div id="tick-panel-fo" style="display:none">
+        <div class="tick-controls" style="flex-wrap:wrap;gap:6px">
+          <div class="sym-wrap">
+            <input type="text" id="fo-symbol-input" placeholder="Underlying (NIFTY, RELIANCE…)"
+                   style="width:190px" autocomplete="off"
+                   oninput="symSearch(this,'fo-sym-drop','fo')"
+                   onkeydown="symKeyNav(event,'fo-sym-drop','fo')"
+                   onfocus="symSearch(this,'fo-sym-drop','fo')">
+            <div class="sym-dropdown" id="fo-sym-drop"></div>
+          </div>
+          <select id="fo-product-type" onchange="toggleFOFields()"
+            style="height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px">
+            <option value="futures">Futures</option>
+            <option value="options">Options</option>
+          </select>
+          <input type="date" id="fo-expiry"
+            style="height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px">
+          <select id="fo-right"
+            style="height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px;display:none">
+            <option value="Call">Call (CE)</option>
+            <option value="Put">Put (PE)</option>
+          </select>
+          <input type="number" id="fo-strike" placeholder="Strike" min="0" step="50"
+            style="width:90px;height:28px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 8px;font-size:12px;display:none">
+          <button class="primary" onclick="watchFO()">Watch</button>
+          <button onclick="stopFOWatch()" id="btn-fo-stop" style="display:none">■ Stop</button>
+          <span id="fo-count" style="color:var(--muted);font-size:11px;margin-left:4px"></span>
+        </div>
+      </div>
+
+      <!-- Chart toolbar: shared between Equity and F&O -->
       <div class="chart-toolbar">
         <span style="color:var(--muted);font-size:11px">View:</span>
         <button class="vbtn on"  id="vbtn-table"  onclick="setTickView('table')">Table</button>
@@ -683,7 +786,7 @@
         <label class="ind-toggle"><input type="checkbox" id="ind-rsi"   onchange="toggleIndicator('rsi',   this.checked)"> RSI(14)</label>
       </div>
 
-      <!-- Tick table (default view) -->
+      <!-- Tick table (shared, default view) -->
       <div id="tick-table-wrap">
         <table id="tick-table">
           <thead>
@@ -695,23 +798,114 @@
         </table>
       </div>
 
-      <!-- Chart view (candles / bars) -->
+      <!-- Chart view (candles / bars) — shared -->
       <div id="chart-wrap">
         <div id="chart-main"></div>
         <div id="chart-rsi"></div>
       </div>
 
-      <!-- Strategy / signal panel -->
-      <div class="strategy-panel">
+      <!-- ── Strategy / Signal panel ── -->
+      <div class="strategy-panel" id="tick-strategy-panel">
+
+        <!-- Monitoring control row -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+          <button id="btn-tick-monitor" onclick="toggleTickMonitoring()"
+            style="padding:6px 18px;font-size:12px;font-weight:600;border-color:var(--green);
+              color:var(--green);letter-spacing:.3px">
+            ▶ Start Monitoring
+          </button>
+          <div id="tick-monitor-msg" style="display:none;font-size:11px;color:var(--yellow);
+            background:#1c1500;border-radius:6px;padding:5px 10px;flex:1"></div>
+        </div>
+
+        <!-- Signal row -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <h4 style="margin:0">Strategy Signal</h4>
           <span id="sig-badge" class="sig-badge sig-neutral">—</span>
           <span id="ind-signals">Watch a symbol and enable indicators to see signals.</span>
           <button class="vbtn" style="margin-left:auto;padding:2px 10px"
-                  onclick="document.getElementById('formula-area').style.display = document.getElementById('formula-area').style.display==='none'?'':'none'">
+                  onclick="document.getElementById('formula-area').style.display=document.getElementById('formula-area').style.display==='none'?'':'none'">
             ± Formula
           </button>
         </div>
+
+        <!-- Signal triggered log -->
+        <div id="tick-signal-log" style="margin-top:8px;background:var(--bg3);
+          border-radius:6px;padding:8px 10px;border-left:3px solid var(--blue)">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:5px;letter-spacing:.5px">SIGNAL HISTORY</div>
+          <div id="tick-signal-log-body" style="max-height:90px;overflow-y:auto;font-size:11px;
+            font-family:monospace;line-height:1.7">
+            <span id="tick-signal-log-placeholder" style="color:var(--muted)">
+              🎯 Monitoring… No signals yet. Signals appear here when a strategy triggers.
+            </span>
+          </div>
+        </div>
+
+        <!-- Live Order Panel -->
+        <div id="tick-order-panel" style="margin-top:10px;padding:10px 12px;background:var(--bg3);
+          border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+
+          <!-- UI enable toggle -->
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;
+            font-size:12px;user-select:none;white-space:nowrap">
+            <div class="live-toggle-wrap" onclick="toggleTickLiveOrders()">
+              <div id="tick-live-toggle-track" class="live-toggle-track off">
+                <div class="live-toggle-thumb"></div>
+              </div>
+            </div>
+            <span style="color:var(--muted)">Enable Live Orders</span>
+          </label>
+
+          <!-- Gate status indicator -->
+          <span id="tick-order-status" style="font-size:10px;padding:2px 8px;border-radius:4px;
+            background:#1a0a0a;color:var(--red);white-space:nowrap">🔒 Blocked</span>
+
+          <div style="flex:1"></div>
+
+          <!-- Qty -->
+          <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">
+            Qty:
+            <input type="number" id="tick-order-qty" value="1" min="1" step="1"
+              style="width:60px;height:26px;background:var(--bg);border:1px solid var(--border);
+              color:var(--text);border-radius:5px;padding:0 6px;font-size:12px;text-align:center">
+          </label>
+
+          <!-- Product type for order -->
+          <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">
+            Product:
+            <select id="tick-order-product" style="height:26px;background:var(--bg);border:1px solid var(--border);
+              color:var(--text);border-radius:5px;padding:0 6px;font-size:12px">
+              <option value="cash">Cash (MIS)</option>
+              <option value="margin">Margin (MIS)</option>
+              <option value="futures">Futures</option>
+              <option value="options">Options</option>
+            </select>
+          </label>
+
+          <!-- BUY button -->
+          <button id="btn-tick-buy" disabled onclick="placeTickOrder('BUY')"
+            style="padding:6px 22px;font-size:13px;font-weight:700;border-color:var(--green);
+              color:var(--green);min-width:80px;opacity:.45;cursor:not-allowed"
+            title="Enable live trading in .env AND toggle above to enable">
+            ▲ BUY
+          </button>
+
+          <!-- SELL button -->
+          <button id="btn-tick-sell" disabled onclick="placeTickOrder('SELL')"
+            style="padding:6px 22px;font-size:13px;font-weight:700;border-color:var(--red);
+              color:var(--red);min-width:80px;opacity:.45;cursor:not-allowed"
+            title="Enable live trading in .env AND toggle above to enable">
+            ▼ SELL
+          </button>
+
+          <!-- Hint -->
+          <span id="tick-order-hint"
+            style="font-size:10px;color:var(--muted);width:100%;margin-top:2px">
+            Requires: <strong>LIVE_TRADING=true</strong> in .env  AND  the toggle above both ON.
+          </span>
+        </div>
+
+        <!-- Formula editor -->
         <div id="formula-area" style="display:none;margin-top:8px;">
           <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">
             Variables: <code>close, ema9, ema21, sma20, rsi, vwap, bb_upper, bb_lower, bb_mid, open, high, low</code>
@@ -722,7 +916,6 @@
             <button onclick="saveCurrentStrategy()">Save</button>
           </div>
           <div id="saved-strats">
-            <!-- preset chips -->
             <span class="strat-chip" onclick="loadStrat('close > ema9 && ema9 > ema21')">Golden Cross</span>
             <span class="strat-chip" onclick="loadStrat('rsi < 30')">RSI Oversold</span>
             <span class="strat-chip" onclick="loadStrat('rsi > 70')">RSI Overbought</span>
@@ -841,6 +1034,250 @@
           </td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- ── Historical Data Backfill (always visible after connect) ────────────── -->
+  <div class="card" style="margin-bottom:16px" id="data-backfill-card">
+    <h3 style="cursor:pointer;user-select:none" onclick="toggleBackfillPane()">
+      📥 Historical Data Backfill <span id="backfill-chevron">▼</span>
+      <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">Requires PostgreSQL + Breeze session</span>
+    </h3>
+    <div id="backfill-pane">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+        Fetches OHLCV candles (1m / 5m / 30m / 1d) from Breeze REST for a specific date range.
+        Select a symbol below, or leave blank to run the full priority list.
+        Existing rows are never duplicated.
+      </div>
+
+      <!-- Symbol search -->
+      <div class="form-row" style="margin-bottom:10px">
+        <label>Symbol / Index <span style="font-weight:400;color:var(--muted)">(leave blank for full priority list)</span></label>
+        <div class="sym-wrap" style="position:relative">
+          <input id="wl-sym-input" type="text" placeholder="Search: NIFTY, RELIANCE, HDFC Bank…"
+                 autocomplete="off" style="width:100%"
+                 oninput="symSearch(this,'wl-sym-drop','backfill')"
+                 onkeydown="symKeyNav(event,'wl-sym-drop','backfill')"
+                 onblur="setTimeout(()=>closeSymDrop('wl-sym-drop'),200)">
+          <div class="sym-dropdown" id="wl-sym-drop"></div>
+        </div>
+        <!-- Selected symbol chip -->
+        <div id="wl-sym-selected" style="display:none;margin-top:6px;font-size:12px;
+          background:var(--bg3);padding:6px 10px;border-radius:4px;border-left:3px solid var(--blue);
+          display:none;align-items:center;gap:8px">
+          <span id="wl-sym-code" style="font-weight:700;color:var(--blue);font-size:13px"></span>
+          <span id="wl-sym-name" style="color:var(--muted)"></span>
+          <span id="wl-sym-exch" style="font-size:10px;color:var(--muted);background:var(--bg2);
+            padding:1px 5px;border-radius:3px"></span>
+          <button onclick="clearBackfillSym()" style="margin-left:auto;background:none;border:none;
+            color:var(--muted);cursor:pointer;font-size:12px;padding:0">✕</button>
+        </div>
+      </div>
+
+      <!-- Year presets -->
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted);align-self:center">Quick select:</span>
+        <button onclick="setBackfillYear(0)" style="font-size:11px;padding:3px 10px">Year 1 (last 12 m)</button>
+        <button onclick="setBackfillYear(1)" style="font-size:11px;padding:3px 10px">Year 2 (12–24 m ago)</button>
+        <button onclick="setBackfillYear(2)" style="font-size:11px;padding:3px 10px">Year 3 (24–36 m ago)</button>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:10px">
+        <div class="form-row" style="flex:1;margin-bottom:0">
+          <label>From date</label>
+          <input id="wl-from-date2" type="date">
+        </div>
+        <div class="form-row" style="flex:1;margin-bottom:0">
+          <label>To date</label>
+          <input id="wl-to-date2" type="date">
+        </div>
+      </div>
+
+      <button id="btn-wl-backfill2" onclick="startWatchlistBackfill2()"
+        style="width:100%;padding:9px;border-radius:6px;border:1px solid var(--blue);
+               background:var(--bg3);color:var(--blue);font-size:13px;font-weight:600;cursor:pointer">
+        📥 Fetch Historical Data
+      </button>
+
+      <!-- Progress -->
+      <div id="wl-progress" style="display:none;margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+          <span id="wl-items-text" style="font-size:11px;color:var(--muted)"></span>
+          <span id="wl-eta-text"   style="font-size:11px;color:var(--yellow);font-weight:600"></span>
+        </div>
+        <div style="background:var(--bg3);border-radius:4px;height:6px;margin-bottom:10px;overflow:hidden">
+          <div id="wl-bar" style="height:6px;border-radius:4px;background:var(--blue);width:0%;transition:width .5s"></div>
+        </div>
+        <div id="wl-status-line" style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--blue)"></div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;font-family:monospace">
+          <div id="wl-log"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Breeze Account Data Explorer (GET-only, no live trading required) -->
+  <div class="card" style="margin-bottom:16px" id="breeze-data-explorer">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0;border:none;padding:0">
+        📊 Breeze Account Data
+        <span style="font-size:10px;color:var(--green);background:#0d2b1a;padding:2px 7px;border-radius:4px;margin-left:6px;letter-spacing:.3px">READ-ONLY</span>
+      </h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="bde-last-refresh" style="font-size:11px;color:var(--muted)"></span>
+        <button onclick="bdeRefreshActive()" id="btn-bde-refresh">⟳ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Warning bar -->
+    <div id="bde-warning" style="display:none;color:var(--yellow);font-size:12px;padding:6px 10px;
+      background:#1c1500;border-radius:6px;margin-bottom:8px"></div>
+
+    <!-- Tabs -->
+    <div class="ob-tabs" style="flex-wrap:wrap;gap:4px">
+      <div class="ob-tab active" id="bde-tab-funds"    onclick="switchBdeTab('funds')">💰 Funds</div>
+      <div class="ob-tab"        id="bde-tab-holdings" onclick="switchBdeTab('holdings')">📦 Holdings</div>
+      <div class="ob-tab"        id="bde-tab-demat"    onclick="switchBdeTab('demat')">🗂 Demat</div>
+      <div class="ob-tab"        id="bde-tab-trades"   onclick="switchBdeTab('trades')">📋 Trades</div>
+      <div class="ob-tab"        id="bde-tab-margins"  onclick="switchBdeTab('margins')">📐 Margins</div>
+      <div class="ob-tab"        id="bde-tab-quote"    onclick="switchBdeTab('quote')">🔍 Quote</div>
+    </div>
+
+    <!-- ── Funds pane ── -->
+    <div id="bde-pane-funds" class="ob-wrap">
+      <div id="bde-funds-body">
+        <p style="color:var(--muted);text-align:center;padding:20px">Click ⟳ Refresh to load funds from Breeze</p>
+      </div>
+    </div>
+
+    <!-- ── Holdings pane ── -->
+    <div id="bde-pane-holdings" class="ob-wrap" style="display:none">
+      <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+        <label style="font-size:11px;color:var(--muted)">Exchange:</label>
+        <select id="bde-hld-exch" style="background:var(--bg3);border:1px solid var(--border);
+          color:var(--text);padding:3px 8px;border-radius:5px;font-size:12px">
+          <option value="NSE">NSE</option>
+          <option value="BSE">BSE</option>
+          <option value="NFO">NFO</option>
+        </select>
+        <button onclick="loadBdeHoldings()" style="padding:3px 10px;font-size:11px">Load</button>
+      </div>
+      <table class="ob-table">
+        <thead><tr>
+          <th>Stock</th><th>Exch</th><th>Product</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Avg Price ₹</th>
+          <th style="text-align:right">LTP ₹</th>
+          <th style="text-align:right">P&amp;L ₹</th>
+          <th>Portfolio Type</th>
+        </tr></thead>
+        <tbody id="bde-holdings-body">
+          <tr><td colspan="8" style="color:var(--muted);text-align:center;padding:20px">Select exchange and click Load</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Demat Holdings pane ── -->
+    <div id="bde-pane-demat" class="ob-wrap" style="display:none">
+      <table class="ob-table">
+        <thead><tr>
+          <th>Stock Code</th><th>ISIN</th>
+          <th style="text-align:right">Total Qty</th>
+          <th style="text-align:right">Available Qty</th>
+          <th>Settlement Type</th><th>Beneficiary ID</th>
+        </tr></thead>
+        <tbody id="bde-demat-body">
+          <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:20px">Click ⟳ Refresh to load demat holdings</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Trades pane ── -->
+    <div id="bde-pane-trades" class="ob-wrap" style="display:none">
+      <table class="ob-table">
+        <thead><tr>
+          <th>Time</th><th>Stock</th><th>Exch</th>
+          <th>Action</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Rate ₹</th>
+          <th style="text-align:right">Value ₹</th>
+          <th>Order ID</th><th>Trade ID</th>
+        </tr></thead>
+        <tbody id="bde-trades-body">
+          <tr><td colspan="9" style="color:var(--muted);text-align:center;padding:20px">Click ⟳ Refresh to load today's trades</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Margins pane ── -->
+    <div id="bde-pane-margins" class="ob-wrap" style="display:none">
+      <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+        <label style="font-size:11px;color:var(--muted)">Exchange:</label>
+        <select id="bde-margin-exch" style="background:var(--bg3);border:1px solid var(--border);
+          color:var(--text);padding:3px 8px;border-radius:5px;font-size:12px">
+          <option value="NSE">NSE</option>
+          <option value="NFO">NFO</option>
+          <option value="BSE">BSE</option>
+          <option value="MCX">MCX</option>
+        </select>
+        <button onclick="loadBdeMargins()" style="padding:3px 10px;font-size:11px">Load</button>
+      </div>
+      <div id="bde-margins-body">
+        <p style="color:var(--muted);text-align:center;padding:20px">Select exchange and click Load</p>
+      </div>
+    </div>
+
+    <!-- ── Quote Lookup pane ── -->
+    <div id="bde-pane-quote" style="display:none">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:12px;
+        background:var(--bg3);padding:10px;border-radius:8px">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;color:var(--muted)">Stock Code</label>
+          <input id="bde-q-stock" placeholder="e.g. RELIANCE" style="width:120px;background:var(--bg);
+            border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;color:var(--muted)">Exchange</label>
+          <select id="bde-q-exch" style="background:var(--bg);border:1px solid var(--border);
+            color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px">
+            <option value="NSE">NSE</option>
+            <option value="BSE">BSE</option>
+            <option value="NFO">NFO</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;color:var(--muted)">Product Type</label>
+          <select id="bde-q-product" style="background:var(--bg);border:1px solid var(--border);
+            color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px">
+            <option value="cash">cash</option>
+            <option value="futures">futures</option>
+            <option value="options">options</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;color:var(--muted)">Expiry (options/futures)</label>
+          <input id="bde-q-expiry" type="date" style="background:var(--bg);border:1px solid var(--border);
+            color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;color:var(--muted)">Right (CE/PE)</label>
+          <select id="bde-q-right" style="background:var(--bg);border:1px solid var(--border);
+            color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px">
+            <option value="">—</option>
+            <option value="Call">Call</option>
+            <option value="Put">Put</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;color:var(--muted)">Strike Price</label>
+          <input id="bde-q-strike" placeholder="e.g. 24000" style="width:100px;background:var(--bg);
+            border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:5px;font-size:12px">
+        </div>
+        <button onclick="loadBdeQuote()" style="padding:5px 14px">Get Quote</button>
+      </div>
+      <div id="bde-quote-body">
+        <p style="color:var(--muted);text-align:center;padding:20px">Enter a symbol and click Get Quote</p>
+      </div>
     </div>
   </div>
 
@@ -1388,10 +1825,10 @@ async function startDownload() {
 
   // Poll for progress every 2 seconds
   if (_dlPoll) clearInterval(_dlPoll);
-  _dlPoll = setInterval(pollDownload, 2000);
+  _dlPoll = setInterval(() => pollDownload('download'), 2000);
 }
 
-async function pollDownload() {
+async function pollDownload(source) {
   let d;
   try {
     const r = await fetch('/api/data/status');
@@ -1442,9 +1879,15 @@ async function pollDownload() {
   if (d.status !== 'running') {
     clearInterval(_dlPoll);
     _dlPoll = null;
-    const btn = document.getElementById('btn-download');
-    btn.disabled = false;
-    btn.textContent = 'Download Historical Data';
+    if (source === 'watchlist') {
+      const wb = document.getElementById('btn-watchlist-backfill');
+      wb.disabled = false;
+      wb.textContent = '📥 Fetch Date-Range History';
+    } else {
+      const btn = document.getElementById('btn-download');
+      btn.disabled = false;
+      btn.textContent = 'Download Historical Data';
+    }
     bar.style.width = d.status === 'complete' ? '100%' : bar.style.width;
     etaText.textContent = '';
     if (d.status === 'complete') {
@@ -1453,6 +1896,190 @@ async function pollDownload() {
     } else if (d.status === 'error') {
       statusLine.style.color = 'var(--red)';
       statusLine.textContent = 'Error: ' + (d.error || 'unknown');
+      bar.style.background = 'var(--red)';
+    }
+  }
+}
+
+function _isoToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function _isoYearAgo() {
+  const d = new Date(); d.setFullYear(d.getFullYear() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Populate date defaults on load
+document.addEventListener('DOMContentLoaded', () => {
+  const f = document.getElementById('wl-from-date');
+  const t = document.getElementById('wl-to-date');
+  if (f && !f.value) f.value = _isoYearAgo();
+  if (t && !t.value) t.value = _isoToday();
+});
+
+async function startWatchlistBackfill() {
+  const fromDate = document.getElementById('wl-from-date').value || _isoYearAgo();
+  const toDate   = document.getElementById('wl-to-date').value   || _isoToday();
+
+  const btn = document.getElementById('btn-watchlist-backfill');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+
+  const prog = document.getElementById('dl-progress');
+  prog.style.display = 'block';
+  document.getElementById('dl-log').innerHTML = '';
+  const statusLine = document.getElementById('dl-status-line');
+  statusLine.style.color = 'var(--blue)';
+  statusLine.textContent = `Starting backfill ${fromDate} → ${toDate} …`;
+
+  try {
+    const r = await fetch('/api/data/watchlist/backfill', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ from_date: fromDate, to_date: toDate }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      statusLine.style.color = 'var(--red)';
+      statusLine.textContent = 'Error: ' + (err.detail || 'Failed to start');
+      btn.disabled = false;
+      btn.textContent = '📥 Fetch Date-Range History';
+      return;
+    }
+    const d = await r.json();
+    statusLine.textContent = `Running: ${d.symbols?.length || 0} symbols, ${fromDate} → ${toDate}`;
+  } catch(e) {
+    statusLine.style.color = 'var(--red)';
+    statusLine.textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = '📥 Fetch Date-Range History';
+    return;
+  }
+
+  if (_dlPoll) clearInterval(_dlPoll);
+  _dlPoll = setInterval(() => pollDownload('watchlist'), 2000);
+}
+
+// ── Historical Data Backfill card (main dashboard) ───────────────────────────
+let _wlPoll = null;
+
+function toggleBackfillPane() {
+  const pane = document.getElementById('backfill-pane');
+  const chev = document.getElementById('backfill-chevron');
+  const hidden = pane.style.display === 'none';
+  pane.style.display = hidden ? '' : 'none';
+  chev.textContent   = hidden ? '▼' : '▶';
+}
+
+function _isoShift(months) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function setBackfillYear(yearIndex) {
+  // yearIndex 0 = last 12m, 1 = 12-24m ago, 2 = 24-36m ago
+  const fromMonths = (yearIndex + 1) * 12;
+  const toMonths   = yearIndex * 12;
+  document.getElementById('wl-from-date2').value = _isoShift(fromMonths);
+  document.getElementById('wl-to-date2').value   = _isoShift(toMonths);
+}
+
+// Init date defaults
+document.addEventListener('DOMContentLoaded', () => {
+  setBackfillYear(0);   // default: Year 1
+});
+
+async function startWatchlistBackfill2() {
+  const fromDate = document.getElementById('wl-from-date2').value;
+  const toDate   = document.getElementById('wl-to-date2').value;
+  if (!fromDate || !toDate) { showAlert('Select both From and To dates.'); return; }
+  if (fromDate >= toDate)   { showAlert('From date must be before To date.'); return; }
+  const symInput = (document.getElementById('wl-sym-input')?.value || '').trim().toUpperCase();
+  const symList  = symInput ? [symInput] : null;   // null = use backend priority list
+
+  const btn = document.getElementById('btn-wl-backfill2');
+  btn.disabled = true; btn.textContent = 'Starting…';
+
+  const prog   = document.getElementById('wl-progress');
+  const status = document.getElementById('wl-status-line');
+  prog.style.display = 'block';
+  document.getElementById('wl-log').innerHTML = '';
+  document.getElementById('wl-bar').style.width = '0%';
+  document.getElementById('wl-bar').style.background = 'var(--blue)';
+  status.style.color = 'var(--blue)';
+  const symLabel = symList ? symList[0] : 'priority list';
+  status.textContent = `Starting ${symLabel}  ${fromDate} to ${toDate} ...`;
+
+  try {
+    const r = await fetch('/api/data/watchlist/backfill', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ from_date: fromDate, to_date: toDate, ...(symList && { symbols: symList }) }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      status.style.color = 'var(--red)';
+      status.textContent = 'Error: ' + (err.detail || 'Failed to start');
+      btn.disabled = false; btn.textContent = '📥 Fetch Historical Data';
+      return;
+    }
+    const d = await r.json();
+    status.textContent = `Running — ${d.symbols?.length || 0} symbols, ${fromDate} → ${toDate}`;
+  } catch(e) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Error: ' + e.message;
+    btn.disabled = false; btn.textContent = '📥 Fetch Historical Data';
+    return;
+  }
+
+  if (_wlPoll) clearInterval(_wlPoll);
+  _wlPoll = setInterval(pollWlBackfill, 2000);
+}
+
+async function pollWlBackfill() {
+  let d;
+  try { d = await fetch('/api/data/status').then(r => r.json()); }
+  catch(e) { return; }
+
+  const status   = document.getElementById('wl-status-line');
+  const logEl    = document.getElementById('wl-log');
+  const bar      = document.getElementById('wl-bar');
+  const itemsTxt = document.getElementById('wl-items-text');
+  const etaTxt   = document.getElementById('wl-eta-text');
+
+  const done  = d.done_items  || 0;
+  const total = d.total_items || 0;
+  if (total > 0) {
+    bar.style.width = Math.min(100, done / total * 100).toFixed(1) + '%';
+    itemsTxt.textContent = `${done} / ${total} symbol-intervals`;
+  }
+  if (d.eta_sec > 0) {
+    const m = Math.floor(d.eta_sec / 60), s = d.eta_sec % 60;
+    etaTxt.textContent = m > 0 ? `~${m}m ${s}s remaining` : `~${s}s remaining`;
+  }
+  if (d.current) { status.textContent = d.current; status.style.color = 'var(--blue)'; }
+  if (d.log?.length) {
+    logEl.innerHTML = d.log.map(l =>
+      `<div style="font-size:11px;color:var(--muted);padding:1px 0;white-space:pre-wrap">${escHtml(l)}</div>`
+    ).join('');
+    logEl.parentElement.scrollTop = logEl.parentElement.scrollHeight;
+  }
+
+  if (d.status !== 'running') {
+    clearInterval(_wlPoll); _wlPoll = null;
+    const btn = document.getElementById('btn-wl-backfill2');
+    btn.disabled = false; btn.textContent = '📥 Fetch Historical Data';
+    bar.style.width = d.status === 'complete' ? '100%' : bar.style.width;
+    etaTxt.textContent = '';
+    if (d.status === 'complete') {
+      status.style.color = 'var(--green)';
+      status.textContent = `Complete — ${done} symbol-intervals fetched.`;
+      bar.style.background = 'var(--green)';
+    } else if (d.status === 'error') {
+      status.style.color = 'var(--red)';
+      status.textContent = 'Error: ' + (d.error || 'unknown');
       bar.style.background = 'var(--red)';
     }
   }
@@ -1513,7 +2140,61 @@ function handleMsg(msg) {
   if (msg.type === 'status') {
     if (msg.connected) onConnected(); else onDisconnected();
   }
+  if (msg.type === 'live_trading_changed') updateLiveTradingBanner(msg.enabled);
 }
+
+// ── Live trading safety banner (read-only status indicator) ─────────────────
+function updateLiveTradingBanner(enabled) {
+  setLiveTradingEnv(enabled);   // sync tick-pane order gate with env state
+  const bar  = document.getElementById('live-trading-bar');
+  const icon = document.getElementById('lt-icon');
+  const text = document.getElementById('lt-text');
+  if (!bar) return;
+  if (enabled) {
+    bar.style.background  = '#0a1f0a';
+    bar.style.borderColor = 'var(--green)';
+    bar.style.color       = 'var(--green)';
+    icon.textContent = '✅';
+    text.textContent = 'LIVE TRADING ENABLED — Real orders will be sent to Breeze. Trade carefully.';
+  } else {
+    bar.style.background  = '#1a0a0a';
+    bar.style.borderColor = 'var(--red)';
+    bar.style.color       = 'var(--red)';
+    icon.textContent = '🔒';
+    text.textContent = 'LIVE TRADING DISABLED — All real orders are blocked. To enable, set LIVE_TRADING=true in .env and restart.';
+  }
+}
+
+function updateApiBudget(d) {
+  const calls = d.api_calls_today ?? 0;
+  const limit = d.api_day_limit  ?? 4500;
+  const min   = d.api_calls_min  ?? 0;
+  const mlim  = d.api_min_limit  ?? 75;
+  const pct   = limit > 0 ? Math.min(100, calls / limit * 100) : 0;
+  const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--green)';
+
+  const strip = document.getElementById('api-budget-strip');
+  if (strip) strip.style.display = 'flex';
+  const fill = document.getElementById('api-budget-fill');
+  if (fill) { fill.style.width = pct.toFixed(1) + '%'; fill.style.background = color; }
+  const cnt = document.getElementById('api-budget-count');
+  if (cnt) cnt.textContent = `${calls.toLocaleString()} / ${limit.toLocaleString()} calls`;
+  const pp = document.getElementById('api-budget-pct');
+  if (pp) { pp.textContent = pct.toFixed(1) + '%'; pp.style.color = color; }
+  const mn = document.getElementById('api-budget-min');
+  if (mn) mn.textContent = `${min}/${mlim} this min`;
+}
+
+function pollApiBudget() {
+  fetch('/api/status').then(r => r.json()).then(d => {
+    updateLiveTradingBanner(d.live_trading_enabled ?? false);
+    updateApiBudget(d);
+  }).catch(() => {});
+}
+
+// Sync banner + budget on load, then refresh every 30 s
+pollApiBudget();
+setInterval(pollApiBudget, 30000);
 
 // ── LTP tiles ──────────────────────────────────────────────────────────────
 function updateLTPs(data) {
@@ -1971,6 +2652,247 @@ async function cancelBreezeOrder(orderId, exchange) {
   } catch(e) { showAlert('Error: ' + e.message); }
 }
 
+// ── Breeze Data Explorer (GET-only, no live trading required) ────────────────
+const _bdeTabs = ['funds','holdings','demat','trades','margins','quote'];
+let _bdeActiveTab = 'funds';
+
+function switchBdeTab(tab) {
+  _bdeActiveTab = tab;
+  _bdeTabs.forEach(t => {
+    document.getElementById(`bde-tab-${t}`).classList.toggle('active', t === tab);
+    const pane = document.getElementById(`bde-pane-${t}`);
+    if (pane) pane.style.display = t === tab ? '' : 'none';
+  });
+  document.getElementById('bde-warning').style.display = 'none';
+}
+
+function bdeRefreshActive() {
+  const fns = {
+    funds: loadBdeFunds, holdings: loadBdeHoldings, demat: loadBdeDemat,
+    trades: loadBdeTrades, margins: loadBdeMargins, quote: loadBdeQuote,
+  };
+  if (fns[_bdeActiveTab]) fns[_bdeActiveTab]();
+}
+
+function _bdeWarn(msg) {
+  const el = document.getElementById('bde-warning');
+  if (msg) { el.textContent = '⚠ ' + msg; el.style.display = 'block'; }
+  else { el.style.display = 'none'; }
+}
+
+function _bdeTs() {
+  document.getElementById('bde-last-refresh').textContent =
+    'Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
+}
+
+function _bdeKV(obj) {
+  if (!obj || typeof obj !== 'object') return '<p style="color:var(--muted);text-align:center;padding:16px">No data</p>';
+  const rows = Object.entries(obj)
+    .filter(([, v]) => v !== null && v !== '' && v !== undefined)
+    .map(([k, v]) => {
+      const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const val   = (typeof v === 'number' && k.toLowerCase().includes('amount') || k.toLowerCase().includes('limit') || k.toLowerCase().includes('balance') || k.toLowerCase().includes('value'))
+        ? `₹${Number(v).toLocaleString('en-IN', {maximumFractionDigits:2})}`
+        : v;
+      return `<tr>
+        <td style="color:var(--muted);width:45%;padding:6px 10px">${label}</td>
+        <td style="font-weight:600;font-family:monospace;padding:6px 10px">${val}</td>
+      </tr>`;
+    }).join('');
+  return `<table class="ob-table" style="max-width:600px">${rows}</table>`;
+}
+
+async function loadBdeFunds() {
+  const el = document.getElementById('bde-funds-body');
+  el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:16px">Loading…</p>';
+  _bdeWarn(null);
+  try {
+    const r = await fetch('/api/breeze/funds');
+    const d = await r.json();
+    if (d.warning) _bdeWarn(d.warning);
+    el.innerHTML = d.funds ? _bdeKV(d.funds)
+      : '<p style="color:var(--muted);text-align:center;padding:16px">No funds data returned.</p>';
+    _bdeTs();
+  } catch(e) { _bdeWarn(e.message); }
+}
+
+async function loadBdeHoldings() {
+  const exch  = document.getElementById('bde-hld-exch')?.value || 'NSE';
+  const tbody = document.getElementById('bde-holdings-body');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:16px">Loading…</td></tr>';
+  _bdeWarn(null);
+  try {
+    const r = await fetch(`/api/breeze/holdings?exchange_code=${exch}`);
+    const d = await r.json();
+    if (d.warning) _bdeWarn(d.warning);
+    const rows = d.holdings || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:16px">No holdings found.</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map(h => {
+        const pnl = parseFloat(h.pnl || h.unrealised_pnl || 0);
+        const pnlCls = pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)';
+        return `<tr>
+          <td style="font-weight:600;font-family:monospace">${h.stock_code || '—'}</td>
+          <td style="color:var(--muted);font-size:11px">${h.exchange_code || exch}</td>
+          <td style="color:var(--muted);font-size:11px">${h.product_type || '—'}</td>
+          <td style="text-align:right;font-family:monospace">${h.quantity || '—'}</td>
+          <td style="text-align:right;font-family:monospace">₹${parseFloat(h.average_price||0).toLocaleString('en-IN',{maximumFractionDigits:2})}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:600">₹${parseFloat(h.ltp||0).toLocaleString('en-IN',{maximumFractionDigits:2})}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:600;${pnlCls}">${pnl>=0?'+':''}₹${pnl.toLocaleString('en-IN',{maximumFractionDigits:2})}</td>
+          <td style="color:var(--muted);font-size:11px">${h.portfolio_type || '—'}</td>
+        </tr>`;
+      }).join('');
+    }
+    _bdeTs();
+  } catch(e) { _bdeWarn(e.message); }
+}
+
+async function loadBdeDemat() {
+  const tbody = document.getElementById('bde-demat-body');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">Loading…</td></tr>';
+  _bdeWarn(null);
+  try {
+    const r = await fetch('/api/breeze/demat-holdings');
+    const d = await r.json();
+    if (d.warning) _bdeWarn(d.warning);
+    const rows = d.holdings || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">No demat holdings found.</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map(h => `<tr>
+        <td style="font-weight:600;font-family:monospace">${h.stock_code || '—'}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${h.isin_code || h.isin || '—'}</td>
+        <td style="text-align:right;font-family:monospace">${h.quantity || h.total_quantity || '—'}</td>
+        <td style="text-align:right;font-family:monospace">${h.available_quantity || '—'}</td>
+        <td style="color:var(--muted);font-size:11px">${h.settlement_type || h.settlement || '—'}</td>
+        <td style="color:var(--muted);font-size:11px">${h.beneficiary_id || h.beneficiary || '—'}</td>
+      </tr>`).join('');
+    }
+    _bdeTs();
+  } catch(e) { _bdeWarn(e.message); }
+}
+
+async function loadBdeTrades() {
+  const tbody = document.getElementById('bde-trades-body');
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:16px">Loading…</td></tr>';
+  _bdeWarn(null);
+  try {
+    const r = await fetch('/api/breeze/trades');
+    const d = await r.json();
+    if (d.warning) _bdeWarn(d.warning);
+    const rows = d.trades || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:16px">No trades today.</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map(t => {
+        const action = (t.action || '').toUpperCase();
+        const aCls   = action === 'BUY' ? 'color:var(--green)' : 'color:var(--red)';
+        const qty    = parseFloat(t.quantity || 0);
+        const rate   = parseFloat(t.rate || t.price || 0);
+        const time   = (t.trade_date || t.order_datetime || '').slice(11,19) || '—';
+        let instr    = t.stock_code || '—';
+        if (t.right && t.strike_price) instr += ` ${t.right} ${t.strike_price}`;
+        return `<tr>
+          <td style="font-family:monospace;font-size:11px;color:var(--muted)">${time}</td>
+          <td style="font-weight:600;font-family:monospace">${instr}</td>
+          <td style="font-size:11px;color:var(--muted)">${t._exchange || t.exchange_code || '—'}</td>
+          <td style="font-weight:700;${aCls}">${action}</td>
+          <td style="text-align:right;font-family:monospace">${qty.toLocaleString('en-IN')}</td>
+          <td style="text-align:right;font-family:monospace">₹${rate.toLocaleString('en-IN',{maximumFractionDigits:2})}</td>
+          <td style="text-align:right;font-family:monospace">₹${(qty*rate).toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
+          <td style="font-size:10px;color:var(--muted);font-family:monospace">${t.order_id || '—'}</td>
+          <td style="font-size:10px;color:var(--muted);font-family:monospace">${t.trade_id || '—'}</td>
+        </tr>`;
+      }).join('');
+    }
+    _bdeTs();
+  } catch(e) { _bdeWarn(e.message); }
+}
+
+async function loadBdeMargins() {
+  const exch = document.getElementById('bde-margin-exch')?.value || 'NSE';
+  const el   = document.getElementById('bde-margins-body');
+  el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:16px">Loading…</p>';
+  _bdeWarn(null);
+  try {
+    const r = await fetch(`/api/breeze/margins?exchange_code=${exch}`);
+    const d = await r.json();
+    if (d.warning) _bdeWarn(d.warning);
+    el.innerHTML = d.margins ? _bdeKV(d.margins)
+      : '<p style="color:var(--muted);text-align:center;padding:16px">No margin data returned.</p>';
+    _bdeTs();
+  } catch(e) { _bdeWarn(e.message); }
+}
+
+async function loadBdeQuote() {
+  const stock   = (document.getElementById('bde-q-stock')?.value || '').trim().toUpperCase();
+  const exch    = document.getElementById('bde-q-exch')?.value    || 'NSE';
+  const product = document.getElementById('bde-q-product')?.value || 'cash';
+  const expiry  = document.getElementById('bde-q-expiry')?.value  || '';
+  const right   = document.getElementById('bde-q-right')?.value   || '';
+  const strike  = document.getElementById('bde-q-strike')?.value  || '';
+  const el      = document.getElementById('bde-quote-body');
+
+  if (!stock) { _bdeWarn('Please enter a stock code.'); return; }
+  el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:16px">Loading…</p>';
+  _bdeWarn(null);
+  try {
+    const params = new URLSearchParams({
+      stock_code: stock, exchange_code: exch, product_type: product,
+      expiry_date: expiry, right, strike_price: strike,
+    });
+    const r = await fetch('/api/breeze/quote?' + params);
+    const d = await r.json();
+    if (d.warning) _bdeWarn(d.warning);
+    if (!d.quote) {
+      el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:16px">No quote data returned.</p>';
+      return;
+    }
+    const q = d.quote;
+    const ltp = parseFloat(q.ltp || 0);
+    const chg = parseFloat(q.change || q.net_change || 0);
+    const chgCls = chg >= 0 ? 'var(--green)' : 'var(--red)';
+    el.innerHTML = `
+      <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:10px;display:flex;gap:24px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;color:var(--muted)">LTP</div>
+          <div style="font-size:22px;font-weight:700;font-family:monospace">₹${ltp.toLocaleString('en-IN',{maximumFractionDigits:2})}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted)">Change</div>
+          <div style="font-size:16px;font-weight:700;color:${chgCls};font-family:monospace">
+            ${chg>=0?'+':''}${chg.toFixed(2)} (${parseFloat(q.change_percentage||q.percent_change||0).toFixed(2)}%)
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted)">Bid / Ask</div>
+          <div style="font-family:monospace">₹${parseFloat(q.best_bid_price||q.bid||0).toFixed(2)} / ₹${parseFloat(q.best_offer_price||q.ask||0).toFixed(2)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted)">Volume</div>
+          <div style="font-family:monospace">${(+q.total_quantity_traded||+q.volume||0).toLocaleString('en-IN')}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted)">OI</div>
+          <div style="font-family:monospace">${(+q.open_interest||0).toLocaleString('en-IN')}</div>
+        </div>
+      </div>
+      <table class="ob-table" style="max-width:700px">
+        <tr><td style="color:var(--muted);width:35%">Open / High / Low / Close</td>
+            <td style="font-family:monospace">₹${(+q.open||0).toFixed(2)} / ₹${(+q.high||0).toFixed(2)} / ₹${(+q.low||0).toFixed(2)} / ₹${(+q.previous_close||0).toFixed(2)}</td></tr>
+        <tr><td style="color:var(--muted)">Upper / Lower Circuit</td>
+            <td style="font-family:monospace">₹${q.upper_circuit||q.circuit_limit_upper||'—'} / ₹${q.lower_circuit||q.circuit_limit_lower||'—'}</td></tr>
+        <tr><td style="color:var(--muted)">52W High / Low</td>
+            <td style="font-family:monospace">₹${q['52week_high']||q.week52_high||'—'} / ₹${q['52week_low']||q.week52_low||'—'}</td></tr>
+        ${q.expiry_date ? `<tr><td style="color:var(--muted)">Expiry</td><td style="font-family:monospace">${q.expiry_date}</td></tr>` : ''}
+        ${q.strike_price ? `<tr><td style="color:var(--muted)">Strike / Right</td><td style="font-family:monospace">₹${q.strike_price} ${q.right||''}</td></tr>` : ''}
+        ${q.open_interest_change != null ? `<tr><td style="color:var(--muted)">OI Change</td><td style="font-family:monospace">${(+q.open_interest_change).toLocaleString('en-IN')}</td></tr>` : ''}
+      </table>`;
+    _bdeTs();
+  } catch(e) { _bdeWarn(e.message); }
+}
+
 // ── Research Calls ────────────────────────────────────────────────────────
 let researchFormOpen = false;
 
@@ -2315,8 +3237,10 @@ function renderSymDrop(symbols, dropId, input, context) {
     const prod = s.product_type || 'Equity';
     const prodBadge = prod === 'Equity' ? '' :
       `<span style="font-size:10px;color:var(--yellow);margin-left:4px">${prod}</span>`;
-    return `<div class="sym-item" data-code="${s.stock_code}" data-exch="${s.exchange}" data-prod="${prod}"
-          onmousedown="pickSym('${s.stock_code}','${s.exchange}','${prod}','${dropId}','${context}')">
+    const safeName = (s.company_name || '').replace(/'/g, '&#39;');
+    return `<div class="sym-item" data-code="${s.stock_code}" data-exch="${s.exchange}"
+          data-prod="${prod}" data-name="${safeName}"
+          onmousedown="pickSym('${s.stock_code}','${s.exchange}','${prod}','${dropId}','${context}','${safeName}')">
       <span class="sym-code">${s.stock_code}${prodBadge}</span>
       <span class="sym-name">${s.company_name}</span>
       <span class="sym-exch">${s.exchange}</span>
@@ -2325,10 +3249,19 @@ function renderSymDrop(symbols, dropId, input, context) {
   drop.classList.add('open');
 }
 
-function pickSym(code, exchange, prodType, dropId, context) {
-  if (context === 'tick') {
+function pickSym(code, exchange, prodType, dropId, context, name) {
+  if (context === 'fo') {
+    document.getElementById('fo-symbol-input').value = code;
+    // Auto-set product type based on selection
+    const pt = document.getElementById('fo-product-type');
+    if (pt) {
+      pt.value = (prodType === 'Futures') ? 'futures'
+               : (prodType === 'Options') ? 'options'
+               : 'futures';
+      toggleFOFields();
+    }
+  } else if (context === 'tick') {
     document.getElementById('tick-symbol-input').value = code;
-    // Store product type so watchTicks() can pass it to /api/subscribe
     _tickProdType = (prodType === 'Futures') ? 'futures'
                   : (prodType === 'Options') ? 'options'
                   : 'cash';
@@ -2336,7 +3269,7 @@ function pickSym(code, exchange, prodType, dropId, context) {
     if (exSel) {
       const targetExch = (prodType === 'Futures' || prodType === 'Options') ? 'NFO' : exchange;
       const matchOpt = [...exSel.options].find(o => o.value === targetExch);
-      exSel.value = matchOpt ? targetExch : '';
+      exSel.value = matchOpt ? targetExch : 'NSE';
     }
   } else {
     document.getElementById('o-stock').value = code;
@@ -2356,7 +3289,24 @@ function pickSym(code, exchange, prodType, dropId, context) {
       prodSel.dispatchEvent(new Event('change'));
     }
   }
+  if (context === 'backfill') {
+    document.getElementById('wl-sym-input').value = code;
+    const chip = document.getElementById('wl-sym-selected');
+    if (chip) chip.style.display = 'flex';
+    const codeEl = document.getElementById('wl-sym-code');
+    const nameEl = document.getElementById('wl-sym-name');
+    const exchEl = document.getElementById('wl-sym-exch');
+    if (codeEl) codeEl.textContent = code;
+    if (nameEl) nameEl.textContent = name || '';
+    if (exchEl) exchEl.textContent = exchange;
+  }
   closeSymDrop(dropId);
+}
+
+function clearBackfillSym() {
+  document.getElementById('wl-sym-input').value = '';
+  const chip = document.getElementById('wl-sym-selected');
+  if (chip) chip.style.display = 'none';
 }
 
 function closeSymDrop(dropId) {
@@ -2377,7 +3327,7 @@ function symKeyNav(e, dropId, context) {
   } else if (e.key === 'Enter' && _symActiveIdx >= 0) {
     e.preventDefault();
     const item = items[_symActiveIdx];
-    if (item) pickSym(item.dataset.code, item.dataset.exch, item.dataset.prod || 'Equity', dropId, context);
+    if (item) pickSym(item.dataset.code, item.dataset.exch, item.dataset.prod || 'Equity', dropId, context, item.dataset.name || '');
     return;
   } else if (e.key === 'Escape') {
     closeSymDrop(dropId); return;
@@ -2394,10 +3344,303 @@ document.addEventListener('click', e => {
 });
 
 // ── Live Tick Pane ────────────────────────────────────────────────────────
-let _tickPaneOpen   = true;
-let _tickWatching   = '';
-let _tickProdType   = 'cash';   // product type for the currently watched symbol
-const MAX_TICK_ROWS = 100;
+let _tickPaneOpen       = true;
+let _tickWatching       = '';
+let _tickProdType       = 'cash';
+let _tickTab            = 'equity';   // 'equity' | 'fo'
+let _foWatching         = '';
+let _liveTradingEnabled = false;      // from env/backend — set by /api/status + WS
+let _uiLiveOrders       = false;      // UI toggle — user must explicitly enable
+let _signalLog          = [];         // [{ts, signal, symbol, reason}]
+let _lastSignalState    = 'NEUTRAL';  // suppress duplicate log entries
+let _tickMonitoring     = false;      // whether the monitoring loop is active
+const MAX_TICK_ROWS     = 100;
+const MAX_SIGNAL_LOG    = 30;
+
+// ── Market hours check (IST) ──────────────────────────────────────────────
+function _istTime() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+  return { h: ist.getUTCHours(), m: ist.getUTCMinutes(), day: ist.getUTCDay() };
+}
+
+function _isMarketOpen() {
+  const { h, m, day } = _istTime();
+  if (day === 0 || day === 6) return false;          // weekend
+  const mins = h * 60 + m;
+  return mins >= 9 * 60 + 15 && mins < 15 * 60 + 30;
+}
+
+function _istTimeStr() {
+  const { h, m } = _istTime();
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} IST`;
+}
+
+// ── Monitoring toggle ──────────────────────────────────────────────────────
+function toggleTickMonitoring() {
+  if (_tickMonitoring) {
+    stopTickMonitoring();
+  } else {
+    startTickMonitoring();
+  }
+}
+
+function startTickMonitoring() {
+  if (!_isMarketOpen()) {
+    const { day } = _istTime();
+    const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const dayName  = dayNames[day];
+    const isWknd   = day === 0 || day === 6;
+    const msg = isWknd
+      ? `⏰ Today is ${dayName} — market is closed. Monitoring runs Mon–Fri, 9:15 AM – 3:30 PM IST.`
+      : `⏰ Market is closed right now (${_istTimeStr()}). Monitoring is only active during market hours: Mon–Fri, 9:15 AM – 3:30 PM IST.`;
+    _showMonitorMsg(msg);
+    return;
+  }
+  _hideMonitorMsg();
+  _tickMonitoring = true;
+  _updateMonitorBtn();
+}
+
+function stopTickMonitoring() {
+  _tickMonitoring = false;
+  _updateMonitorBtn();
+}
+
+function _updateMonitorBtn() {
+  const btn = document.getElementById('btn-tick-monitor');
+  if (!btn) return;
+  if (_tickMonitoring) {
+    btn.textContent = '■ Stop Monitoring';
+    btn.style.borderColor = 'var(--red)';
+    btn.style.color       = 'var(--red)';
+  } else {
+    btn.textContent = '▶ Start Monitoring';
+    btn.style.borderColor = 'var(--green)';
+    btn.style.color       = 'var(--green)';
+  }
+}
+
+function _showMonitorMsg(msg) {
+  const el = document.getElementById('tick-monitor-msg');
+  if (el) { el.textContent = msg; el.style.display = ''; }
+}
+
+function _hideMonitorMsg() {
+  const el = document.getElementById('tick-monitor-msg');
+  if (el) el.style.display = 'none';
+}
+
+// ── Tab switcher ──────────────────────────────────────────────────────────
+function switchTickTab(tab) {
+  _tickTab = tab;
+  ['equity','fo'].forEach(t => {
+    document.getElementById(`tick-tab-${t}`).classList.toggle('active', t === tab);
+    document.getElementById(`tick-panel-${t}`).style.display = t === tab ? '' : 'none';
+  });
+  // Clear chart/table and reset signal log when switching tabs
+  document.getElementById('tick-tbody').innerHTML = '';
+  _allCandles = []; _curCandle = null; _vwapNum = 0; _vwapDen = 0;
+  if (_lwChart) { try { _lwChart.remove(); } catch(e){} _lwChart=null; _mainSeries=null; }
+  _lastSignalState = 'NEUTRAL';
+  _signalLog = [];
+  if (_tickMonitoring) { _tickMonitoring = false; _updateMonitorBtn(); }
+  _hideMonitorMsg();
+  const body = document.getElementById('tick-signal-log-body');
+  if (body) body.innerHTML =
+    '<span id="tick-signal-log-placeholder" style="color:var(--muted)">🎯 Monitoring… No signals yet. Signals appear here when a strategy triggers.</span>';
+}
+
+// ── F&O controls ──────────────────────────────────────────────────────────
+function toggleFOFields() {
+  const prod = document.getElementById('fo-product-type')?.value;
+  const isOpt = prod === 'options';
+  ['fo-right','fo-strike'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isOpt ? '' : 'none';
+  });
+}
+
+async function watchFO() {
+  const symbol  = (document.getElementById('fo-symbol-input')?.value || '').trim().toUpperCase();
+  if (!symbol) { showAlert('Enter a symbol to watch.'); return; }
+  if (!_appConnected) { showAlert('Connect to Breeze first.'); return; }
+
+  const prod    = document.getElementById('fo-product-type')?.value || 'futures';
+  const expiry  = document.getElementById('fo-expiry')?.value || '';
+  const right   = document.getElementById('fo-right')?.value || '';
+  const strike  = document.getElementById('fo-strike')?.value || '';
+
+  closeSymDrop('fo-sym-drop');
+  _foWatching  = symbol;
+  _tickWatching = symbol;
+  _tickProdType = prod;
+
+  document.getElementById('tick-tbody').innerHTML = '';
+  document.getElementById('fo-count').textContent = 'Subscribing…';
+
+  try {
+    const watchR = await fetch('/api/ticks/watch', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({symbol}),
+    });
+    const d = await watchR.json();
+    document.getElementById('btn-fo-stop').style.display = '';
+    document.getElementById('quota-bar').style.display   = '';
+    document.getElementById('tick-watching-badge').textContent = `Watching: ${symbol} F&O (${prod})`;
+
+    const subBody = {
+      stock_code: symbol, exchange_code: 'NFO', product_type: prod,
+    };
+    if (expiry)  subBody.expiry_date  = expiry;
+    if (right)   subBody.right        = right;
+    if (strike)  subBody.strike_price = strike;
+
+    const subResp = await fetch('/api/subscribe', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(subBody),
+    });
+    if (!subResp.ok) {
+      const err = await subResp.json().catch(() => ({}));
+      showAlert(`F&O subscribe failed: ${err.detail || subResp.status}`);
+      document.getElementById('fo-count').textContent = 'Failed';
+      return;
+    }
+    if (d.history?.length) {
+      d.history.forEach(tick => appendTickRow(tick, false));
+      document.getElementById('fo-count').textContent = `${d.history.length} cached ticks`;
+    } else {
+      document.getElementById('fo-count').textContent = 'Waiting for ticks…';
+    }
+  } catch(e) { showAlert('F&O watch error: ' + e.message); }
+}
+
+async function stopFOWatch() {
+  _foWatching = ''; _tickWatching = ''; _tickProdType = 'cash';
+  await fetch('/api/ticks/watch', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: ''}),
+  });
+  document.getElementById('tick-watching-badge').textContent = '';
+  document.getElementById('btn-fo-stop').style.display = 'none';
+  document.getElementById('fo-symbol-input').value = '';
+  document.getElementById('tick-tbody').innerHTML = '';
+  document.getElementById('fo-count').textContent = '';
+}
+
+// ── Live order dual gate ──────────────────────────────────────────────────
+function setLiveTradingEnv(enabled) {
+  _liveTradingEnabled = enabled;
+  updateLiveOrderButtons();
+}
+
+function toggleTickLiveOrders() {
+  _uiLiveOrders = !_uiLiveOrders;
+  const track = document.getElementById('tick-live-toggle-track');
+  if (track) {
+    track.classList.toggle('on',  _uiLiveOrders);
+    track.classList.toggle('off', !_uiLiveOrders);
+  }
+  updateLiveOrderButtons();
+}
+
+function updateLiveOrderButtons() {
+  const both   = _liveTradingEnabled && _uiLiveOrders;
+  const buyBtn  = document.getElementById('btn-tick-buy');
+  const sellBtn = document.getElementById('btn-tick-sell');
+  const status  = document.getElementById('tick-order-status');
+  const hint    = document.getElementById('tick-order-hint');
+
+  [buyBtn, sellBtn].forEach(btn => {
+    if (!btn) return;
+    btn.disabled = !both;
+    btn.style.opacity = both ? '1' : '.4';
+    btn.style.cursor  = both ? 'pointer' : 'not-allowed';
+  });
+
+  if (status) {
+    if (!_liveTradingEnabled) {
+      status.textContent = '🔒 Env: DISABLED';
+      status.style.background = '#1a0a0a'; status.style.color = 'var(--red)';
+    } else if (!_uiLiveOrders) {
+      status.textContent = '⚠ UI toggle: OFF';
+      status.style.background = '#1c1500'; status.style.color = 'var(--yellow)';
+    } else {
+      status.textContent = '✅ LIVE ORDERS ON';
+      status.style.background = '#0a1f0a'; status.style.color = 'var(--green)';
+    }
+  }
+  if (hint) {
+    hint.textContent = both
+      ? 'Live orders enabled — orders will be sent to Breeze in real-time.'
+      : 'Requires: LIVE_TRADING=true in .env  AND  the toggle above both ON.';
+    hint.style.color = both ? 'var(--green)' : 'var(--muted)';
+  }
+}
+
+// ── Signal log ────────────────────────────────────────────────────────────
+function _logSignal(signal, symbol, reason) {
+  if (!_tickMonitoring) return;              // only log when monitoring is active
+  if (signal === _lastSignalState) return;   // only log on state change
+  _lastSignalState = signal;
+  if (signal === 'NEUTRAL') return;
+
+  const entry = {
+    ts: new Date().toLocaleTimeString('en-IN', {hour12:false}),
+    signal, symbol, reason,
+  };
+  _signalLog.unshift(entry);
+  if (_signalLog.length > MAX_SIGNAL_LOG) _signalLog.pop();
+
+  const log = document.getElementById('tick-signal-log');
+  const body = document.getElementById('tick-signal-log-body');
+  if (!log || !body) return;
+
+  // Remove placeholder on first real signal
+  const placeholder = document.getElementById('tick-signal-log-placeholder');
+  if (placeholder) placeholder.remove();
+
+  const cls = signal === 'BUY' ? 'slog-buy' : 'slog-sell';
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="slog-ts">${entry.ts}</span>` +
+    `<span class="${cls}" style="font-weight:700">${signal}</span>` +
+    ` ${symbol || '—'} — ${reason}`;
+  body.insertBefore(row, body.firstChild);
+}
+
+// ── Place live order from tick pane ──────────────────────────────────────
+async function placeTickOrder(side) {
+  if (!_liveTradingEnabled || !_uiLiveOrders) {
+    showAlert('Live orders are gated. Enable LIVE_TRADING=true in .env and the UI toggle.');
+    return;
+  }
+  const symbol  = _tickWatching;
+  if (!symbol) { showAlert('No symbol being watched.'); return; }
+  const qty     = parseInt(document.getElementById('tick-order-qty')?.value || '1', 10);
+  const product = document.getElementById('tick-order-product')?.value || 'cash';
+  const ltp     = _indValues.close || 0;
+  const exch    = _tickTab === 'fo' ? 'NFO' : (document.getElementById('tick-exchange-filter')?.value || 'NSE');
+
+  if (!confirm(`Place ${side} order: ${qty} × ${symbol} @ market? (Live order — cannot undo immediately)`)) return;
+
+  try {
+    const r = await fetch('/api/order/manual', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        symbol, exchange_code: exch, action: side,
+        quantity: qty, order_type: 'market', price: 0,
+        product_type: product,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      showAlert(`Order failed: ${d.detail || JSON.stringify(d)}`);
+    } else {
+      showAlert(`✓ ${side} order placed: ${symbol} × ${qty} (ID: ${d.order_id || '—'})`);
+    }
+  } catch(e) { showAlert('Order error: ' + e.message); }
+}
 
 function toggleTickPane() {
   _tickPaneOpen = !_tickPaneOpen;
@@ -2858,10 +4101,17 @@ function _calcAndShowSignals() {
 
   const signalEl = document.getElementById('sig-badge');
   const badge = bullish > bearish ? ['BUY','sig-buy'] : bearish > bullish ? ['SELL','sig-sell'] : ['NEUTRAL','sig-neutral'];
-  signalEl.textContent = badge[0];
-  signalEl.className   = 'sig-badge ' + badge[1];
+  const [sigLabel, sigCls] = badge;
+  signalEl.textContent = sigLabel;
+  signalEl.className   = 'sig-badge ' + sigCls;
   document.getElementById('ind-signals').innerHTML =
     chips.length ? chips.join(' &thinsp;·&thinsp; ') : 'Enable indicators to see signals.';
+
+  // Log signal transitions (BUY/SELL only, suppress duplicates)
+  if (sigLabel !== 'NEUTRAL' && chips.length) {
+    const reasonText = chips.map(c => c.replace(/<[^>]+>/g,'')).join(', ');
+    _logSignal(sigLabel, _tickWatching, reasonText);
+  }
 
   // Auto-run saved formula if any
   _evalFormula();

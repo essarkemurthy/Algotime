@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone, time as _time
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -43,23 +43,55 @@ Path("logs").mkdir(exist_ok=True)
 Path("static").mkdir(exist_ok=True)
 
 
+_LIMITER_STATE_FILE = Path("logs/api_call_count.json")
+
+
 class BreezeRateLimiter:
     """Thread-safe sliding-window rate limiter for Breeze REST calls.
-    Enforces 75 calls/minute and 4,500 calls/day (safe margins below ICICI limits)."""
+    Enforces 75 calls/minute and 4,500 calls/day (safe margins below ICICI limits).
+    Persists the daily count to disk so server restarts don't reset it to 0."""
 
     def __init__(self, per_min: int = 75, per_day: int = 4500) -> None:
         self._per_min   = per_min
         self._per_day   = per_day
         self._minute_q  = deque()
         self._day_count = 0
+        self._day_date  = date.today()
         self._day_reset = time.monotonic()
         self._lock      = threading.Lock()
+        self._dirty     = 0        # calls since last flush
+        self._load()
+
+    # ── persistence ──────────────────────────────────────────────────────────
+
+    def _load(self) -> None:
+        """Resume today's count from disk if the saved date matches today."""
+        try:
+            data = json.loads(_LIMITER_STATE_FILE.read_text())
+            if data.get("date") == str(date.today()):
+                self._day_count = int(data.get("count", 0))
+        except Exception:
+            pass   # first run or corrupt file — start from 0
+
+    def _flush(self) -> None:
+        """Write current count to disk (called inside lock, runs in-thread)."""
+        try:
+            _LIMITER_STATE_FILE.write_text(
+                json.dumps({"date": str(self._day_date), "count": self._day_count})
+            )
+        except Exception:
+            pass
+
+    # ── public interface ──────────────────────────────────────────────────────
 
     def acquire(self, label: str = "api") -> None:
         with self._lock:
             now = time.monotonic()
-            if now - self._day_reset > 86400:
+            # Roll over at midnight
+            today = date.today()
+            if today != self._day_date:
                 self._day_count = 0
+                self._day_date  = today
                 self._day_reset = now
             while self._minute_q and now - self._minute_q[0] > 60:
                 self._minute_q.popleft()
@@ -73,6 +105,11 @@ class BreezeRateLimiter:
                 )
             self._minute_q.append(time.monotonic())
             self._day_count += 1
+            self._dirty += 1
+            # Flush every 10 calls to balance durability vs I/O
+            if self._dirty >= 10:
+                self._flush()
+                self._dirty = 0
             log.debug("REST [%s] day=%d/%d min=%d/%d",
                       label, self._day_count, self._per_day,
                       len(self._minute_q), self._per_min)
@@ -84,10 +121,10 @@ class BreezeRateLimiter:
             while self._minute_q and now - self._minute_q[0] > 60:
                 self._minute_q.popleft()
             return {
-                "calls_today":      self._day_count,
-                "calls_this_min":   len(self._minute_q),
-                "day_limit":        self._per_day,
-                "min_limit":        self._per_min,
+                "calls_today":    self._day_count,
+                "calls_this_min": len(self._minute_q),
+                "day_limit":      self._per_day,
+                "min_limit":      self._per_min,
             }
 
 logging.basicConfig(
@@ -109,11 +146,12 @@ logging.getLogger("APILogger").setLevel(logging.WARNING)
 _session:    Optional[BreezeSession]      = None
 _algo_engine: Optional[OptionsAlgoEngine] = None
 _algo_task:  Optional[asyncio.Task]       = None
-_broadcast_task:    Optional[asyncio.Task] = None
-_chain_snap_task:   Optional[asyncio.Task] = None   # periodic chain/delta snapshots
-_strategy_task:     Optional[asyncio.Task] = None   # strategy signal polling
-_candle_flush_task: Optional[asyncio.Task] = None   # flush live OHLCV to DB every 60 s
-_trigger_tasks: Dict[str, asyncio.Task]   = {}
+_broadcast_task:      Optional[asyncio.Task] = None
+_chain_snap_task:     Optional[asyncio.Task] = None   # periodic chain/delta snapshots
+_strategy_task:       Optional[asyncio.Task] = None   # strategy signal polling
+_candle_flush_task:   Optional[asyncio.Task] = None   # flush live OHLCV to DB every 60 s
+_paper_monitor_task:  Optional[asyncio.Task] = None   # auto-exit + periodic P&L push
+_trigger_tasks: Dict[str, asyncio.Task]     = {}
 _main_loop:  Optional[asyncio.AbstractEventLoop] = None
 
 # ── Strategy runner state ─────────────────────────────────────────────────────
@@ -135,6 +173,21 @@ _SYMBOL_CACHE  = Path("data/symbols.json")
 
 _limiter = BreezeRateLimiter(per_min=75, per_day=4500)
 
+# ── Live trading safety gate ──────────────────────────────────────────────────
+# Default OFF.  Set env var LIVE_TRADING=true (or toggle via /api/settings/live_trading)
+# to allow real orders to be sent to Breeze.  Paper trades are always allowed.
+_LIVE_TRADING_ENABLED: bool = os.getenv("LIVE_TRADING", "false").strip().lower() == "true"
+
+
+def _require_live_trading() -> None:
+    """Raise 403 if live trading is disabled — call at every real-order entry point."""
+    if not _LIVE_TRADING_ENABLED:
+        raise HTTPException(
+            403,
+            "🔒 Live trading is DISABLED. Enable it via POST /api/settings/live_trading "
+            "or set LIVE_TRADING=true in your environment and restart.",
+        )
+
 # ── Symbol alias map — normalise user-supplied display names to Breeze codes ──
 _SYMBOL_ALIASES: Dict[str, str] = {
     # NIFTY variants
@@ -149,9 +202,12 @@ _SYMBOL_ALIASES: Dict[str, str] = {
     "FIN NIFTY":   "FINNIFTY",
     # MIDCPNIFTY
     "MIDCAP NIFTY":"MIDCPNIFTY",
-    # Equities — common display names
-    "HDFC BANK":   "HDFCBANK",
-    "HDFC":        "HDFCBANK",
+    # Equities — common display names → Breeze scrip codes
+    "RELIANCE":    "RELIND",
+    "RELIANCE INDUSTRIES": "RELIND",
+    "HDFC BANK":   "HDFBAN",
+    "HDFCBANK":    "HDFBAN",
+    "HDFC":        "HDFBAN",
     "INFOSYS":     "INFY",
     "STATE BANK":  "SBIN",
     "SBI":         "SBIN",
@@ -194,6 +250,7 @@ _TICK_FLUSH_SEC = 5
 # ── Candle write queue — decouples tick handler from DB I/O ──────────────────
 # Tick handler puts rows here; _candle_writer_thread drains and batch-inserts.
 import queue as _queue
+import statistics as _statistics
 _candle_write_queue: "_queue.Queue[dict]" = _queue.Queue(maxsize=50_000)
 
 # ── Historical download state ─────────────────────────────────────────────────
@@ -237,16 +294,38 @@ class _DownloadLogHandler(logging.Handler):
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
-    {"stock": "NIFTY",     "exchange": "NSE", "label": "NIFTY 50"},
-    {"stock": "BANKNIFTY", "exchange": "NSE", "label": "BANK NIFTY"},
-    {"stock": "RELIANCE",  "exchange": "NSE", "label": "RELIANCE"},
-    {"stock": "HDFCBANK",  "exchange": "NSE", "label": "HDFC BANK"},
+    {"stock": "NIFTY",     "exchange": "NSX", "label": "NIFTY 50"},     # NSX = NSE index feed
+    {"stock": "BANKNIFTY", "exchange": "NSX", "label": "BANK NIFTY"},   # NSX = NSE index feed
+    {"stock": "RELIND",    "exchange": "NSE", "label": "RELIANCE"},      # Breeze scrip code
+    {"stock": "HDFBAN",    "exchange": "NSE", "label": "HDFC BANK"},     # Breeze scrip code
     {"stock": "TCS",       "exchange": "NSE", "label": "TCS"},
 ]
 
+# Exchange to use for Breeze WebSocket subscription per symbol.
+# Indices need "NSX" (NSE index feed); regular equities use "NSE".
+_SYMBOL_EXCHANGE: Dict[str, str] = {w["stock"]: w["exchange"] for w in WATCHLIST}
+
+# ── Market hours (IST) ────────────────────────────────────────────────────────
+_IST           = timezone(timedelta(hours=5, minutes=30))
+_MARKET_OPEN   = _time(9, 15)
+_MARKET_CLOSE  = _time(15, 31)
+_SCAN_INTERVAL = int(os.getenv("INTRADAY_SCAN_SEC", "60"))
+
+_intraday_scan_cache: dict = {}    # last server-side scan payload (broadcast to UI)
+_intraday_monitor_task = None      # asyncio.Task handle
+
+
+def _now_ist() -> datetime:
+    return datetime.now(tz=_IST)
+
+
+def _is_market_hours() -> bool:
+    t = _now_ist().time()
+    return _MARKET_OPEN <= t <= _MARKET_CLOSE
+
 # ── Live candle accumulator (tick → OHLCV, written to 'candles' table) ────────
 # Intervals to build in-process (minutes → DB label)
-_CANDLE_IVLS: Dict[int, str] = {1: "1m", 5: "5m", 30: "30m"}
+_CANDLE_IVLS: Dict[int, str] = {1: "1m", 5: "5m", 15: "15m", 30: "30m", 1440: "1d"}
 
 # {symbol: {interval_min: {ts, open, high, low, close, volume}}}
 _live_candles: Dict[str, Dict[int, dict]] = {}
@@ -399,13 +478,17 @@ def _on_tick(tick: dict) -> None:
 
     cache_key = _token_to_symbol[token]
     ltp_f     = float(ltp)
-    _ltp_cache[cache_key] = ltp_f
+    _ltp_cache[cache_key] = ltp_f   # always update — feeds live UI even outside hours
 
-    now = datetime.now()
+    now     = datetime.now()
+    now_ist = now.astimezone(_IST).time() if now.tzinfo else _now_ist().time()
+    in_market_hours = _MARKET_OPEN <= now_ist <= _MARKET_CLOSE
 
-    # ── Buffer tick for DB persistence ────────────────────────────────────────
+    # ── Buffer tick for DB persistence — only during market hours ─────────────
+    # Outside 9:15–15:31 IST the broker may send heartbeat / pre-market ticks;
+    # writing those to DB and building candles from them is wasteful.
     tick_vol = int(tick.get("ltq", 0) or 0)
-    if _db_store is not None:
+    if _db_store is not None and in_market_hours:
         with _tick_buffer_lock:
             _tick_buffer.append({
                 "ts":     now,
@@ -580,8 +663,12 @@ async def _broadcast_loop() -> None:
                     f"approaching limit ₹{_MAX_DAILY_LOSS:,.0f}"
                 ),
             })
-        # Strategy trade alerts (target hit / stop-loss)
+        # Strategy auto-exits (capital-preservation: SL 1×credit / target 40%)
         if _tick % 5 == 0:
+            strat_exits = _paper.check_strategy_auto_exits(_ltp_cache)
+            for ev in strat_exits:
+                await broadcast(ev)
+            # Alert-only checks for thresholds not yet triggering auto-exit
             alerts = _paper.check_alerts(_ltp_cache)
             for a in alerts:
                 await broadcast({"type": "strategy_alert", "alert": a})
@@ -746,6 +833,91 @@ def _auto_paper_trade(sig) -> None:
         log.debug("Auto paper trade failed: %s", exc)
 
 
+async def _intraday_monitor_loop() -> None:
+    """
+    Server-side intraday signal monitor.
+
+    At 9:14:50 IST: auto-subscribes all WATCHLIST symbols via Breeze WebSocket
+    (if session is connected). Broadcasts a 'market_open' event to all UIs.
+
+    During 9:15–15:31 IST: evaluates all 5 intraday strategies for WATCHLIST
+    every INTRADAY_SCAN_SEC seconds. Stores result in _intraday_scan_cache and
+    broadcasts 'intraday_signals' to all connected UIs so the monitor table
+    updates without user interaction.
+
+    After 15:31: sleeps until 9:14:50 the next calendar day.
+    """
+    global _intraday_scan_cache
+    log.info("Intraday monitor loop started (scan every %d s).", _SCAN_INTERVAL)
+    _announced_open = False
+
+    while True:
+        now = _now_ist()
+        t   = now.time()
+
+        # ── Before 9:14:50: sleep until then ──────────────────────────────
+        pre_open = _time(9, 14, 50)
+        if t < pre_open:
+            wake_at  = datetime.combine(now.date(), pre_open, tzinfo=_IST)
+            sleep_s  = (wake_at - now).total_seconds()
+            log.info("Market opens in %.0f s — intraday monitor sleeping.", sleep_s)
+            _announced_open = False
+            await asyncio.sleep(max(sleep_s, 1))
+            continue
+
+        # ── After 15:31: sleep until next day 9:14:50 ─────────────────────
+        if t > _MARKET_CLOSE:
+            tomorrow = now.date() + timedelta(days=1)
+            wake_at  = datetime.combine(tomorrow, pre_open, tzinfo=_IST)
+            sleep_s  = (wake_at - now).total_seconds()
+            log.info("Market closed — intraday monitor sleeping %.0f s.", sleep_s)
+            _announced_open = False
+            await asyncio.sleep(max(sleep_s, 1))
+            continue
+
+        # ── Market-open announcement (once per day, at 9:15 exactly) ───────
+        if not _announced_open and t >= _MARKET_OPEN:
+            # Auto-subscribe watchlist feeds if Breeze session is live
+            if _session and _session._api:
+                try:
+                    for w in WATCHLIST:
+                        _ws_subscribe(w["stock"], w["exchange"],
+                                      cache_key=w["stock"])
+                    log.info("Market open: auto-subscribed %d watchlist feeds.",
+                             len(WATCHLIST))
+                except Exception as exc:
+                    log.warning("Market-open WS subscribe error: %s", exc)
+            await broadcast({
+                "type":     "market_open",
+                "time":     now.strftime("%H:%M:%S"),
+                "watchlist": [w["stock"] for w in WATCHLIST],
+            })
+            _announced_open = True
+
+        # ── Scan all strategies (equity + options) for all watchlist symbols ─
+        if t >= _MARKET_OPEN:
+            try:
+                sym_list = [w["stock"] for w in WATCHLIST]
+                payload  = await _run_scan(sym_list)
+                payload["source"] = "server"
+                _intraday_scan_cache.update(payload)
+                await broadcast({"type": "intraday_signals", **payload})
+
+                actionable = payload.get("actionable", 0)
+                if actionable:
+                    log.info("Intraday scan [%s]: %d signal(s) — %s",
+                             payload["scanned_at"], actionable,
+                             ", ".join(
+                                 f"{r['symbol']}:{r['signal']}:{r['strategy']}"
+                                 for r in payload["results"]
+                                 if r.get("signal") in ("LONG", "SHORT"))[:6])
+
+            except Exception as exc:
+                log.warning("Intraday monitor scan error: %s", exc)
+
+        await asyncio.sleep(_SCAN_INTERVAL)
+
+
 def _candle_writer_thread() -> None:
     """Dedicated DB writer: drains _candle_write_queue every second.
     Also snapshots all partial candles once per second so charts stay live.
@@ -788,17 +960,74 @@ async def _candle_flush_loop() -> None:
         await asyncio.sleep(3600)
 
 
+# ── Paper trading monitor loop ────────────────────────────────────────────────
+
+_PAPER_MONITOR_SEC = 3    # check SL/T1/T2 every 3 seconds
+_PAPER_PNL_SEC     = 5    # push P&L update every 5 seconds
+
+
+async def _paper_monitor_loop() -> None:
+    """
+    Runs every 3 s (always, not just market hours):
+      1. Builds an effective LTP cache: live WebSocket prices first, then DB
+         close fallback for any open-position symbol that has no live price.
+         This ensures SL/T1/T2 auto-exits fire even when Breeze is offline.
+      2. Calls paper_engine.check_auto_exits() — fires SL/T1/T2 auto-exits
+         and daily-cap enforcement; broadcasts alerts for each event.
+      3. Every 5 s pushes a 'paper_pnl' WebSocket event so the Live P&L pane
+         updates even when no order has been placed.
+    """
+    import time as _time_mod
+    _last_pnl_push = 0.0
+    while True:
+        await asyncio.sleep(_PAPER_MONITOR_SEC)
+        try:
+            # Build effective LTP: live cache + DB fallback for open positions
+            eff_ltp: Dict[str, float] = dict(_ltp_cache)
+            open_syms = [p.symbol for p in _paper._positions if p.is_open
+                         if p.symbol not in eff_ltp]
+            if open_syms and _db_store:
+                for sym in open_syms:
+                    fb = await asyncio.to_thread(_db_ltp_fallback, sym)
+                    if fb:
+                        eff_ltp[sym] = fb
+                        log.debug("Paper monitor: DB LTP fallback %s=%.2f", sym, fb)
+
+            # Auto-exit check using effective prices
+            events = _paper.check_auto_exits(eff_ltp)
+            if events:
+                summary = _paper.summary(eff_ltp)
+                for ev in events:
+                    await broadcast({
+                        "type":    "paper_auto_exit",
+                        "event":   ev,
+                        "summary": summary,
+                    })
+                await broadcast({"type": "paper_update", "data": summary})
+
+            # Periodic P&L push (every _PAPER_PNL_SEC)
+            now = _time_mod.monotonic()
+            if now - _last_pnl_push >= _PAPER_PNL_SEC:
+                _last_pnl_push = now
+                summary = _paper.summary(eff_ltp)
+                await broadcast({"type": "paper_pnl", "data": summary})
+        except Exception as exc:
+            log.debug("Paper monitor loop error: %s", exc)
+
+
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _broadcast_task, _chain_snap_task, _strategy_task, _main_loop
-    global _candle_flush_task
-    _main_loop         = asyncio.get_event_loop()
-    _broadcast_task    = asyncio.create_task(_broadcast_loop())
-    _chain_snap_task   = asyncio.create_task(_chain_snapshot_loop())
-    _strategy_task     = asyncio.create_task(_strategy_signal_loop())
-    _candle_flush_task = asyncio.create_task(_candle_flush_loop())
+    global _candle_flush_task, _intraday_monitor_task, _paper_monitor_task
+    _main_loop              = asyncio.get_event_loop()
+    _broadcast_task         = asyncio.create_task(_broadcast_loop())
+    _chain_snap_task        = asyncio.create_task(_chain_snapshot_loop())
+    _strategy_task          = asyncio.create_task(_strategy_signal_loop())
+    _candle_flush_task      = asyncio.create_task(_candle_flush_loop())
+    _intraday_monitor_task  = asyncio.create_task(_intraday_monitor_loop())
+    _paper_monitor_task     = asyncio.create_task(_paper_monitor_loop())
     _load_symbol_index()
     _init_db_store()   # connect to PostgreSQL if DB_URL is set
     # Start background writer threads (no-op if DB unavailable)
@@ -814,6 +1043,10 @@ async def lifespan(app: FastAPI):
         _strategy_task.cancel()
     if _candle_flush_task:
         _candle_flush_task.cancel()
+    if _intraday_monitor_task:
+        _intraday_monitor_task.cancel()
+    if _paper_monitor_task:
+        _paper_monitor_task.cancel()
     for t in _trigger_tasks.values():
         t.cancel()
     # Flush remaining buffered ticks before exit
@@ -941,10 +1174,43 @@ async def disconnect_api():
 
 @app.get("/api/status")
 async def get_status():
+    rl = _limiter.stats
     return {
-        "connected":    bool(_session and _session._api),
-        "algo_running": bool(_algo_task and not _algo_task.done()),
+        "connected":            bool(_session and _session._api),
+        "algo_running":         bool(_algo_task and not _algo_task.done()),
+        "live_trading_enabled": _LIVE_TRADING_ENABLED,
+        "api_calls_today":      rl["calls_today"],
+        "api_calls_min":        rl["calls_this_min"],
+        "api_day_limit":        rl["day_limit"],
+        "api_min_limit":        rl["min_limit"],
     }
+
+
+class LiveTradingToggleReq(BaseModel):
+    enabled: bool
+    confirm: bool = False   # must be True to enable live trading
+
+
+@app.post("/api/settings/live_trading")
+async def set_live_trading(req: LiveTradingToggleReq):
+    """
+    Enable or disable live order placement.
+
+    Enabling requires confirm=true as an extra safeguard.
+    Disabling takes effect immediately — all real-order endpoints return 403.
+    """
+    global _LIVE_TRADING_ENABLED
+    if req.enabled and not req.confirm:
+        raise HTTPException(
+            400,
+            "confirm=true is required to enable live trading. "
+            "This will allow REAL orders to be sent to your broker.",
+        )
+    _LIVE_TRADING_ENABLED = req.enabled
+    state = "ENABLED" if req.enabled else "DISABLED"
+    log.warning("Live trading %s by user request.", state)
+    await broadcast({"type": "live_trading_changed", "enabled": req.enabled})
+    return {"live_trading_enabled": _LIVE_TRADING_ENABLED, "status": state}
 
 
 @app.get("/api/db/status")
@@ -987,6 +1253,12 @@ class DbConfigReq(BaseModel):
     dbname:   str = "trading_data"
     user:     str = "postgres"
     password: str = ""
+
+
+class WatchlistBackfillReq(BaseModel):
+    from_date: Optional[str]       = None   # "YYYY-MM-DD" — defaults to 1 year ago
+    to_date:   Optional[str]       = None   # "YYYY-MM-DD" — defaults to today
+    symbols:   Optional[List[str]] = None   # if provided, overrides _BACKFILL_PRIORITY
 
 
 @app.post("/api/db/configure")
@@ -1083,6 +1355,7 @@ async def disable_db():
 @app.post("/api/order/manual")
 async def place_manual_order(req: ManualOrderReq):
     _require_session()
+    _require_live_trading()
 
     expiry_obj = date.fromisoformat(req.expiry) if req.expiry else date.today()
     right_str  = ("call" if req.right == "CE" else "put") if req.right else ""
@@ -1178,6 +1451,7 @@ async def place_manual_order(req: ManualOrderReq):
 @app.delete("/api/order/{order_id}")
 async def cancel_order(order_id: str, exchange_code: str = "NFO"):
     _require_session()
+    _require_live_trading()
     await asyncio.to_thread(_limiter.acquire, "cancel_order")
     resp = await asyncio.to_thread(
         _session.api.cancel_order,
@@ -1283,6 +1557,7 @@ async def _trigger_watcher(key: str, req: TriggerOrderReq) -> None:
 @app.post("/api/order/trigger")
 async def register_trigger(req: TriggerOrderReq):
     _require_session()
+    _require_live_trading()
     key  = f"{req.watch_stock}_{req.trigger_direction}_{req.trigger_price}"
     task = asyncio.create_task(_trigger_watcher(key, req))
     _trigger_tasks[key] = task
@@ -1309,6 +1584,7 @@ async def list_triggers():
 async def start_algo(req: AlgoStartReq):
     global _algo_engine, _algo_task
     _require_session()
+    _require_live_trading()
     if _algo_task and not _algo_task.done():
         return {"status": "already_running"}
 
@@ -1471,6 +1747,142 @@ async def cancel_breeze_order(order_id: str, exchange_code: str = "NFO"):
     raise HTTPException(400, f"Cancel failed: {resp}")
 
 
+# ── Breeze read-only data explorer ───────────────────────────────────────────
+# IMPORTANT: All endpoints below are GET-only, purely read/informational.
+# NO _require_live_trading() guard — available even when LIVE_TRADING=false.
+# Requires only an active Breeze session (_require_session).
+
+@app.get("/api/breeze/funds")
+async def get_breeze_funds():
+    """Fetch account funds/balance — read-only."""
+    _require_session()
+    try:
+        await asyncio.to_thread(_limiter.acquire, "get_funds")
+        resp = await asyncio.to_thread(_session.api.get_funds)
+    except Exception as exc:
+        return {"funds": None, "warning": str(exc)}
+    if resp and resp.get("Status") == 200:
+        data = resp.get("Success") or []
+        return {"funds": data[0] if isinstance(data, list) and data else data, "warning": None}
+    return {"funds": None, "warning": _breeze_error_msg(resp)}
+
+
+@app.get("/api/breeze/holdings")
+async def get_breeze_holdings(exchange_code: str = "NSE"):
+    """Fetch portfolio holdings with P&L — read-only."""
+    _require_session()
+    today   = datetime.now()
+    from_dt = today.strftime("%Y-%m-%dT00:00:00.000Z")
+    to_dt   = today.strftime("%Y-%m-%dT23:59:59.000Z")
+    try:
+        await asyncio.to_thread(_limiter.acquire, "get_portfolio_holdings")
+        resp = await asyncio.to_thread(
+            _session.api.get_portfolio_holdings,
+            exchange_code=exchange_code,
+            from_date=from_dt,
+            to_date=to_dt,
+            stock_code="",
+            portfolio_type="",
+        )
+    except Exception as exc:
+        return {"holdings": [], "warning": str(exc)}
+    if resp and resp.get("Status") == 200:
+        return {"holdings": resp.get("Success") or [], "warning": None}
+    return {"holdings": [], "warning": _breeze_error_msg(resp)}
+
+
+@app.get("/api/breeze/demat-holdings")
+async def get_breeze_demat_holdings():
+    """Fetch demat holdings (stock codes, ISINs, qty) — read-only."""
+    _require_session()
+    try:
+        await asyncio.to_thread(_limiter.acquire, "get_demat_holdings")
+        resp = await asyncio.to_thread(_session.api.get_demat_holdings)
+    except Exception as exc:
+        return {"holdings": [], "warning": str(exc)}
+    if resp and resp.get("Status") == 200:
+        return {"holdings": resp.get("Success") or [], "warning": None}
+    return {"holdings": [], "warning": _breeze_error_msg(resp)}
+
+
+@app.get("/api/breeze/trades")
+async def get_breeze_trades():
+    """Fetch today's executed trades (NSE + NFO) — read-only."""
+    _require_session()
+    today   = datetime.now()
+    from_dt = today.strftime("%Y-%m-%dT00:00:00.000Z")
+    to_dt   = today.strftime("%Y-%m-%dT23:59:59.000Z")
+    all_trades: list = []
+    warning: Optional[str] = None
+    for exch in ("NSE", "NFO"):
+        try:
+            await asyncio.to_thread(_limiter.acquire, f"get_trade_list_{exch}")
+            resp = await asyncio.to_thread(
+                _session.api.get_trade_list,
+                from_date=from_dt,
+                to_date=to_dt,
+                exchange_code=exch,
+            )
+            if resp and resp.get("Status") == 200 and resp.get("Success"):
+                for t in resp["Success"]:
+                    t["_exchange"] = exch
+                    all_trades.append(t)
+            elif resp and resp.get("Status") not in (200, None):
+                warning = _breeze_error_msg(resp)
+                break
+        except Exception as exc:
+            warning = str(exc)
+    return {"trades": all_trades, "count": len(all_trades), "warning": warning}
+
+
+@app.get("/api/breeze/margins")
+async def get_breeze_margins(exchange_code: str = "NSE"):
+    """Fetch margin details for an exchange — read-only."""
+    _require_session()
+    try:
+        await asyncio.to_thread(_limiter.acquire, "get_margin")
+        resp = await asyncio.to_thread(
+            _session.api.get_margin,
+            exchange_code=exchange_code,
+        )
+    except Exception as exc:
+        return {"margins": None, "warning": str(exc)}
+    if resp and resp.get("Status") == 200:
+        data = resp.get("Success") or []
+        return {"margins": data[0] if isinstance(data, list) and data else data, "warning": None}
+    return {"margins": None, "warning": _breeze_error_msg(resp)}
+
+
+@app.get("/api/breeze/quote")
+async def get_breeze_quote(
+    stock_code:    str,
+    exchange_code: str = "NSE",
+    product_type:  str = "cash",
+    expiry_date:   str = "",
+    right:         str = "",
+    strike_price:  str = "",
+):
+    """Fetch live quote for any symbol/instrument — read-only."""
+    _require_session()
+    try:
+        await asyncio.to_thread(_limiter.acquire, "get_quotes")
+        resp = await asyncio.to_thread(
+            _session.api.get_quotes,
+            stock_code=stock_code.upper(),
+            exchange_code=exchange_code.upper(),
+            expiry_date=expiry_date,
+            product_type=product_type,
+            right=right,
+            strike_price=strike_price,
+        )
+    except Exception as exc:
+        return {"quote": None, "warning": str(exc)}
+    if resp and resp.get("Status") == 200:
+        data = resp.get("Success") or []
+        return {"quote": data[0] if data else None, "warning": None}
+    return {"quote": None, "warning": _breeze_error_msg(resp)}
+
+
 # ── Research calls ───────────────────────────────────────────────────────────
 
 class ResearchCallReq(BaseModel):
@@ -1546,6 +1958,7 @@ async def dismiss_research(call_id: str):
 async def act_on_research(call_id: str):
     """Convert an approved research call into a live trigger order."""
     _require_session()
+    _require_live_trading()
     call = next((c for c in _research_calls if c["id"] == call_id and c["status"] == "pending"), None)
     if not call:
         raise HTTPException(404, "Pending research call not found")
@@ -1641,9 +2054,9 @@ async def approve_suggestion(trade_id: str):
     if trade is None:
         raise HTTPException(404, f"Trade id '{trade_id}' not found in current brief.")
 
-    # Auto-register as a trigger order (requires an active session)
+    # Auto-register as a trigger order (requires live trading enabled + active session)
     trigger_key = None
-    if _session and _session._api:
+    if _session and _session._api and _LIVE_TRADING_ENABLED:
         order_req = ManualOrderReq(
             stock_code    = trade.watch_stock,
             exchange_code = trade.exchange,
@@ -1786,11 +2199,18 @@ async def paper_place_order(req: PaperOrderReq):
 
 @app.post("/api/paper/exit/{pos_id}")
 async def paper_exit_position(pos_id: str):
+    # Build effective LTP with DB fallback so exits work without live Breeze
+    eff_ltp: Dict[str, float] = dict(_ltp_cache)
+    pos = next((p for p in _paper._positions if p.id == pos_id and p.is_open), None)
+    if pos and pos.symbol not in eff_ltp:
+        fb = await asyncio.to_thread(_db_ltp_fallback, pos.symbol)
+        if fb:
+            eff_ltp[pos.symbol] = fb
     try:
-        order = _paper.exit_position(pos_id, _ltp_cache)
+        order = _paper.exit_position(pos_id, eff_ltp)
     except ValueError as exc:
         raise HTTPException(404, str(exc))
-    summary = _paper.summary(_ltp_cache)
+    summary = _paper.summary(eff_ltp)
     await broadcast({"type": "paper_update", "data": summary})
     return {"order": _paper._order_dict(order), "summary": summary}
 
@@ -1798,6 +2218,52 @@ async def paper_exit_position(pos_id: str):
 @app.get("/api/paper/summary")
 async def paper_summary():
     return _paper.summary(_ltp_cache)
+
+
+class PaperSetLevelsReq(BaseModel):
+    pos_id:    str
+    sl_price:  float
+    t1_price:  float
+    t2_price:  float
+    t1_qty:    int
+    t2_qty:    int
+    trail_pct: float = 0.004
+    tag:       str   = ""
+
+
+@app.post("/api/paper/set-levels")
+async def paper_set_levels(req: PaperSetLevelsReq):
+    ok = _paper.set_levels(
+        pos_id=req.pos_id, sl_price=req.sl_price,
+        t1_price=req.t1_price, t2_price=req.t2_price,
+        t1_qty=req.t1_qty, t2_qty=req.t2_qty,
+        trail_pct=req.trail_pct, tag=req.tag,
+    )
+    if not ok:
+        raise HTTPException(404, f"Open position '{req.pos_id}' not found.")
+    summary = _paper.summary(_ltp_cache)
+    await broadcast({"type": "paper_update", "data": summary})
+    return {"status": "ok", "pos_id": req.pos_id}
+
+
+@app.post("/api/paper/partial-exit/{pos_id}")
+async def paper_partial_exit(pos_id: str, body: dict):
+    qty = int(body.get("qty", 0))
+    if qty <= 0:
+        raise HTTPException(400, "qty must be > 0")
+    eff_ltp: Dict[str, float] = dict(_ltp_cache)
+    pos = next((p for p in _paper._positions if p.id == pos_id and p.is_open), None)
+    if pos and pos.symbol not in eff_ltp:
+        fb = await asyncio.to_thread(_db_ltp_fallback, pos.symbol)
+        if fb:
+            eff_ltp[pos.symbol] = fb
+    try:
+        order = _paper.partial_exit(pos_id, qty, eff_ltp, tag="manual-partial")
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    summary = _paper.summary(eff_ltp)
+    await broadcast({"type": "paper_update", "data": summary})
+    return {"order": _paper._order_dict(order), "summary": summary}
 
 
 @app.post("/api/paper/reset")
@@ -2152,6 +2618,145 @@ async def get_data_status():
     }
 
 
+
+# Priority symbol queue for the range backfill — tried in order; any that return
+# 0 candles from Breeze are marked "not available" and the next is tried.
+_BACKFILL_PRIORITY: List[str] = [
+    "NIFTY", "BANKNIFTY", "RELIND", "HDFBAN", "SBIN",
+    "TCS", "INFY", "TATAMOTORS", "SUNPHARMA",
+]
+
+
+@app.post("/api/data/watchlist/backfill")
+async def watchlist_full_backfill(req: Optional[WatchlistBackfillReq] = None):
+    """
+    Fetch OHLCV for a specific date window (defaults to last 1 year).
+
+    Tries symbols from _BACKFILL_PRIORITY in order. Symbols that return 0 candles
+    are marked "not available" — the run continues to the next symbol.
+    Existing rows in DB are silently skipped (ON CONFLICT DO NOTHING).
+
+    Intervals: 1m, 5m, 15m, 30m, 1d  (equity NSE cash — up to 10 years available).
+    Runs in background; poll /api/data/status for progress.
+    """
+    global _download_running, _download_log, _download_status
+
+    if _download_running:
+        raise HTTPException(409, "A download is already in progress — wait for it to finish.")
+
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        raise HTTPException(400, "DB_URL not configured in .env — PostgreSQL required.")
+
+    if not (_session and _session._api):
+        raise HTTPException(400, "Breeze session not connected — connect first then retry.")
+
+    api_key       = _session.cfg.api_key
+    api_secret    = _session.cfg.api_secret
+    session_token = _session.cfg.session_token
+
+    # Resolve date range
+    today   = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    to_dt   = datetime.strptime(req.to_date,   "%Y-%m-%d") if (req and req.to_date)   else today
+    from_dt = datetime.strptime(req.from_date, "%Y-%m-%d") if (req and req.from_date) else today - timedelta(days=365)
+
+    symbols       = [s.upper().strip() for s in req.symbols] if (req and req.symbols) else list(_BACKFILL_PRIORITY)
+    ivls          = ["1minute", "5minute", "30minute", "1day"]
+    _total_items  = len(symbols) * len(ivls)
+
+    _download_running = True
+    _download_log.clear()
+    _download_status.update(
+        status="running",
+        current=f"Starting range backfill {from_dt.date()} to {to_dt.date()} ...",
+        error="", done_items=0, total_items=_total_items,
+        start_ts=time.monotonic(), eta_sec=None,
+    )
+
+    def _run():
+        global _download_running, _download_status
+
+        handler = _DownloadLogHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s — %(message)s"))
+        backfill_logger = logging.getLogger("collector.historical")
+        backfill_logger.addHandler(handler)
+
+        done_count = [0]
+
+        def on_item_done(symbol: str, db_interval: str, sym_total: int):
+            done_count[0] += 1
+            elapsed = time.monotonic() - _download_status["start_ts"]
+            pct     = done_count[0] / _total_items
+            eta     = int(elapsed / pct * (1 - pct)) if pct > 0 else None
+            _download_status.update(
+                current   = f"[{symbol}] {db_interval} — {sym_total:,} candles so far",
+                done_items= done_count[0],
+                eta_sec   = eta,
+            )
+
+        try:
+            from breeze_connect import BreezeConnect
+            from collector.config import CollectorConfig
+            from collector.historical import HistoricalBackfill
+            from collector.store import DataStore
+
+            api = BreezeConnect(api_key=api_key)
+            api.generate_session(api_secret=api_secret, session_token=session_token)
+            store = DataStore(db_url)
+
+            cfg = CollectorConfig(
+                api_key=api_key, api_secret=api_secret,
+                session_token=session_token, db_url=db_url,
+            )
+            cfg.symbols         = symbols
+            cfg.equity_symbols  = []
+            cfg.futures_symbols = []
+            cfg.historical_intervals = ivls
+
+            results = HistoricalBackfill(api, cfg, store).run_range(
+                from_dt=from_dt,
+                to_dt=to_dt,
+                symbols=symbols,
+                on_item_done=on_item_done,
+            )
+
+            # Summarise results
+            available = [s for s, r in results.items() if r["available"]]
+            skipped   = [s for s, r in results.items() if not r["available"]]
+
+            summary_lines = [
+                f"Range backfill {from_dt.date()} to {to_dt.date()} complete.",
+                f"Available ({len(available)}): {', '.join(available) or '—'}",
+            ]
+            if skipped:
+                summary_lines.append(f"Not available ({len(skipped)}): {', '.join(skipped)}")
+            for line in summary_lines:
+                _download_log.append(line)
+                log.info(line)
+
+            _download_status.update(
+                status  = "complete",
+                current = summary_lines[0],
+                error   = "",
+            )
+
+        except Exception as exc:
+            log.error("Watchlist range backfill error: %s", exc, exc_info=True)
+            _download_status.update(status="error", current="", error=str(exc))
+        finally:
+            backfill_logger.removeHandler(handler)
+            _download_running = False
+
+    threading.Thread(target=_run, daemon=True, name="watchlist-backfill").start()
+    return {
+        "status":    "started",
+        "from_date": str(from_dt.date()),
+        "to_date":   str(to_dt.date()),
+        "symbols":   symbols,
+        "intervals": ["1m", "5m", "15m", "30m", "1d"],
+    }
+
+
 @app.post("/api/data/nse_bulk")
 async def start_nse_bulk_download(body: dict = {}):
     """
@@ -2223,6 +2828,631 @@ async def start_nse_bulk_download(body: dict = {}):
     return {"status": "started"}
 
 
+# ── Intraday equity signal engine ────────────────────────────────────────────
+
+def _ema_series(values: list, period: int) -> list:
+    if len(values) < period:
+        return []
+    k = 2.0 / (period + 1)
+    out = [sum(values[:period]) / period]
+    for v in values[period:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
+def _rsi14(closes: list, period: int = 14) -> float:
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        gains.append(max(d, 0.0))
+        losses.append(max(-d, 0.0))
+    ag = sum(gains[:period]) / period
+    al = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        ag = (ag * (period - 1) + gains[i]) / period
+        al = (al * (period - 1) + losses[i]) / period
+    return round(100 - (100 / (1 + ag / al)), 1) if al else 100.0
+
+
+def _today_5m_candles(sym: str) -> list:
+    """Return 5-min candles for strategy evaluation.
+
+    Priority:
+      1. Today's 5m candles from DB (most accurate for intraday strategies)
+      2. Current live-forming 5m candle from in-memory accumulator
+      3. If today has < 10 rows (market not open / no session), fall back to the
+         most recent 80 historical 5m candles from DB so strategies can still
+         produce signals based on recent price action.
+    """
+    today = datetime.now().date()
+    rows: list = []
+    if _db_store:
+        try:
+            raw = _db_store._queryall(
+                "SELECT ts, open, high, low, close, volume FROM candles "
+                "WHERE symbol=%s AND \"interval\"='5m' AND ts::date=%s ORDER BY ts",
+                (sym, today),
+            )
+            rows = [{"ts": r[0], "open": float(r[1]), "high": float(r[2]),
+                     "low": float(r[3]), "close": float(r[4]), "volume": int(r[5])}
+                    for r in raw]
+        except Exception:
+            pass
+
+    # Append current forming live candle (if for today and not already in rows)
+    with _live_candles_lock:
+        live = _live_candles.get(sym, {}).get(5)
+        if live and hasattr(live.get("ts"), "date") and live["ts"].date() == today:
+            if not any(c["ts"] == live["ts"] for c in rows):
+                ltp = _ltp_cache.get(sym) or live["close"]
+                rows.append({"ts": live["ts"], "open": live["open"], "high": live["high"],
+                              "low": live["low"], "close": ltp, "volume": live["volume"]})
+
+    # Fallback: use recent historical candles when today's data is insufficient
+    # (market not open, Breeze not connected, or candle backfill not run today)
+    if len(rows) < 10 and _db_store:
+        try:
+            raw = _db_store._queryall(
+                "SELECT ts, open, high, low, close, volume FROM candles "
+                "WHERE symbol=%s AND \"interval\"='5m' ORDER BY ts DESC LIMIT 80",
+                (sym,),
+            )
+            if raw:
+                rows = [{"ts": r[0], "open": float(r[1]), "high": float(r[2]),
+                         "low": float(r[3]), "close": float(r[4]), "volume": int(r[5])}
+                        for r in reversed(raw)]
+                log.debug("5m historical fallback for %s: %d candles", sym, len(rows))
+        except Exception:
+            pass
+
+    return rows
+
+
+def _db_ltp_fallback(sym: str) -> Optional[float]:
+    """Last available close from DB (any interval) when no live WebSocket price."""
+    if not _db_store:
+        return None
+    try:
+        row = _db_store._queryone(
+            "SELECT close FROM candles WHERE symbol=%s AND close IS NOT NULL ORDER BY ts DESC LIMIT 1",
+            (sym,),
+        )
+        return float(row[0]) if row and row[0] else None
+    except Exception:
+        return None
+
+
+# ── Strategy evaluators ───────────────────────────────────────────────────────
+
+def _sig_orb(sym: str, ltp: float, candles: list) -> dict:
+    now_t = datetime.now().time()
+    from datetime import time as _t
+    if len(candles) < 3:
+        return {"signal": "WAIT", "ltp": ltp,
+                "reason": f"Only {len(candles)} 5-min candle(s) so far — opening range needs 3 (9:15–9:30)."}
+    if now_t < _t(9, 30):
+        return {"signal": "WAIT", "ltp": ltp,
+                "reason": "Still inside the opening range window (9:15–9:30). Wait for 9:30 AM."}
+
+    orb = candles[:3]
+    orb_high = max(c["high"] for c in orb)
+    orb_low  = min(c["low"]  for c in orb)
+    vols     = [c["volume"] for c in candles if c["volume"] > 0]
+    avg_vol  = _statistics.mean(vols) if vols else 1
+    vol_ok   = (candles[-1]["volume"] >= avg_vol * 0.8)
+
+    if ltp > orb_high:
+        return {"signal": "LONG",  "ltp": ltp,
+                "entry": ltp, "sl": round(orb_high * 0.995, 2),
+                "target": round(ltp * 1.012, 2),
+                "orb_high": round(orb_high, 2), "orb_low": round(orb_low, 2),
+                "confidence": 0.75 if vol_ok else 0.55,
+                "reason": f"Price ₹{ltp:.0f} broke above ORB high ₹{orb_high:.0f}."
+                          f" Volume {'✓ confirmed' if vol_ok else '⚠ below avg'}."}
+    if ltp < orb_low:
+        return {"signal": "SHORT", "ltp": ltp,
+                "entry": ltp, "sl": round(orb_low * 1.005, 2),
+                "target": round(ltp * 0.988, 2),
+                "orb_high": round(orb_high, 2), "orb_low": round(orb_low, 2),
+                "confidence": 0.70 if vol_ok else 0.50,
+                "reason": f"Price ₹{ltp:.0f} broke below ORB low ₹{orb_low:.0f}."
+                          f" Volume {'✓ confirmed' if vol_ok else '⚠ below avg'}."}
+    return {"signal": "WAIT", "ltp": ltp,
+            "orb_high": round(orb_high, 2), "orb_low": round(orb_low, 2),
+            "reason": f"Price ₹{ltp:.0f} inside ORB range [₹{orb_low:.0f}–₹{orb_high:.0f}]. Wait for breakout."}
+
+
+def _sig_vwap(sym: str, ltp: float, candles: list) -> dict:
+    if len(candles) < 2:
+        return {"signal": "WAIT", "ltp": ltp, "reason": "Not enough candles for VWAP."}
+    tv = sum((c["high"] + c["low"] + c["close"]) / 3 * c["volume"] for c in candles)
+    tv_vol = sum(c["volume"] for c in candles)
+    vwap = round(tv / tv_vol, 2) if tv_vol else ltp
+
+    last, prev = candles[-1], candles[-2]
+    bullish = last["close"] > last["open"]
+    bearish = last["close"] < last["open"]
+    bounce  = prev["close"] < vwap <= last["close"]
+    reject  = prev["close"] > vwap >= last["close"]
+
+    if ltp < vwap and bullish:
+        return {"signal": "LONG",  "ltp": ltp, "vwap": vwap,
+                "entry": ltp, "sl": round(last["low"] * 0.998, 2),
+                "target": round(vwap * 1.005, 2),
+                "confidence": 0.72 if bounce else 0.58,
+                "reason": f"Price ₹{ltp:.0f} below VWAP ₹{vwap:.0f} with bullish reversal candle."
+                          f"{' Fresh bounce from below VWAP.' if bounce else ''}"}
+    if ltp > vwap and bearish:
+        return {"signal": "SHORT", "ltp": ltp, "vwap": vwap,
+                "entry": ltp, "sl": round(last["high"] * 1.002, 2),
+                "target": round(vwap * 0.995, 2),
+                "confidence": 0.68 if reject else 0.55,
+                "reason": f"Price ₹{ltp:.0f} above VWAP ₹{vwap:.0f} with bearish rejection candle."
+                          f"{' Fresh rejection from above VWAP.' if reject else ''}"}
+    return {"signal": "WAIT", "ltp": ltp, "vwap": vwap,
+            "reason": f"No clear VWAP reversal. VWAP=₹{vwap:.0f}, LTP=₹{ltp:.0f}."
+                      f" Wait for a{'bullish' if ltp < vwap else ' bearish'} candle."}
+
+
+def _sig_ema_cross(sym: str, ltp: float, candles: list) -> dict:
+    if len(candles) < 22:
+        return {"signal": "WAIT", "ltp": ltp,
+                "reason": f"Need 22 five-min candles for EMA 9/21 — have {len(candles)}. Check back mid-morning."}
+    closes  = [c["close"] for c in candles]
+    e9      = _ema_series(closes, 9)
+    e21     = _ema_series(closes, 21)
+    offset  = len(e9) - len(e21)
+    e9a     = e9[offset:]
+    if len(e9a) < 2 or len(e21) < 2:
+        return {"signal": "WAIT", "ltp": ltp, "reason": "Insufficient data for EMA alignment."}
+
+    cur_bull  = e9a[-1] > e21[-1]
+    prev_bull = e9a[-2] > e21[-2]
+
+    if cur_bull and not prev_bull:
+        return {"signal": "LONG",  "ltp": ltp,
+                "entry": ltp, "sl": round(candles[-1]["low"] * 0.998, 2),
+                "target": round(ltp * 1.015, 2),
+                "ema9": round(e9a[-1], 2), "ema21": round(e21[-1], 2),
+                "confidence": 0.72,
+                "reason": f"EMA9 ({e9a[-1]:.0f}) just crossed ABOVE EMA21 ({e21[-1]:.0f}). Fresh bullish crossover."}
+    if not cur_bull and prev_bull:
+        return {"signal": "SHORT", "ltp": ltp,
+                "entry": ltp, "sl": round(candles[-1]["high"] * 1.002, 2),
+                "target": round(ltp * 0.985, 2),
+                "ema9": round(e9a[-1], 2), "ema21": round(e21[-1], 2),
+                "confidence": 0.68,
+                "reason": f"EMA9 ({e9a[-1]:.0f}) just crossed BELOW EMA21 ({e21[-1]:.0f}). Fresh bearish crossover."}
+    trend = "bullish" if cur_bull else "bearish"
+    return {"signal": "WAIT", "ltp": ltp,
+            "ema9": round(e9a[-1], 2), "ema21": round(e21[-1], 2),
+            "reason": f"EMA9/21 trend is {trend} but no fresh crossover. Wait for next crossover."}
+
+
+def _sig_sr_reversal(sym: str, ltp: float, candles: list) -> dict:
+    if len(candles) < 15:
+        return {"signal": "WAIT", "ltp": ltp,
+                "reason": f"Need 15 candles for RSI(14) — have {len(candles)}."}
+    closes   = [c["close"] for c in candles]
+    rsi      = _rsi14(closes)
+    day_high = max(c["high"] for c in candles)
+    day_low  = min(c["low"]  for c in candles)
+    pivot    = (day_high + day_low + closes[-1]) / 3
+    r1       = round(2 * pivot - day_low, 2)
+    s1       = round(2 * pivot - day_high, 2)
+
+    if rsi < 30:
+        return {"signal": "LONG",  "ltp": ltp, "rsi": rsi,
+                "entry": ltp, "sl": round(day_low * 0.999, 2),
+                "target": round(ltp * 1.015, 2),
+                "support": s1, "resistance": r1,
+                "confidence": 0.70,
+                "reason": f"RSI {rsi} is oversold (<30) near support ₹{s1:.0f}. Mean-reversion bounce expected."}
+    if rsi > 70:
+        return {"signal": "SHORT", "ltp": ltp, "rsi": rsi,
+                "entry": ltp, "sl": round(day_high * 1.001, 2),
+                "target": round(ltp * 0.985, 2),
+                "support": s1, "resistance": r1,
+                "confidence": 0.65,
+                "reason": f"RSI {rsi} is overbought (>70) near resistance ₹{r1:.0f}. Reversal expected."}
+    return {"signal": "WAIT", "ltp": ltp, "rsi": rsi,
+            "support": s1, "resistance": r1,
+            "reason": f"RSI {rsi} is neutral (30–70). Wait for extreme reading near S/R levels."}
+
+
+def _sig_gap_go(sym: str, ltp: float, candles: list) -> dict:
+    prev_close = None
+    if _db_store:
+        today = datetime.now().date()
+        for n in range(1, 6):
+            d = today - timedelta(days=n)
+            row = _db_store._queryone(
+                "SELECT close FROM candles WHERE symbol=%s AND \"interval\"='1d' AND ts::date=%s",
+                (sym, d),
+            )
+            if row and row[0]:
+                prev_close = float(row[0])
+                break
+    if not prev_close:
+        return {"signal": "WAIT", "ltp": ltp,
+                "reason": "No previous day close in DB. Download 1D data first (NSE Bulk Download)."}
+
+    today_open  = candles[0]["open"] if candles else ltp
+    gap_pct     = round((today_open - prev_close) / prev_close * 100, 2)
+    cont_up     = ltp > today_open
+    cont_down   = ltp < today_open
+
+    if gap_pct > 1.5 and cont_up:
+        return {"signal": "LONG",  "ltp": ltp, "gap_pct": gap_pct,
+                "entry": ltp, "sl": round(today_open * 0.994, 2),
+                "target": round(ltp * 1.020, 2),
+                "confidence": 0.72,
+                "reason": f"Gap up +{gap_pct:.1f}% (prev ₹{prev_close:.0f} → open ₹{today_open:.0f}). Price continuing higher — momentum buy."}
+    if gap_pct < -1.5 and cont_down:
+        return {"signal": "SHORT", "ltp": ltp, "gap_pct": gap_pct,
+                "entry": ltp, "sl": round(today_open * 1.006, 2),
+                "target": round(ltp * 0.980, 2),
+                "confidence": 0.68,
+                "reason": f"Gap down {gap_pct:.1f}% (prev ₹{prev_close:.0f} → open ₹{today_open:.0f}). Selling continuing — momentum short."}
+    if abs(gap_pct) > 1.5:
+        return {"signal": "WAIT", "ltp": ltp, "gap_pct": gap_pct,
+                "reason": f"Gap {'up' if gap_pct > 0 else 'down'} {abs(gap_pct):.1f}% but price not continuing in gap direction. May fill gap — wait."}
+    return {"signal": "WAIT", "ltp": ltp, "gap_pct": gap_pct,
+            "reason": f"Gap {gap_pct:+.1f}% is below ±1.5% threshold — no Gap & Go signal today."}
+
+
+_INTRADAY_EVALUATORS = {
+    "orb":         _sig_orb,
+    "vwap":        _sig_vwap,
+    "ema_cross":   _sig_ema_cross,
+    "sr_reversal": _sig_sr_reversal,
+    "gap_go":      _sig_gap_go,
+}
+
+_INTRADAY_NAMES = {
+    "orb":         "ORB",
+    "vwap":        "VWAP Reversal",
+    "ema_cross":   "EMA Crossover",
+    "sr_reversal": "S&R Reversal",
+    "gap_go":      "Gap & Go",
+}
+
+
+# ── Options signal evaluators ─────────────────────────────────────────────────
+
+def _nearest_expiry_from_db(sym: str) -> Optional[date]:
+    """Return nearest future expiry from chain or PCR snapshots."""
+    if not _db_store:
+        return None
+    today = datetime.now().date()
+    for table in ("pcr_snapshots", "chain_snapshots"):
+        try:
+            row = _db_store._queryone(
+                f"SELECT MIN(expiry) FROM {table} WHERE symbol=%s AND expiry >= %s",
+                (sym, today),
+            )
+            if row and row[0]:
+                return row[0]
+        except Exception:
+            continue
+    return None
+
+
+def _sig_iv_rank(sym: str, ltp: float) -> dict:
+    """HIGH IV Rank (≥70%) → sell premium (Iron Condor). LOW (≤30%) → buy premium (Long Straddle)."""
+    if not _db_store:
+        return {"signal": "NO_DATA", "reason": "No DB connected."}
+    try:
+        row = _db_store._queryone(
+            "SELECT atm_iv, iv_rank, iv_pctile FROM iv_daily WHERE symbol=%s ORDER BY date DESC LIMIT 1",
+            (sym,),
+        )
+        if not row or row[0] is None:
+            return {"signal": "WAIT",
+                    "reason": "No IV history in DB. Run NSE Bulk Download first."}
+        atm_iv    = float(row[0])
+        iv_rank   = float(row[1]) if row[1] is not None else None
+        iv_pctile = float(row[2]) if row[2] is not None else None
+
+        if iv_rank is None:
+            df = _db_store.get_iv_history(sym, lookback_days=252)
+            if len(df) < 30:
+                return {"signal": "WAIT",
+                        "reason": f"Only {len(df)} days of IV history — need 30+ for IV Rank."}
+            vals = df["atm_iv"].dropna().tolist()
+            iv_min, iv_max = min(vals), max(vals)
+            iv_rank = (atm_iv - iv_min) / (iv_max - iv_min) * 100 if iv_max > iv_min else 50.0
+
+        if iv_rank >= 70:
+            # Capital-preservation mode: always suggest Iron Condor (defined max loss)
+            # Short Strangle is higher-yield but unlimited risk — not auto-suggested
+            sugg, sugg_name = "iron_condor", "Iron Condor"
+            reason = (f"IV Rank {iv_rank:.0f}% is HIGH (≥70%) — premium is expensive. "
+                      f"Iron Condor recommended: defined max loss, wide strikes (3 steps).")
+            conf = 0.80 if iv_rank >= 85 else 0.70
+            return {
+                "signal": "SHORT", "ltp": ltp,
+                "iv": round(atm_iv, 2), "iv_rank": round(iv_rank, 1),
+                "iv_pctile": round(iv_pctile, 1) if iv_pctile else None,
+                "suggested_strategy": sugg,
+                "suggested_strategy_name": sugg_name,
+                "confidence": conf,
+                "reason": reason,
+            }
+        if iv_rank <= 30:
+            return {
+                "signal": "LONG", "ltp": ltp,
+                "iv": round(atm_iv, 2), "iv_rank": round(iv_rank, 1),
+                "iv_pctile": round(iv_pctile, 1) if iv_pctile else None,
+                "suggested_strategy": "long_straddle",
+                "suggested_strategy_name": "Long Straddle",
+                "confidence": 0.72 if iv_rank <= 20 else 0.60,
+                "reason": (f"IV Rank {iv_rank:.0f}% is LOW (≤30%) — premium is cheap. "
+                           f"Buy premium: Long Straddle."),
+            }
+        return {"signal": "WAIT", "ltp": ltp,
+                "iv": round(atm_iv, 2), "iv_rank": round(iv_rank, 1),
+                "reason": f"IV Rank {iv_rank:.0f}% is neutral (30–70%). No extreme IV condition."}
+    except Exception as exc:
+        return {"signal": "ERROR", "reason": str(exc)}
+
+
+def _sig_pcr_sentiment(sym: str, ltp: float) -> dict:
+    """PCR ≥1.3 → contrarian LONG (Bull Call Spread). PCR ≤0.7 → contrarian SHORT (Bear Put Spread)."""
+    if not _db_store:
+        return {"signal": "NO_DATA", "reason": "No DB connected."}
+    try:
+        row = _db_store._queryone(
+            "SELECT pcr, call_oi, put_oi FROM pcr_snapshots WHERE symbol=%s ORDER BY ts DESC LIMIT 1",
+            (sym,),
+        )
+        if not row or row[0] is None:
+            return {"signal": "WAIT",
+                    "reason": "No PCR data yet. Start chain collector or wait for snapshot."}
+        pcr     = float(row[0])
+        call_oi = int(row[1]) if row[1] else 0
+        put_oi  = int(row[2]) if row[2] else 0
+
+        if pcr >= 1.3:
+            return {
+                "signal": "LONG", "ltp": ltp, "pcr": round(pcr, 2),
+                "call_oi": call_oi, "put_oi": put_oi,
+                "suggested_strategy": "bull_call_spread",
+                "suggested_strategy_name": "Bull Call Spread",
+                "confidence": 0.72 if pcr >= 1.5 else 0.62,
+                "reason": (f"PCR {pcr:.2f} ≥1.3 — excess put buying signals bearish panic. "
+                           f"Contrarian LONG: Bull Call Spread."),
+            }
+        if pcr <= 0.7:
+            return {
+                "signal": "SHORT", "ltp": ltp, "pcr": round(pcr, 2),
+                "call_oi": call_oi, "put_oi": put_oi,
+                "suggested_strategy": "bear_put_spread",
+                "suggested_strategy_name": "Bear Put Spread",
+                "confidence": 0.68 if pcr <= 0.5 else 0.58,
+                "reason": (f"PCR {pcr:.2f} ≤0.7 — excess call buying signals complacency. "
+                           f"Contrarian SHORT: Bear Put Spread."),
+            }
+        return {"signal": "WAIT", "ltp": ltp, "pcr": round(pcr, 2),
+                "reason": f"PCR {pcr:.2f} is neutral (0.7–1.3). No extreme reading."}
+    except Exception as exc:
+        return {"signal": "ERROR", "reason": str(exc)}
+
+
+def _sig_max_pain(sym: str, ltp: float) -> dict:
+    """LTP far from max pain with ≤10 DTE → expect drift toward max pain."""
+    if not _db_store:
+        return {"signal": "NO_DATA", "reason": "No DB connected."}
+    try:
+        today  = datetime.now().date()
+        expiry = _nearest_expiry_from_db(sym)
+        if not expiry:
+            return {"signal": "WAIT",
+                    "reason": "No expiry found in DB. Start chain collector."}
+        dte = (expiry - today).days
+        if dte > 15:
+            return {"signal": "WAIT", "ltp": ltp,
+                    "reason": f"Expiry {expiry} is {dte} DTE — max pain pull is weak beyond 15 DTE."}
+
+        rows = _db_store._queryall(
+            """SELECT strike, "right", oi FROM chain_snapshots
+               WHERE symbol=%s AND expiry=%s AND oi > 0
+                 AND ts = (SELECT MAX(ts) FROM chain_snapshots WHERE symbol=%s AND expiry=%s)
+               ORDER BY strike""",
+            (sym, expiry, sym, expiry),
+        )
+        if not rows:
+            return {"signal": "WAIT",
+                    "reason": "No chain snapshot data for nearest expiry."}
+
+        call_oi: dict = {}
+        put_oi:  dict = {}
+        for strike, right, oi in rows:
+            k = float(strike)
+            o = int(oi)
+            if right == "CE":
+                call_oi[k] = o
+            elif right == "PE":
+                put_oi[k]  = o
+
+        all_strikes = sorted(set(call_oi) | set(put_oi))
+        if not all_strikes:
+            return {"signal": "WAIT", "reason": "Insufficient OI data to compute max pain."}
+
+        min_pain, max_pain_strike = float("inf"), all_strikes[0]
+        for p in all_strikes:
+            total = (sum(max(0.0, p - k) * call_oi.get(k, 0) for k in all_strikes) +
+                     sum(max(0.0, k - p) * put_oi.get(k, 0) for k in all_strikes))
+            if total < min_pain:
+                min_pain, max_pain_strike = total, p
+
+        dist_pct = abs(ltp - max_pain_strike) / ltp * 100
+        if dist_pct >= 0.5 and dte <= 10:
+            direction = "LONG" if ltp < max_pain_strike else "SHORT"
+            strat     = "bull_call_spread" if direction == "LONG" else "bear_put_spread"
+            return {
+                "signal": direction, "ltp": ltp,
+                "max_pain": round(max_pain_strike, 2), "dte": dte,
+                "distance_pct": round(dist_pct, 2),
+                "suggested_strategy": strat,
+                "suggested_strategy_name": "Bull Call Spread" if direction == "LONG" else "Bear Put Spread",
+                "confidence": 0.68 if dte <= 5 else 0.58,
+                "reason": (f"Max pain ₹{max_pain_strike:.0f} vs LTP ₹{ltp:.0f} "
+                           f"({dist_pct:.1f}% away, {dte} DTE). Price tends to drift toward max pain."),
+            }
+        return {"signal": "WAIT", "ltp": ltp,
+                "max_pain": round(max_pain_strike, 2), "dte": dte,
+                "reason": (f"Max pain ₹{max_pain_strike:.0f}, LTP ₹{ltp:.0f} — "
+                           f"{'gap too small (<0.5%)' if dist_pct < 0.5 else f'{dte} DTE too far'}"
+                           f" for strong pull.")}
+    except Exception as exc:
+        return {"signal": "ERROR", "reason": str(exc)}
+
+
+_OPTIONS_EVALUATORS = {
+    "iv_rank":  _sig_iv_rank,
+    "pcr":      _sig_pcr_sentiment,
+    "max_pain": _sig_max_pain,
+}
+
+_OPTIONS_NAMES = {
+    "iv_rank":  "IV Rank",
+    "pcr":      "PCR Sentiment",
+    "max_pain": "Max Pain",
+}
+
+
+# ── Shared scan helper (equity + options, used by endpoint + monitor loop) ────
+
+async def _run_scan(sym_list: list) -> dict:
+    """Evaluate all equity and options strategies for every symbol in sym_list."""
+    now_str = _now_ist().strftime("%H:%M:%S")
+    results: list = []
+
+    # Auto-subscribe any un-subscribed symbols to Breeze WebSocket for live data.
+    # Uses NSX for index symbols (NIFTY/BANKNIFTY), NSE for equities.
+    # Fire-and-forget so it never blocks the scan itself.
+    if _session and _session._api:
+        for sym in sym_list:
+            exch    = _SYMBOL_EXCHANGE.get(sym, "NSE")
+            sub_key = f"{sym}|{exch}|cash|||"
+            if sub_key not in _ws_subscriptions:
+                asyncio.create_task(
+                    asyncio.to_thread(_ws_subscribe, sym, exch, "cash",
+                                      "", "", "", sym)
+                )
+
+    for sym in sym_list:
+        live_ltp = _ltp_cache.get(sym)
+        candles  = await asyncio.to_thread(_today_5m_candles, sym)
+
+        if live_ltp:
+            ltp, ltp_source = live_ltp, "live"
+        elif candles:
+            ltp, ltp_source = candles[-1]["close"], "5m-candle"
+        else:
+            ltp = await asyncio.to_thread(_db_ltp_fallback, sym)
+            ltp_source = "db-close" if ltp else None
+
+        # ── Equity strategies ──────────────────────────────────────────────
+        for strat_id, fn in _INTRADAY_EVALUATORS.items():
+            try:
+                sig = fn(sym, ltp, candles) if ltp else {
+                    "signal": "NO_DATA",
+                    "reason": "No price data. Subscribe on Live Dashboard or download historical data.",
+                }
+            except Exception as exc:
+                sig = {"signal": "ERROR", "reason": str(exc)}
+            row: dict = {
+                "symbol": sym, "strategy": strat_id,
+                "strategy_name": _INTRADAY_NAMES.get(strat_id, strat_id),
+                "type": "equity",
+                "ltp": ltp, "ltp_source": ltp_source, **sig,
+            }
+            if sig.get("signal") in ("LONG", "SHORT"):
+                row["triggered_at"] = now_str
+            results.append(row)
+
+        # ── Options strategies ─────────────────────────────────────────────
+        for strat_id, fn in _OPTIONS_EVALUATORS.items():
+            try:
+                sig = await asyncio.to_thread(fn, sym, ltp) if ltp else {
+                    "signal": "NO_DATA",
+                    "reason": "No price data.",
+                }
+            except Exception as exc:
+                sig = {"signal": "ERROR", "reason": str(exc)}
+            row = {
+                "symbol": sym, "strategy": strat_id,
+                "strategy_name": _OPTIONS_NAMES.get(strat_id, strat_id),
+                "type": "options",
+                "ltp": ltp, "ltp_source": ltp_source, **sig,
+            }
+            if sig.get("signal") in ("LONG", "SHORT"):
+                row["triggered_at"] = now_str
+            results.append(row)
+
+    results.sort(key=lambda r: (
+        0 if r.get("signal") in ("LONG", "SHORT") else 1,
+        -(r.get("confidence") or 0),
+    ))
+    actionable = [r for r in results if r.get("signal") in ("LONG", "SHORT")]
+    return {
+        "results":    results,
+        "scanned_at": now_str,
+        "symbols":    sym_list,
+        "total":      len(results),
+        "actionable": len(actionable),
+    }
+
+
+@app.get("/api/intraday/scan")
+async def scan_intraday_signals(symbols: str = "NIFTY,BANKNIFTY,RELIANCE,HDFCBANK,TCS",
+                                cached: bool = False):
+    """
+    Evaluate all 5 intraday strategies for a comma-separated symbol list.
+
+    During market hours the server-side monitor already runs every 60 s and
+    caches results. If the cached payload covers the requested symbols and is
+    ≤90 s old, it is returned immediately (no extra DB/compute cost).
+    Pass cached=false to force a fresh live evaluation.
+    """
+    sym_list = [_normalize_symbol(s.strip().upper()) for s in symbols.split(",") if s.strip()][:12]
+
+    # Return server-side cache when symbols match and it is fresh enough
+    if _intraday_scan_cache and cached is not False:
+        cache_syms = set(_intraday_scan_cache.get("symbols", []))
+        if set(sym_list) <= cache_syms:
+            return _intraday_scan_cache
+
+    return await _run_scan(sym_list)
+
+
+@app.get("/api/intraday/signal")
+async def get_intraday_signal(symbol: str = "NIFTY", strategy: str = "orb"):
+    """Evaluate one of 5 intraday strategy signals for a given symbol."""
+    sym = _normalize_symbol(symbol.strip().upper())
+    ltp = _ltp_cache.get(sym)
+
+    candles = await asyncio.to_thread(_today_5m_candles, sym)
+
+    if not ltp and candles:
+        ltp = candles[-1]["close"]
+    if not ltp:
+        ltp = await asyncio.to_thread(_db_ltp_fallback, sym)
+    if not ltp:
+        return {"signal": "NO_DATA", "ltp": None,
+                "reason": "No price data for this symbol. Subscribe on Live Dashboard or download historical data."}
+
+    fn = _INTRADAY_EVALUATORS.get(strategy)
+    if not fn:
+        return {"signal": "ERROR", "reason": f"Unknown strategy '{strategy}'."}
+
+    return fn(sym, ltp, candles)
+
+
 # ── Paper strategy trades ─────────────────────────────────────────────────────
 
 class PaperStrategyReq(BaseModel):
@@ -2260,7 +3490,7 @@ async def paper_strategy_enter(req: PaperStrategyReq):
         kwargs.update(short_steps=req.short_steps, width_steps=req.width_steps)
     elif req.strategy_id in ("bull_call_spread", "bear_put_spread"):
         kwargs.update(width_steps=req.width_steps)
-    elif req.strategy_id == "covered_call":
+    elif req.strategy_id in ("covered_call", "short_strangle"):
         kwargs.update(otm_steps=req.short_steps)
 
     plan    = builder(**kwargs)
@@ -2338,7 +3568,7 @@ async def paper_strategy_plan(
         kwargs.update(short_steps=short_steps, width_steps=width_steps)
     elif strategy_id in ("bull_call_spread", "bear_put_spread"):
         kwargs.update(width_steps=width_steps)
-    elif strategy_id == "covered_call":
+    elif strategy_id in ("covered_call", "short_strangle"):
         kwargs.update(otm_steps=short_steps)
 
     plan = builder(**kwargs)

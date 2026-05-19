@@ -72,7 +72,9 @@ class ChainSnapshotCollector:
 
     def _snapshot(self, symbol: str, expiry: date, ts: datetime,
                   is_index: bool, exchange: str) -> None:
-        spot  = self._get_spot(symbol, self._cfg.nse_exchange)
+        # Index symbols (NIFTY, BANKNIFTY) use NSX exchange for spot; equities use NSE
+        spot_exchange = self._cfg.nsx_exchange if is_index else self._cfg.nse_exchange
+        spot  = self._get_spot(symbol, spot_exchange, is_index=is_index)
         chain = self._fetch_chain(symbol, expiry, exchange)
         if chain.empty:
             log.debug("Empty chain for %s %s — expiry may not be listed.", symbol, expiry)
@@ -98,18 +100,23 @@ class ChainSnapshotCollector:
         log.info("Chain: %-12s  expiry=%s  rows=%d  atm=%d  spot=%.2f",
                  symbol, expiry, len(rows), atm, spot)
 
-    def _get_spot(self, symbol: str, exchange: str) -> float:
-        resp = self._api.get_quotes(
-            stock_code=symbol,
-            exchange_code=exchange,
-            expiry_date="",
-            product_type="cash",
-            right="",
-            strike_price="",
-        )
-        if resp.get("Status") != 200 or not resp.get("Success"):
-            raise RuntimeError(f"Spot fetch failed for {symbol}: {resp}")
-        return float(resp["Success"][0]["ltp"])
+    def _get_spot(self, symbol: str, exchange: str, is_index: bool = False) -> float:
+        # Breeze requires product_type="others" for index quotes, "cash" for equities
+        product = "others" if is_index else "cash"
+        last_resp = {}
+        for attempt in range(3):
+            last_resp = self._api.get_quotes(
+                stock_code=symbol,
+                exchange_code=exchange,
+                expiry_date="",
+                product_type=product,
+                right="",
+                strike_price="",
+            )
+            if last_resp.get("Status") == 200 and last_resp.get("Success"):
+                return float(last_resp["Success"][0]["ltp"])
+            time.sleep(1.0)
+        raise RuntimeError(f"Spot fetch failed for {symbol}: {last_resp}")
 
     def _fetch_chain(self, symbol: str, expiry: date, exchange: str) -> pd.DataFrame:
         resp = self._api.get_option_chain_quotes(

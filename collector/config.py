@@ -28,23 +28,23 @@ class CollectorConfig:
 
     # ── Equity symbols: spot ticks + candles ─────────────────────────────────
     equity_symbols: List[str] = field(default_factory=lambda: [
-        "RELIANCE", "HDFCBANK", "TCS",
+        "RELIND", "HDFBAN", "TCS",   # Breeze scrip codes
     ])
 
     # ── Equity symbols that also have active option chains ────────────────────
     equity_option_symbols: List[str] = field(default_factory=lambda: [
-        "RELIANCE", "HDFCBANK", "TCS",
+        "RELIND", "HDFBAN", "TCS",
     ])
     equity_option_cfg: Dict[str, dict] = field(default_factory=lambda: {
-        "RELIANCE": {"strike_step": 50},
-        "HDFCBANK": {"strike_step": 10},
-        "TCS":      {"strike_step": 50},
+        "RELIND": {"strike_step": 50},
+        "HDFBAN": {"strike_step": 10},
+        "TCS":    {"strike_step": 50},
     })
 
     # ── Futures symbols (index + top equity futures) ───────────────────────────
     futures_symbols: List[str] = field(default_factory=lambda: [
         "NIFTY", "BANKNIFTY",
-        "RELIANCE", "HDFCBANK", "TCS",
+        "RELIND", "HDFBAN", "TCS",
     ])
     futures_num_expiries: int = 3   # near-month + next-month + far-month
 
@@ -86,7 +86,8 @@ class CollectorConfig:
     risk_free_rate: float = 0.065   # 91-day T-bill proxy — update monthly
 
     # ── Exchange codes ────────────────────────────────────────────────────────
-    nse_exchange: str = "NSE"
+    nse_exchange: str = "NSE"   # equity cash
+    nsx_exchange: str = "NSX"   # NSE index spot (NIFTY, BANKNIFTY)
     nfo_exchange: str = "NFO"
 
     # ── Market timing (IST) ───────────────────────────────────────────────────

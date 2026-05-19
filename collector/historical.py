@@ -14,7 +14,7 @@ Rate limiting: 0.5 s sleep between REST calls (~120 calls/min, well within Breez
 import logging
 import time
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from trade_engine.symbols import SymbolBuilder, monthly_expiries
 
@@ -77,6 +77,113 @@ class HistoricalBackfill:
                     time.sleep(0.5)
 
         log.info("Historical backfill complete.")
+
+    # ── date-range backfill (bypasses gap-fill, used for incremental year runs) ─
+
+    def _probe(self, symbol: str) -> bool:
+        """
+        Check symbol availability without wasting API calls:
+          1. DB-first: if we already have a candle within the last 5 days, symbol is good.
+          2. Breeze probe: fetch last 3 calendar days of 1m data (1 API call, retried once).
+        Returns True if symbol is available on Breeze.
+        """
+        # Check DB first — free, no API call consumed
+        try:
+            last_ts = self._store.get_candle_last_ts(symbol, "1m")
+            if last_ts is not None:
+                age_days = (datetime.now() - last_ts.replace(tzinfo=None)).days
+                if age_days <= 5:
+                    log.info("Probe %s: DB hit (last candle %d days ago) — skipping API probe",
+                             symbol, age_days)
+                    return True
+        except Exception:
+            pass   # store unavailable; fall through to API probe
+
+        # API probe — try twice to handle transient Breeze errors
+        now     = datetime.now()
+        from_dt = now - timedelta(days=3)
+        for attempt in range(2):
+            try:
+                rows = self._fetch_in_chunks(
+                    stock_code=symbol,
+                    exchange_code=self._cfg.nse_exchange,
+                    product_type="cash",
+                    interval="1minute",
+                    from_dt=from_dt,
+                    to_dt=now,
+                )
+                if rows:
+                    return True
+                log.warning("Probe %s attempt %d: 0 candles returned", symbol, attempt + 1)
+            except Exception as exc:
+                log.warning("Probe %s attempt %d failed: %s", symbol, attempt + 1, exc)
+            if attempt == 0:
+                time.sleep(2.0)   # brief pause before retry
+
+        log.warning("Probe %s: symbol not available on Breeze — skipping", symbol)
+        return False
+
+    def run_range(
+        self,
+        from_dt: datetime,
+        to_dt: datetime,
+        symbols: List[str],
+        on_item_done=None,   # callable(symbol, db_interval, total_candles_for_symbol)
+    ) -> Dict[str, dict]:
+        """
+        Fetch OHLCV for an explicit date window without gap-fill heuristics.
+        Existing rows are silently skipped (ON CONFLICT DO NOTHING).
+
+        Returns:
+            {symbol: {"candles": int, "available": bool, "error": str|None}}
+        """
+        results: Dict[str, dict] = {}
+        for symbol in symbols:
+            log.info("Probing availability for %s …", symbol)
+            if not self._probe(symbol):
+                log.warning("Skipping %s — not available on Breeze", symbol)
+                results[symbol] = {"candles": 0, "available": False,
+                                   "error": "Probe returned 0 candles"}
+                # advance progress counter so the UI bar still moves
+                if on_item_done:
+                    for ivl in self._cfg.historical_intervals:
+                        on_item_done(symbol, _INTERVAL_TO_DB.get(ivl, ivl), 0)
+                continue
+
+            total, last_err = 0, None
+            for breeze_interval in self._cfg.historical_intervals:
+                db_interval = _INTERVAL_TO_DB.get(breeze_interval, breeze_interval)
+                try:
+                    rows = self._fetch_in_chunks(
+                        stock_code=symbol,
+                        exchange_code=self._cfg.nse_exchange,
+                        product_type="cash",
+                        interval=breeze_interval,
+                        from_dt=from_dt,
+                        to_dt=to_dt,
+                    )
+                    candles = [c for c in (
+                        _to_candle_row(r, symbol, db_interval) for r in rows
+                    ) if c]
+                    if candles:
+                        self._store.insert_candles(candles)
+                        total += len(candles)
+                        log.info("Range %s [%s]: +%d candles", symbol, db_interval, len(candles))
+                    else:
+                        log.warning("Range %s [%s]: 0 candles returned by Breeze", symbol, db_interval)
+                except Exception as exc:
+                    log.error("Range %s [%s]: %s", symbol, breeze_interval, exc)
+                    last_err = str(exc)
+
+                if on_item_done:
+                    on_item_done(symbol, db_interval, total)
+                time.sleep(0.5)
+
+            available = total > 0
+            results[symbol] = {"candles": total, "available": available, "error": last_err}
+            log.info("Range complete — %s: %d candles, available=%s", symbol, total, available)
+
+        return results
 
     # ── spot ──────────────────────────────────────────────────────────────────
 

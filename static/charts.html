@@ -178,10 +178,11 @@
 
       <!-- Timeframe -->
       <div class="tb-grp">
-        <button id="tfbtn-1minute"  onclick="setTF('1minute')">1m</button>
-        <button id="tfbtn-5minute"  onclick="setTF('5minute')" class="on">5m</button>
-        <button id="tfbtn-30minute" onclick="setTF('30minute')">30m</button>
-        <button id="tfbtn-1day"     onclick="setTF('1day')">1D</button>
+        <button id="tfbtn-1minute"   onclick="setTF('1minute')">1m</button>
+        <button id="tfbtn-5minute"   onclick="setTF('5minute')" class="on">5m</button>
+        <button id="tfbtn-15minute"  onclick="setTF('15minute')">15m</button>
+        <button id="tfbtn-30minute"  onclick="setTF('30minute')">30m</button>
+        <button id="tfbtn-1day"      onclick="setTF('1day')">1D</button>
       </div>
       <div class="tb-sep"></div>
 
@@ -819,7 +820,7 @@ async function loadStock(w, autoSrc = false) {
   const loadingEl = document.getElementById('chart-loading');
   let loadError = null;
   try {
-    const days = _activeTF === '1day' ? 730 : _activeTF === '30minute' ? 90 : _activeTF === '5minute' ? 90 : 68;
+    const days = _activeTF === '1day' ? 730 : _activeTF === '30minute' ? 90 : _activeTF === '15minute' ? 60 : _activeTF === '5minute' ? 90 : 30;
     let url;
     if (_dataSource === 'db') {
       url = `/api/ohlc/db?symbol=${encodeURIComponent(w.stock)}&interval=${_activeTF}&days=${days}`;
@@ -899,7 +900,7 @@ function _pushDataToChart() {
 // ════════════════════════════════════════════════════════════════════════════
 // LIVE TICK → CANDLE AGGREGATION
 // ════════════════════════════════════════════════════════════════════════════
-const TF_SECONDS = { '1minute':60, '5minute':300, '30minute':1800, '1day':86400 };
+const TF_SECONDS = { '1minute':60, '5minute':300, '15minute':900, '30minute':1800, '1day':86400 };
 
 function _processLTPTick(ltp) {
   _buildLiveCandle(ltp, 0);
