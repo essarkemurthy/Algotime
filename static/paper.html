@@ -805,8 +805,11 @@ function onLTP(msg) {
 }
 
 function onSignal(msg) {
-  const sym  = (msg.symbol || msg.stock_code || '');
-  const isOpt = sym.match(/CE|PE/i) || msg.segment === 'options';
+  const sym = (msg.symbol || msg.stock_code || '');
+  const sid = (msg.strategy || msg.strategy_id || '').toLowerCase();
+  const isOpt = _OPT_STRAT_IDS.has(sid)
+    || msg.segment === 'options'
+    || /\b(ATM|CE|PE)\b/i.test(sym);
   prependFeedItem(msg, isOpt ? 'feed-opt' : 'feed-intra');
 }
 
@@ -1146,9 +1149,22 @@ function renderOrderBook() {
   }).join('');
 }
 
+const _OPT_STRAT_IDS = new Set(['zero_dte','ivr_condor','vix_regime','gamma_scalp','momentum']);
+const _EQ_STRAT_IDS  = new Set(['orb','vwap','ema_cross','sr_reversal','gap_go']);
+
+function _isOptTrade(o) {
+  if (o.option_type || o.strike_price) return true;
+  const sym = (o.stock_code || o.symbol || o.stock || '').toUpperCase();
+  if (/\b(ATM|CE|PE)\b/.test(sym)) return true;
+  const sid = (o.strategy_id || o.strategy || '').toLowerCase();
+  if (_OPT_STRAT_IDS.has(sid)) return true;
+  if (_EQ_STRAT_IDS.has(sid))  return false;
+  return false;
+}
+
 function renderTrades() {
-  const eq  = _ordersData.filter(o => !(o.option_type||o.strike_price));
-  const opt = _ordersData.filter(o => o.option_type||o.strike_price);
+  const eq  = _ordersData.filter(o => !_isOptTrade(o));
+  const opt = _ordersData.filter(o => _isOptTrade(o));
   document.getElementById('eq-trades-count').textContent = `${eq.length} today`;
   document.getElementById('opt-trades-count').textContent = `${opt.length} legs`;
   renderTradeTable('eq-trades-tbody', filterTrades(eq, _eqTradeF), false);
