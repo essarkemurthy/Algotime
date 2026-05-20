@@ -4586,7 +4586,7 @@ if __name__ == "__main__":
     def _open_browser():
         import time
         time.sleep(2)
-        webbrowser.open(f"http://localhost:{PORT}/paper.html")
+        webbrowser.open(f"http://localhost:{PORT}/paper")
 
     threading.Thread(target=_open_browser, daemon=True).start()
     uvicorn.run("app:app", host="0.0.0.0", port=PORT, reload=False, log_level="info")
