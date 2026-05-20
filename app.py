@@ -4534,11 +4534,59 @@ if __name__ == "__main__":
     import uvicorn
     import threading
     import webbrowser
+    import socket
+    import sys
 
+    PORT = 8000
+
+    # ── Pre-start checks ─────────────────────────────────────────────────────
+    def _port_in_use(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    def _kill_existing(port: int) -> bool:
+        """Kill whatever process is holding the port. Returns True if killed."""
+        import subprocess, re
+        try:
+            out = subprocess.check_output(
+                f"netstat -ano | findstr :{port}", shell=True, text=True
+            )
+            pids = set(re.findall(r"\s(\d+)$", out, re.MULTILINE))
+            pids.discard("0")
+            if not pids:
+                return False
+            for pid in pids:
+                subprocess.call(f"taskkill /F /PID {pid}", shell=True,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"  Killed PID {pid} (was holding port {port})")
+            import time; time.sleep(1)
+            return True
+        except Exception as exc:
+            print(f"  Could not kill process on port {port}: {exc}")
+            return False
+
+    if _port_in_use(PORT):
+        print(f"\n[WARNING] Port {PORT} is already in use — another instance may be running.")
+        answer = input("  Kill existing process and start fresh? [Y/n]: ").strip().lower()
+        if answer in ("", "y", "yes"):
+            killed = _kill_existing(PORT)
+            if killed and _port_in_use(PORT):
+                print(f"[ERROR] Port {PORT} still busy after kill attempt. Exiting.")
+                sys.exit(1)
+            elif not killed:
+                print(f"[ERROR] Could not free port {PORT}. Exiting.")
+                sys.exit(1)
+            print(f"  Port {PORT} is now free. Starting app...\n")
+        else:
+            print("Aborted.")
+            sys.exit(0)
+
+    # ── Browser auto-open ─────────────────────────────────────────────────────
     def _open_browser():
         import time
-        time.sleep(2)          # wait for uvicorn to bind
-        webbrowser.open("http://localhost:8000/paper.html")
+        time.sleep(2)
+        webbrowser.open(f"http://localhost:{PORT}/paper.html")
 
     threading.Thread(target=_open_browser, daemon=True).start()
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False, log_level="info")
+    uvicorn.run("app:app", host="0.0.0.0", port=PORT, reload=False, log_level="info")
