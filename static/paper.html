@@ -467,6 +467,7 @@
               <button class="eq-trade-btn" onclick="setTradeFilter('eq','Open',this)">Open</button>
               <button class="eq-trade-btn" onclick="setTradeFilter('eq','Closed',this)">Closed</button>
             </div>
+            <button class="btn btn-ghost" style="font-size:12px;padding:3px 10px;margin-left:8px" onclick="resetDay()" title="Clear all trades and reset P&amp;L for new day">Reset Day</button>
           </div>
         </div>
         <div style="overflow:auto;">
@@ -778,7 +779,8 @@ function connectWS() {
       if (msg.type === 'paper_update' || msg.type === 'paper_pnl') { loadSummary(); loadOrders(); }
       if (msg.type === 'intraday_signals' || msg.type === 'strategy_alert') onSignal(msg);
       if (msg.type === 'paper_strategy_entered' || msg.type === 'paper_strategy_closed') onSignal(msg);
-      if (msg.type === 'market_open') loadScan();
+      if (msg.type === 'market_open') { loadScan(); loadOrders(); loadSummary(); }
+      if (msg.type === 'day_reset') { _ordersData = []; renderTrades(); loadSummary(); loadOrders(); }
       if (msg.type === 'quota') renderSimCalls(msg);
     } catch(_){}
   };
@@ -1236,6 +1238,16 @@ function setTf(el, seg, tf) {
 }
 
 // ── Actions ──────────────────────────────────────────────────────────
+async function resetDay() {
+  if (!confirm('Reset paper portfolio for new trading day?\nAll trades, positions and P&L will be cleared.')) return;
+  const r = await fetch('/api/paper/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  if (r.ok) {
+    _ordersData = [];
+    renderTrades();
+    loadSummary();
+  }
+}
+
 async function cancelAllOpen() {
   if (!confirm('Cancel all open orders?')) return;
   const open = _ordersData.filter(o => (o.status||'').toLowerCase() === 'open');

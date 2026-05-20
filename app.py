@@ -1149,6 +1149,9 @@ async def _intraday_monitor_loop() -> None:
 
         # ── Market-open announcement (once per day, at 9:15 exactly) ───────
         if not _announced_open and t >= _MARKET_OPEN:
+            # Clear previous day's paper trades/positions for a clean slate
+            _paper.reset()
+            log.info("Paper portfolio reset for new trading day.")
             # Subscribe WATCHLIST symbols via Breeze WS so strategies get live ticks
             await asyncio.to_thread(_subscribe_watchlist_feeds)
             # Reset simulated-call counter for the new trading day
@@ -1158,6 +1161,7 @@ async def _intraday_monitor_loop() -> None:
                 "time":     now.strftime("%H:%M:%S"),
                 "watchlist": [w["stock"] for w in WATCHLIST],
             })
+            await broadcast({"type": "day_reset"})   # UI clears trades pane
             _announced_open = True
 
         # ── Scan all strategies (equity + options) for all watchlist symbols ─
@@ -2719,6 +2723,8 @@ async def paper_reset(body: dict = {}):
     _paper.reset()
     summary = _paper.summary(_ltp_cache)
     await broadcast({"type": "paper_update", "data": summary})
+    await broadcast({"type": "day_reset"})
+    log.info("Paper portfolio manually reset. Capital: ₹%,.0f", capital)
     return {"status": "reset", "starting_capital": capital}
 
 
