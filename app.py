@@ -4532,4 +4532,13 @@ async def security_master_symbols(
 
 if __name__ == "__main__":
     import uvicorn
+    import threading
+    import webbrowser
+
+    def _open_browser():
+        import time
+        time.sleep(2)          # wait for uvicorn to bind
+        webbrowser.open("http://localhost:8000/paper.html")
+
+    threading.Thread(target=_open_browser, daemon=True).start()
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False, log_level="info")
