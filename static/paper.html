@@ -780,7 +780,13 @@ function connectWS() {
       if (msg.type === 'intraday_signals' || msg.type === 'strategy_alert') onSignal(msg);
       if (msg.type === 'paper_strategy_entered' || msg.type === 'paper_strategy_closed') onSignal(msg);
       if (msg.type === 'market_open') { loadScan(); loadOrders(); loadSummary(); }
-      if (msg.type === 'day_reset') { _ordersData = []; renderTrades(); loadSummary(); loadOrders(); }
+      if (msg.type === 'day_reset') {
+        _ordersData = []; renderTrades(); loadSummary(); loadOrders();
+        ['feed-intra','feed-opt'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="feed-empty">No signals yet — new trading day.</div>';
+        });
+      }
       if (msg.type === 'quota') renderSimCalls(msg);
     } catch(_){}
   };
