@@ -21,62 +21,63 @@
   body { background: var(--bg-page); }
   .wrap { max-width: var(--rail); margin: 0 auto; padding: 0 32px; }
 
-  /* ── App bar ── */
+  /* ── Dark app bar ── */
   .appbar {
     position: sticky; top: 0; z-index: 30;
-    background: rgba(250,247,241,0.88);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--border-1);
+    background: #14130E;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
   }
   .appbar-inner { display: flex; align-items: center; gap: 28px; height: 64px; }
   .brand {
     display: flex; align-items: center; gap: 10px;
     font-family: var(--font-display);
-    font-size: 22px; letter-spacing: -0.02em; color: var(--fg-1);
+    font-size: 22px; letter-spacing: -0.02em; color: #F5F2EC;
     text-decoration: none;
   }
   .brand-orb {
     width: 22px; height: 22px; border-radius: 999px;
     background: radial-gradient(circle at 30% 30%, var(--tu-teal-300), var(--tu-teal-600) 70%);
-    box-shadow: inset 0 -2px 4px rgba(0,0,0,0.18), 0 0 0 2px var(--tu-sand-100);
+    box-shadow: inset 0 -2px 4px rgba(0,0,0,0.3), 0 0 0 2px rgba(255,255,255,0.08);
   }
-  .brand b { font-weight: 500; }
+  .brand b { font-weight: 500; color: #F5F2EC; }
+  .brand .brand-tag { color: rgba(245,242,236,0.4); font-size: 13px; margin-left: 8px; letter-spacing: 0; font-family: var(--font-sans); }
   .nav { display: flex; gap: 4px; margin-left: 12px; }
   .nav a {
-    text-decoration: none; color: var(--fg-2); font-size: 14px; font-weight: 500;
+    text-decoration: none; color: rgba(245,242,236,0.55); font-size: 14px; font-weight: 500;
     padding: 8px 12px; border-radius: var(--r-md);
     transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
   }
-  .nav a:hover { background: var(--bg-sunken); color: var(--fg-1); }
-  .nav a.active { color: var(--fg-1); background: var(--bg-sunken); }
+  .nav a:hover { background: rgba(255,255,255,0.07); color: #F5F2EC; }
+  .nav a.active { color: #F5F2EC; background: rgba(255,255,255,0.10); }
   .spacer { flex: 1; }
-  .session { display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--fg-2); }
+  .session { display: flex; align-items: center; gap: 18px; font-size: 13px; color: rgba(245,242,236,0.55); }
   .live-dot {
     width: 8px; height: 8px; border-radius: 999px;
     background: var(--tu-success);
-    box-shadow: 0 0 0 3px rgba(95,138,107,0.18);
+    box-shadow: 0 0 0 3px rgba(95,138,107,0.30);
     animation: pulse 1.6s ease-in-out infinite;
     display: inline-block;
   }
-  .live-dot.off { background: var(--fg-3); box-shadow: none; animation: none; }
+  .live-dot.off { background: rgba(255,255,255,0.25); box-shadow: none; animation: none; }
   @keyframes pulse {
-    0%,100% { box-shadow: 0 0 0 3px rgba(95,138,107,0.18); }
-    50%      { box-shadow: 0 0 0 6px rgba(95,138,107,0.06); }
+    0%,100% { box-shadow: 0 0 0 3px rgba(95,138,107,0.30); }
+    50%      { box-shadow: 0 0 0 6px rgba(95,138,107,0.10); }
   }
-  .pill-sim {
-    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
-    color: var(--tu-amber-500); background: var(--tu-amber-100);
-    border: 1px solid rgba(196,139,94,0.35);
-    padding: 4px 10px; border-radius: var(--r-pill);
-  }
-  .session-time { font-family: var(--font-mono); color: var(--fg-1); }
+  .session-time { font-family: var(--font-mono); color: #F5F2EC; }
   .btn-square {
     width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center;
-    border-radius: var(--r-md); background: transparent; border: 1px solid var(--border-2);
-    color: var(--fg-2); cursor: pointer; transition: background var(--dur-base) var(--ease-out);
+    border-radius: var(--r-md); background: transparent; border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(245,242,236,0.55); cursor: pointer; transition: background var(--dur-base) var(--ease-out);
   }
-  .btn-square:hover { background: var(--bg-sunken); color: var(--fg-1); }
+  .btn-square:hover { background: rgba(255,255,255,0.08); color: #F5F2EC; }
+  /* Avatar pill */
+  .avatar-pill {
+    width: 32px; height: 32px; border-radius: 999px;
+    background: var(--tu-teal-500); color: var(--fg-on-brand);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+    cursor: pointer; flex: none;
+  }
   .btn {
     display: inline-flex; align-items: center; gap: 8px;
     font-family: var(--font-sans); font-size: 14px; font-weight: 500;
@@ -94,88 +95,89 @@
   .btn-danger { background: var(--tu-danger); color: #fff; border-color: transparent; }
 
   /* ── Page intro ── */
-  .page-intro { padding: 36px 0 8px; }
+  .page-intro { padding: 36px 0 16px; }
   .page-intro .eyebrow { font-size: 12px; letter-spacing: var(--tr-wider); text-transform: uppercase; color: var(--tu-teal-500); font-weight: 500; margin-bottom: 10px; }
   .page-intro h1 { font-family: var(--font-display); font-size: 44px; font-weight: 400; letter-spacing: -0.02em; line-height: 1.1; color: var(--fg-1); margin: 0 0 8px; }
   .page-intro p { color: var(--fg-2); max-width: 640px; font-size: 16px; margin: 0; }
 
-  /* ── KPI strip ── */
-  .kpi {
-    display: grid; grid-template-columns: repeat(6,1fr); gap: 1px;
-    margin: 28px 0 8px; background: var(--border-1);
-    border: 1px solid var(--border-2); border-radius: var(--r-lg);
-    overflow: hidden; box-shadow: var(--shadow-1);
-  }
-  .kpi-cell { background: var(--bg-surface); padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 6px; }
-  .kpi-label { font-size: 11px; letter-spacing: var(--tr-wider); text-transform: uppercase; color: var(--fg-3); font-weight: 500; }
-  .kpi-value { font-family: var(--font-display); font-size: 26px; font-weight: 400; letter-spacing: -0.02em; color: var(--fg-1); line-height: 1; }
-  .kpi-value.pos { color: var(--tu-success); }
-  .kpi-value.neg { color: var(--tu-danger); }
-  .kpi-sub { font-size: 12px; color: var(--fg-3); }
-  .kpi-sub .delta-pos { color: var(--tu-success); }
-  .kpi-sub .delta-neg { color: var(--tu-danger); }
-
-  /* ── Indices ticker tile ── */
-  .idx-ticker {
-    margin: 20px 0 28px;
-    background: var(--bg-surface);
+  /* ── Indices tile (design-exact) ── */
+  .indices {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--border-1);
     border: 1px solid var(--border-2);
     border-radius: var(--r-lg);
     overflow: hidden;
     box-shadow: var(--shadow-1);
+    margin: 0 0 16px;
   }
-  .idx-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
+  .index-tile {
+    background: var(--bg-surface);
+    padding: 13px 16px 14px;
+    display: flex; flex-direction: column; gap: 4px;
+    transition: background var(--dur-base) var(--ease-out);
   }
-  .idx-cell {
-    padding: 13px 18px 11px;
-    border-right: 1px solid var(--border-1);
-    border-bottom: 1px solid var(--border-1);
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    transition: background 0.15s ease;
-    position: relative;
-  }
-  .idx-cell:nth-child(5n)   { border-right: 0; }
-  .idx-cell:nth-child(n+6)  { border-bottom: 0; }
-  .idx-cell.flash-up   { background: rgba(95,138,107,0.10); }
-  .idx-cell.flash-down { background: rgba(182,106,90,0.10); }
-  .idx-head {
+  .index-tile:hover { background: #FDFBF6; }
+  .index-tile.flash-up   { background: rgba(95,138,107,0.09); }
+  .index-tile.flash-down { background: rgba(182,106,90,0.09); }
+  .index-tile .name {
     display: flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.04em; color: var(--fg-2);
+    text-transform: uppercase;
   }
-  .idx-name {
-    font-size: 11px; font-weight: 600;
-    letter-spacing: 0.04em; text-transform: uppercase;
-    color: var(--fg-2);
-  }
-  .idx-badge {
-    font-size: 9.5px; font-weight: 600;
-    letter-spacing: 0.04em;
+  .index-tile .name .seg-tag {
+    font-size: 9px; font-weight: 500;
+    letter-spacing: 0.04em; color: var(--fg-3);
+    background: var(--bg-sunken);
     padding: 1px 5px; border-radius: var(--r-xs);
-    line-height: 1.5;
-    flex: none;
   }
-  .idx-badge.nse { background: var(--tu-teal-50);  color: var(--tu-teal-700); }
-  .idx-badge.bse { background: #E8F0F8;             color: #2B5FAD; }
-  .idx-badge.sec { background: var(--bg-sunken);    color: var(--fg-3); }
-  .idx-val {
+  .index-tile .val {
     font-family: var(--font-mono);
     font-size: 17px; font-weight: 500;
-    letter-spacing: -0.01em;
-    color: var(--fg-1);
-    white-space: nowrap;
-    display: flex; align-items: baseline; gap: 6px;
+    color: var(--fg-1); letter-spacing: -0.005em;
+    line-height: 1.2; margin-top: 4px;
+    display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
   }
-  .idx-chg {
-    font-size: 12px; font-weight: 500;
+  .index-tile .val .chg { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+  .index-tile .val .chg.pos { color: var(--tu-success); }
+  .index-tile .val .chg.neg { color: var(--tu-danger); }
+  .index-tile .val .chg.flat { color: var(--fg-3); }
+  .index-tile.loading .val { color: var(--fg-4); }
+
+  /* ── Summary row (compact KPIs, below indices) ── */
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 1px;
+    background: var(--border-1);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    margin-bottom: 12px;
+    box-shadow: var(--shadow-1);
+  }
+  .sum-cell {
+    background: var(--bg-surface);
+    padding: 12px 16px 14px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .sum-cell .l {
+    font-size: 10px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3); font-weight: 500;
+  }
+  .sum-cell .v {
     font-family: var(--font-mono);
+    font-size: 17px; font-weight: 500;
+    color: var(--fg-1); line-height: 1.15;
   }
-  .idx-chg.pos { color: var(--tu-success); }
-  .idx-chg.neg { color: var(--tu-danger); }
-  .idx-chg.flat { color: var(--fg-3); }
-  .idx-cell.loading .idx-val { color: var(--fg-4); }
+  .sum-cell .v.pos { color: var(--tu-success); }
+  .sum-cell .v.neg { color: var(--tu-danger); }
+  .sum-cell .v.flat { color: var(--fg-3); }
+  .sum-cell .s { font-size: 11px; color: var(--fg-3); }
+  .sum-cell .s .delta-pos { color: var(--tu-success); }
+  .sum-cell .s .delta-neg { color: var(--tu-danger); }
 
   /* ── Section ── */
   .section { padding: 40px 0 8px; }
@@ -324,7 +326,8 @@
 
   @media (max-width: 1100px) {
     .row, .row.even { grid-template-columns: 1fr; }
-    .kpi { grid-template-columns: repeat(3,1fr); }
+    .indices { grid-template-columns: repeat(2, 1fr); }
+    .summary-row { grid-template-columns: repeat(3, 1fr); }
   }
 </style>
 </head>
@@ -345,7 +348,6 @@
     </nav>
     <div class="spacer"></div>
     <div class="session">
-      <span class="pill-sim">SIMULATION</span>
       <span>
         <span class="live-dot off" id="conn-dot" style="margin-right:6px;"></span><span id="conn-label">Connecting…</span>
       </span>
@@ -358,6 +360,7 @@
       <svg class="ic" viewBox="0 0 24 24" style="stroke:currentColor"><path d="M5 12h14M12 5v14"/></svg>
       New strategy
     </a>
+    <span class="avatar-pill" title="SRK">SRK</span>
   </div>
 </header>
 
@@ -370,85 +373,81 @@
     <p>Intraday equity and index option contracts under live monitoring. Strategies post signals in real time; every execution lands in the consolidated book below. No real capital is at risk.</p>
   </section>
 
-  <!-- KPI strip -->
-  <section class="kpi" aria-label="Day summary">
-    <div class="kpi-cell">
-      <span class="kpi-label">Net P&amp;L today</span>
-      <span class="kpi-value" id="kpi-net">—</span>
-      <span class="kpi-sub" id="kpi-net-sub">on deployed capital</span>
+  <!-- ── Market indices (10 indices, live via WebSocket) ── -->
+  <section class="indices" aria-label="Indian market indices" id="idx-section">
+    <div class="index-tile loading" data-sym="NIFTY">
+      <div class="name">NIFTY 50 <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="kpi-cell">
-      <span class="kpi-label">Realized</span>
-      <span class="kpi-value" id="kpi-realized">—</span>
-      <span class="kpi-sub" id="kpi-realized-sub">closed trades</span>
+    <div class="index-tile loading" data-sym="SENSEX">
+      <div class="name">SENSEX <span class="seg-tag">BSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="kpi-cell">
-      <span class="kpi-label">Unrealized</span>
-      <span class="kpi-value" id="kpi-unrealized">—</span>
-      <span class="kpi-sub" id="kpi-unrealized-sub">open positions</span>
+    <div class="index-tile loading" data-sym="CNXBAN">
+      <div class="name">BANK NIFTY <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="kpi-cell">
-      <span class="kpi-label">Capital deployed</span>
-      <span class="kpi-value" id="kpi-capital">—</span>
-      <span class="kpi-sub" id="kpi-capital-sub">of allocated</span>
+    <div class="index-tile loading" data-sym="FINNIFTY">
+      <div class="name">FIN NIFTY <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="kpi-cell">
-      <span class="kpi-label">Signals fired</span>
-      <span class="kpi-value" id="kpi-signals">—</span>
-      <span class="kpi-sub" id="kpi-signals-sub">acted · filtered</span>
+    <div class="index-tile loading" data-sym="MIDCPNIFTY">
+      <div class="name">NIFTY MIDCAP 100 <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="kpi-cell">
-      <span class="kpi-label">Orders placed</span>
-      <span class="kpi-value" id="kpi-orders">—</span>
-      <span class="kpi-sub" id="kpi-orders-sub">filled · open · closed</span>
+    <div class="index-tile loading" data-sym="NIFTY_SMLCAP">
+      <div class="name">NIFTY SMALLCAP 100 <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+    </div>
+    <div class="index-tile loading" data-sym="NIFTY_IT">
+      <div class="name">NIFTY IT <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+    </div>
+    <div class="index-tile loading" data-sym="NIFTY_PHARMA">
+      <div class="name">NIFTY PHARMA <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+    </div>
+    <div class="index-tile loading" data-sym="NIFTY_AUTO">
+      <div class="name">NIFTY AUTO <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+    </div>
+    <div class="index-tile loading" data-sym="NIFTY_FMCG">
+      <div class="name">NIFTY FMCG <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
   </section>
 
-  <!-- ── Market indices ticker (10 indices, live via WebSocket) ── -->
-  <section class="idx-ticker" aria-label="Market indices" id="idx-ticker">
-    <div class="idx-grid" id="idx-grid">
-      <!-- Row 1 — broad market -->
-      <div class="idx-cell loading" data-sym="NIFTY">
-        <div class="idx-head"><span class="idx-name">NIFTY 50</span><span class="idx-badge nse">NSE</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="SENSEX">
-        <div class="idx-head"><span class="idx-name">SENSEX</span><span class="idx-badge bse">BSE</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="CNXBAN">
-        <div class="idx-head"><span class="idx-name">BANK NIFTY</span><span class="idx-badge nse">NSE</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="FINNIFTY">
-        <div class="idx-head"><span class="idx-name">FIN NIFTY</span><span class="idx-badge nse">NSE</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="MIDCPNIFTY">
-        <div class="idx-head"><span class="idx-name">NIFTY MIDCAP 100</span><span class="idx-badge nse">NSE</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <!-- Row 2 — sector / size -->
-      <div class="idx-cell loading" data-sym="NIFTY_SMLCAP">
-        <div class="idx-head"><span class="idx-name">NIFTY SMALLCAP 100</span><span class="idx-badge sec">SEC</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="NIFTY_IT">
-        <div class="idx-head"><span class="idx-name">NIFTY IT</span><span class="idx-badge sec">SEC</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="NIFTY_PHARMA">
-        <div class="idx-head"><span class="idx-name">NIFTY PHARMA</span><span class="idx-badge sec">SEC</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="NIFTY_AUTO">
-        <div class="idx-head"><span class="idx-name">NIFTY AUTO</span><span class="idx-badge sec">SEC</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
-      <div class="idx-cell loading" data-sym="NIFTY_FMCG">
-        <div class="idx-head"><span class="idx-name">NIFTY FMCG</span><span class="idx-badge sec">SEC</span></div>
-        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
-      </div>
+  <!-- ── Account summary strip ── -->
+  <section class="summary-row" aria-label="Account summary">
+    <div class="sum-cell">
+      <span class="l">Realized P&amp;L</span>
+      <span class="v flat" id="sum-realized">—</span>
+      <span class="s" id="sum-realized-sub">closed trades</span>
+    </div>
+    <div class="sum-cell">
+      <span class="l">Unrealized P&amp;L</span>
+      <span class="v flat" id="sum-unrealized">—</span>
+      <span class="s" id="sum-unrealized-sub">open positions</span>
+    </div>
+    <div class="sum-cell">
+      <span class="l">Open · intraday</span>
+      <span class="v flat" id="sum-open-intraday">—</span>
+      <span class="s" id="sum-open-intraday-sub">positions</span>
+    </div>
+    <div class="sum-cell">
+      <span class="l">Open · options</span>
+      <span class="v flat" id="sum-open-options">—</span>
+      <span class="s" id="sum-open-options-sub">positions</span>
+    </div>
+    <div class="sum-cell">
+      <span class="l">Capital deployed</span>
+      <span class="v flat" id="sum-capital">—</span>
+      <span class="s" id="sum-capital-sub">of allocated</span>
+    </div>
+    <div class="sum-cell">
+      <span class="l">Net P&amp;L today</span>
+      <span class="v flat" id="sum-net">—</span>
+      <span class="s" id="sum-net-sub">on deployed capital</span>
     </div>
   </section>
 
@@ -1033,31 +1032,37 @@ async function loadSummary() {
   try {
     const r = await fetch('/api/paper/summary');
     const d = await r.json();
-    setKpiPnl('kpi-net', d.pnl_today ?? d.net_pnl);
-    setKpiPnl('kpi-realized', d.realized_pnl);
-    setKpiPnl('kpi-unrealized', d.unrealized_pnl);
-    setKpiNum('kpi-capital', d.capital_deployed != null ? '₹'+fmtIN(d.capital_deployed/100000,2)+'L' : '—');
-    setKpiNum('kpi-signals', d.signals_fired ?? d.total_signals ?? '—');
-    setKpiNum('kpi-orders', d.orders_placed ?? d.total_orders ?? '—');
-    if (d.win_rate != null) document.getElementById('kpi-realized-sub').textContent = `Win rate ${Math.round(d.win_rate*100)}%`;
-    if (d.open_positions != null) document.getElementById('kpi-unrealized-sub').textContent = `${d.open_positions} open position${d.open_positions!==1?'s':''}`;
-    if (d.signals_acted != null) document.getElementById('kpi-signals-sub').textContent = `${d.signals_acted} acted · ${(d.signals_fired??0)-(d.signals_acted??0)} filtered`;
-    if (d.filled_orders != null) document.getElementById('kpi-orders-sub').textContent = `${d.filled_orders} filled · ${d.open_orders??0} open · ${d.closed_orders??0} closed`;
+    setSumPnl('sum-realized', d.realized_pnl);
+    setSumPnl('sum-unrealized', d.unrealized_pnl);
+    setSumPnl('sum-net', d.pnl_today ?? d.net_pnl);
+    setSumNum('sum-capital', d.capital_deployed != null ? '₹'+fmtIN(d.capital_deployed/100000,2)+'L' : '—');
+    // open intraday / options position counts
+    const openIntra = d.open_intraday ?? d.open_positions ?? null;
+    const openOpts  = d.open_options  ?? null;
+    setSumNum('sum-open-intraday', openIntra != null ? String(openIntra) : '—');
+    setSumNum('sum-open-options',  openOpts  != null ? String(openOpts)  : '—');
+    if (d.win_rate != null) document.getElementById('sum-realized-sub').textContent = `Win rate ${Math.round(d.win_rate*100)}%`;
+    if (openIntra != null) document.getElementById('sum-open-intraday-sub').textContent = `position${openIntra!==1?'s':''}`;
+    if (openOpts  != null) document.getElementById('sum-open-options-sub').textContent  = `position${openOpts !==1?'s':''}`;
+    if (d.capital_pct != null) document.getElementById('sum-capital-sub').textContent = `${Math.round(d.capital_pct)}% of allocated`;
     updateOBStats(d);
   } catch(_){}
 }
 
-function setKpiPnl(id, val) {
+function setSumPnl(id, val) {
   const el = document.getElementById(id);
   if (!el) return;
-  if (val == null || isNaN(val)) { el.textContent = '—'; el.className = 'kpi-value'; return; }
-  el.className = 'kpi-value' + (val > 0 ? ' pos' : val < 0 ? ' neg' : '');
-  el.textContent = (val >= 0 ? '+ ' : '− ') + '₹' + fmtIN(Math.abs(val), 0);
+  if (val == null || isNaN(val)) { el.textContent = '—'; el.className = 'v flat'; return; }
+  el.className = 'v ' + (val > 0 ? 'pos' : val < 0 ? 'neg' : 'flat');
+  el.textContent = (val >= 0 ? '+' : '−') + '₹' + fmtIN(Math.abs(val), 0);
 }
-function setKpiNum(id, val) {
+function setSumNum(id, val) {
   const el = document.getElementById(id);
   if (el) el.textContent = val ?? '—';
 }
+// kept for backward compat (orderbook stats still calls these)
+function setKpiPnl(id, val) { setSumPnl(id, val); }
+function setKpiNum(id, val)  { setSumNum(id, val); }
 
 // ── Scan → watchlist signals ─────────────────────────────────────────
 async function loadScan() {
@@ -1724,16 +1729,15 @@ function _idxFmt(v) {
 }
 
 function _idxUpdateCell(sym, ltp, changePct) {
-  const cell = document.querySelector(`.idx-cell[data-sym="${sym}"]`);
+  const cell = document.querySelector(`.index-tile[data-sym="${sym}"]`);
   if (!cell) return;
   cell.classList.remove('loading');
 
-  const ltpEl = cell.querySelector('.idx-ltp');
-  const chgEl = cell.querySelector('.idx-chg');
+  const ltpEl = cell.querySelector('.ltp-val');
+  const chgEl = cell.querySelector('.chg');
   if (ltpEl) ltpEl.textContent = _idxFmt(ltp);
 
   let pct = changePct;
-  // Derive pct from prev_close if not provided
   if (pct == null && ltp != null && _idxPrevClose[sym]) {
     pct = (ltp - _idxPrevClose[sym]) / _idxPrevClose[sym] * 100;
   }
@@ -1741,11 +1745,11 @@ function _idxUpdateCell(sym, ltp, changePct) {
   if (chgEl) {
     if (pct != null) {
       const sign = pct >= 0 ? '+' : '';
-      chgEl.textContent = `(${sign}${pct.toFixed(2)}%)`;
-      chgEl.className = 'idx-chg ' + (pct > 0 ? 'pos' : pct < 0 ? 'neg' : 'flat');
+      chgEl.textContent = `${sign}${pct.toFixed(2)}%`;
+      chgEl.className = 'chg ' + (pct > 0 ? 'pos' : pct < 0 ? 'neg' : 'flat');
     } else {
       chgEl.textContent = '';
-      chgEl.className = 'idx-chg flat';
+      chgEl.className = 'chg flat';
     }
   }
 
