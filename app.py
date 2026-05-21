@@ -606,9 +606,19 @@ def _on_tick(tick: dict) -> None:
         _tick_log[cache_key] = deque(maxlen=200)
     _tick_log[cache_key].appendleft(entry)
 
-    if cache_key == _tick_watch and _main_loop:
+    _loop_ok = _main_loop and not _main_loop.is_closed()
+
+    if cache_key == _tick_watch and _loop_ok:
         asyncio.run_coroutine_threadsafe(
             broadcast({"type": "tick", "symbol": cache_key, "data": entry}),
+            _main_loop,
+        )
+
+    # Broadcast index ticks to /ws/indices regardless of _tick_watch
+    if cache_key in _IDX_CACHE_KEYS and _loop_ok:
+        idx_msg = {"symbol": cache_key, "ltp": ltp_f, "change_pct": None, "ts": entry["t"]}
+        asyncio.run_coroutine_threadsafe(
+            _ws_broadcast_v2(_ws_indices_clients, idx_msg),
             _main_loop,
         )
 
@@ -733,11 +743,23 @@ def _setup_ws_feeds() -> None:
                 right_str, str(pos["strike"]), expiry_str,
                 cache_key=pos["symbol"],
             )
-    # Also subscribe all WATCHLIST symbols so strategies get live LTP ticks.
-    # Use display name as cache_key so ticks land under the canonical HTML element ID.
+    # Subscribe all WATCHLIST symbols so strategies get live LTP ticks.
     for w in WATCHLIST:
         _ws_subscribe(w["stock"], w["exchange"], "cash", cache_key=w.get("display", w["stock"]))
+    # Subscribe all 10 index tiles for continuous WebSocket tick monitoring.
+    _subscribe_index_feeds()
     log.info("Breeze WS feeds active — subscribed %d symbols.", len(_ws_subscriptions))
+
+
+def _subscribe_index_feeds() -> None:
+    """Subscribe all 10 index definitions to Breeze WebSocket for continuous LTP ticks.
+    Breeze requires exact ws_code strings (e.g. 'NIFTY 50', 'NIFTY BANK') with product_type='stocks'."""
+    if not (_session and _session._api):
+        return
+    live = [idx for idx in _INDEX_DEFS if idx.get("ws_live")]
+    for idx in live:
+        _ws_subscribe(idx["ws_code"], idx["exchange"], idx["ws_product"], cache_key=idx["symbol"])
+    log.info("Index WS feeds subscribed (%d live indices).", len(live))
 
 
 def _subscribe_watchlist_feeds() -> None:
@@ -747,7 +769,8 @@ def _subscribe_watchlist_feeds() -> None:
         return
     for w in WATCHLIST:
         _ws_subscribe(w["stock"], w["exchange"], "cash", cache_key=w.get("display", w["stock"]))
-    log.info("Watchlist WS subscriptions refreshed (%d symbols).", len(WATCHLIST))
+    _subscribe_index_feeds()
+    log.info("Watchlist + index WS subscriptions refreshed (%d symbols).", len(_ws_subscriptions))
 
 
 def _reset_sim_calls() -> None:
@@ -4684,19 +4707,21 @@ _load_wl2()
 # ── 10 Index definitions ──────────────────────────────────────────────────────
 
 _INDEX_DEFS = [
-    # Row 1 — benchmark indices (broad market)
-    {"symbol":"NIFTY",       "name":"Nifty 50",         "exchange":"NSE","kind":"idx","breeze":"NIFTY"},
-    {"symbol":"SENSEX",      "name":"Sensex",            "exchange":"BSE","kind":"idx","breeze":"SENSEX"},
-    {"symbol":"CNXBAN",      "name":"Bank Nifty",        "exchange":"NSE","kind":"idx","breeze":"CNXBAN"},
-    {"symbol":"FINNIFTY",    "name":"Fin Nifty",         "exchange":"NSE","kind":"idx","breeze":"FINNIFTY"},
-    {"symbol":"MIDCPNIFTY",  "name":"Nifty Midcap 100", "exchange":"NSE","kind":"idx","breeze":"MIDCPNIFTY"},
-    # Row 2 — sector / size indices
-    {"symbol":"NIFTY_SMLCAP","name":"Nifty Smallcap 100","exchange":"NSE","kind":"sec","breeze":"NIFTYSMLCAP100"},
-    {"symbol":"NIFTY_IT",    "name":"Nifty IT",          "exchange":"NSE","kind":"sec","breeze":"NIFTYIT"},
-    {"symbol":"NIFTY_PHARMA","name":"Nifty Pharma",      "exchange":"NSE","kind":"sec","breeze":"NIFTYPHARMA"},
-    {"symbol":"NIFTY_AUTO",  "name":"Nifty Auto",        "exchange":"NSE","kind":"sec","breeze":"NIFTYAUTO"},
-    {"symbol":"NIFTY_FMCG",  "name":"Nifty FMCG",       "exchange":"NSE","kind":"sec","breeze":"NIFTYFMCG"},
+    # Row 1 — Breeze WebSocket live (ws_live=True)
+    {"symbol":"NIFTY",    "name":"Nifty 50",           "exchange":"NSE","kind":"idx","ws_code":"NIFTY 50",    "ws_product":"stocks","ws_live":True},
+    {"symbol":"SENSEX",   "name":"Sensex",              "exchange":"BSE","kind":"idx","ws_code":"SENSEX",      "ws_product":"stocks","ws_live":True},
+    {"symbol":"CNXBAN",   "name":"Bank Nifty",          "exchange":"NSE","kind":"idx","ws_code":"NIFTY BANK",  "ws_product":"stocks","ws_live":True},
+    {"symbol":"FINNIFTY", "name":"Fin Nifty",           "exchange":"NSE","kind":"idx","ws_code":"CNX FINANCE", "ws_product":"stocks","ws_live":True},
+    {"symbol":"NIFTY_IT", "name":"Nifty IT",            "exchange":"NSE","kind":"sec","ws_code":"NIFTY IT",    "ws_product":"stocks","ws_live":True},
+    # Row 2 — REST API only on Breeze (ws_live=False)
+    {"symbol":"MIDCPNIFTY",   "name":"Nifty Midcap 100",  "exchange":"NSE","kind":"idx","ws_code":"","ws_product":"","ws_live":False},
+    {"symbol":"NIFTY_SMLCAP", "name":"Nifty Smallcap 100","exchange":"NSE","kind":"sec","ws_code":"","ws_product":"","ws_live":False},
+    {"symbol":"NIFTY_PHARMA", "name":"Nifty Pharma",       "exchange":"NSE","kind":"sec","ws_code":"","ws_product":"","ws_live":False},
+    {"symbol":"NIFTY_AUTO",   "name":"Nifty Auto",         "exchange":"NSE","kind":"sec","ws_code":"","ws_product":"","ws_live":False},
+    {"symbol":"NIFTY_FMCG",   "name":"Nifty FMCG",        "exchange":"NSE","kind":"sec","ws_code":"","ws_product":"","ws_live":False},
 ]
+_IDX_CACHE_KEYS: set = {d["symbol"] for d in _INDEX_DEFS}
+
 
 # ── /api/indices ──────────────────────────────────────────────────────────────
 
@@ -4706,7 +4731,7 @@ async def get_indices():
     result = []
     for idx in _INDEX_DEFS:
         sym  = idx["symbol"]
-        ltp  = _ltp_cache.get(sym) or _ltp_cache.get(idx["breeze"])
+        ltp = _ltp_cache.get(sym)
         pc   = None
         if _db_store:
             try:
@@ -4719,6 +4744,7 @@ async def get_indices():
             "name":       idx["name"],
             "exchange":   idx["exchange"],
             "kind":       idx.get("kind", "idx"),
+            "ws_live":    idx.get("ws_live", False),
             "value":      ltp,
             "prev_close": pc,
             "change_pct": change_pct,
@@ -5351,8 +5377,7 @@ async def broadcast(msg: dict) -> None:  # type: ignore[misc]
         if sym and ltp:
             tick_msg = {"symbol": sym, "ltp": ltp, "change_pct": None, "ts": msg.get("ts", "")}
             await _ws_broadcast_v2(_ws_ticks_clients, tick_msg)
-            _INDEX_SYMS = {d["symbol"] for d in _INDEX_DEFS} | {d["breeze"] for d in _INDEX_DEFS}
-            if sym in _INDEX_SYMS:
+            if sym in _IDX_CACHE_KEYS:
                 await _ws_broadcast_v2(_ws_indices_clients, tick_msg)
     # Bulk LTP
     elif mtype == "ltp" and isinstance(msg.get("data"), dict):

@@ -145,6 +145,13 @@
   .index-tile .val .chg.neg { color: var(--tu-danger); }
   .index-tile .val .chg.flat { color: var(--fg-3); }
   .index-tile.loading .val { color: var(--fg-4); }
+  .index-tile.no-live { background: var(--bg-page); }
+  .index-tile.no-live .name { color: var(--fg-4); }
+  .no-live-badge {
+    font-size: 11px; font-weight: 500; font-family: var(--font-sans);
+    color: var(--tu-danger); opacity: 0.6;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
 
   /* ── Summary row (compact KPIs, below indices) ── */
   .summary-row {
@@ -373,47 +380,49 @@
     <p>Intraday equity and index option contracts under live monitoring. Strategies post signals in real time; every execution lands in the consolidated book below. No real capital is at risk.</p>
   </section>
 
-  <!-- ── Market indices (10 indices, live via WebSocket) ── -->
+  <!-- ── Market indices (row 1: 5 Breeze live · row 2: REST-only) ── -->
   <section class="indices" aria-label="Indian market indices" id="idx-section">
-    <div class="index-tile loading" data-sym="NIFTY">
+    <!-- Row 1 — Breeze WebSocket live -->
+    <div class="index-tile loading" data-sym="NIFTY" data-live="true">
       <div class="name">NIFTY 50 <span class="seg-tag">NSE</span></div>
       <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="index-tile loading" data-sym="SENSEX">
+    <div class="index-tile loading" data-sym="SENSEX" data-live="true">
       <div class="name">SENSEX <span class="seg-tag">BSE</span></div>
       <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="index-tile loading" data-sym="CNXBAN">
+    <div class="index-tile loading" data-sym="CNXBAN" data-live="true">
       <div class="name">BANK NIFTY <span class="seg-tag">NSE</span></div>
       <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="index-tile loading" data-sym="FINNIFTY">
+    <div class="index-tile loading" data-sym="FINNIFTY" data-live="true">
       <div class="name">FIN NIFTY <span class="seg-tag">NSE</span></div>
       <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="index-tile loading" data-sym="MIDCPNIFTY">
-      <div class="name">NIFTY MIDCAP 100 <span class="seg-tag">NSE</span></div>
-      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
-    </div>
-    <div class="index-tile loading" data-sym="NIFTY_SMLCAP">
-      <div class="name">NIFTY SMALLCAP 100 <span class="seg-tag">NSE</span></div>
-      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
-    </div>
-    <div class="index-tile loading" data-sym="NIFTY_IT">
+    <div class="index-tile loading" data-sym="NIFTY_IT" data-live="true">
       <div class="name">NIFTY IT <span class="seg-tag">NSE</span></div>
       <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
     </div>
-    <div class="index-tile loading" data-sym="NIFTY_PHARMA">
+    <!-- Row 2 — REST only on Breeze (no live feed) -->
+    <div class="index-tile no-live" data-sym="MIDCPNIFTY" data-live="false">
+      <div class="name">NIFTY MIDCAP 100 <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="no-live-badge">✕ No live feed</span></div>
+    </div>
+    <div class="index-tile no-live" data-sym="NIFTY_SMLCAP" data-live="false">
+      <div class="name">NIFTY SMALLCAP 100 <span class="seg-tag">NSE</span></div>
+      <div class="val"><span class="no-live-badge">✕ No live feed</span></div>
+    </div>
+    <div class="index-tile no-live" data-sym="NIFTY_PHARMA" data-live="false">
       <div class="name">NIFTY PHARMA <span class="seg-tag">NSE</span></div>
-      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+      <div class="val"><span class="no-live-badge">✕ No live feed</span></div>
     </div>
-    <div class="index-tile loading" data-sym="NIFTY_AUTO">
+    <div class="index-tile no-live" data-sym="NIFTY_AUTO" data-live="false">
       <div class="name">NIFTY AUTO <span class="seg-tag">NSE</span></div>
-      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+      <div class="val"><span class="no-live-badge">✕ No live feed</span></div>
     </div>
-    <div class="index-tile loading" data-sym="NIFTY_FMCG">
+    <div class="index-tile no-live" data-sym="NIFTY_FMCG" data-live="false">
       <div class="name">NIFTY FMCG <span class="seg-tag">NSE</span></div>
-      <div class="val"><span class="ltp-val">—</span> <span class="chg flat"></span></div>
+      <div class="val"><span class="no-live-badge">✕ No live feed</span></div>
     </div>
   </section>
 
@@ -1730,7 +1739,7 @@ function _idxFmt(v) {
 
 function _idxUpdateCell(sym, ltp, changePct) {
   const cell = document.querySelector(`.index-tile[data-sym="${sym}"]`);
-  if (!cell) return;
+  if (!cell || cell.dataset.live === 'false') return;
   cell.classList.remove('loading');
 
   const ltpEl = cell.querySelector('.ltp-val');
@@ -1796,8 +1805,11 @@ async function init() {
   seedWatchlistFromDB();   // restore last-known prices without a Breeze call
   connectWS();
   connectIdxWS();
-  loadIndices();
-  setInterval(loadIndices, 30000);  // refresh every 30s as fallback
+  // Seed tiles once on load — only during market hours (9:15–15:30 IST)
+  const _now = new Date();
+  const _istMin = _now.getUTCHours() * 60 + _now.getUTCMinutes() + 330; // UTC+5:30
+  const _istMinDay = _istMin % (24 * 60);
+  if (_istMinDay >= 555 && _istMinDay <= 930) loadIndices(); // 9:15=555, 15:30=930
   await loadStrategies();  // must complete first so _armedStratIds is populated
   await Promise.allSettled([loadSummary(), loadScan(), loadOrders()]);
   setInterval(loadSummary,   10000);
