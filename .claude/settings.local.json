@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Process -Name python,uvicorn -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{n='Cmd';e={$_.MainModule.FileName}} | Format-Table -AutoSize)"
+    ]
+  }
+}

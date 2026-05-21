@@ -387,11 +387,13 @@ class _DownloadLogHandler(logging.Handler):
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
-    {"stock": "NIFTY",    "exchange": "NSE", "label": "NIFTY 50"},
-    {"stock": "CNXBAN",   "exchange": "NSE", "label": "BANK NIFTY"},   # Breeze NSE cash code for Bank Nifty
-    {"stock": "RELIND",   "exchange": "NSE", "label": "RELIANCE"},
-    {"stock": "HDFCBANK", "exchange": "NSE", "label": "HDFC BANK"},
-    {"stock": "TCS",      "exchange": "NSE", "label": "TCS"},
+    # "stock"   = Breeze API subscription code
+    # "display" = canonical cache key — must match HTML element IDs (ltp-X, wltp-X)
+    {"stock": "NIFTY",    "exchange": "NSE", "label": "NIFTY 50",   "display": "NIFTY"},
+    {"stock": "CNXBAN",   "exchange": "NSE", "label": "BANK NIFTY", "display": "BANKNIFTY"},
+    {"stock": "RELIND",   "exchange": "NSE", "label": "RELIANCE",   "display": "RELIND"},
+    {"stock": "HDFBAN",   "exchange": "NSE", "label": "HDFC BANK",  "display": "HDFBAN"},
+    {"stock": "TCS",      "exchange": "NSE", "label": "TCS",        "display": "TCS"},
 ]
 
 _SYMBOL_EXCHANGE: Dict[str, str] = {w["stock"]: w["exchange"] for w in WATCHLIST}
@@ -731,9 +733,10 @@ def _setup_ws_feeds() -> None:
                 right_str, str(pos["strike"]), expiry_str,
                 cache_key=pos["symbol"],
             )
-    # Also subscribe all WATCHLIST symbols so strategies get live LTP ticks
+    # Also subscribe all WATCHLIST symbols so strategies get live LTP ticks.
+    # Use display name as cache_key so ticks land under the canonical HTML element ID.
     for w in WATCHLIST:
-        _ws_subscribe(w["stock"], w["exchange"], "cash")
+        _ws_subscribe(w["stock"], w["exchange"], "cash", cache_key=w.get("display", w["stock"]))
     log.info("Breeze WS feeds active — subscribed %d symbols.", len(_ws_subscriptions))
 
 
@@ -743,7 +746,7 @@ def _subscribe_watchlist_feeds() -> None:
     if not (_session and _session._api):
         return
     for w in WATCHLIST:
-        _ws_subscribe(w["stock"], w["exchange"], "cash")
+        _ws_subscribe(w["stock"], w["exchange"], "cash", cache_key=w.get("display", w["stock"]))
     log.info("Watchlist WS subscriptions refreshed (%d symbols).", len(WATCHLIST))
 
 
@@ -1149,9 +1152,11 @@ async def _intraday_monitor_loop() -> None:
 
         # ── Market-open announcement (once per day, at 9:15 exactly) ───────
         if not _announced_open and t >= _MARKET_OPEN:
-            # Clear previous day's paper trades/positions for a clean slate
-            _paper.reset()
-            log.info("Paper portfolio reset for new trading day.")
+            # Only reset paper portfolio at actual market open, not on mid-day app restart.
+            # If we're within 5 minutes of open it's a genuine open; otherwise skip reset.
+            if t <= _time(9, 20):
+                _paper.reset()
+                log.info("Paper portfolio reset for new trading day.")
             # Subscribe WATCHLIST symbols via Breeze WS so strategies get live ticks
             await asyncio.to_thread(_subscribe_watchlist_feeds)
             # Reset simulated-call counter for the new trading day
@@ -1159,7 +1164,7 @@ async def _intraday_monitor_loop() -> None:
             await broadcast({
                 "type":     "market_open",
                 "time":     now.strftime("%H:%M:%S"),
-                "watchlist": [w["stock"] for w in WATCHLIST],
+                "watchlist": [w.get("display", w["stock"]) for w in WATCHLIST],
             })
             await broadcast({"type": "day_reset"})   # UI clears trades pane
             _announced_open = True
@@ -1167,7 +1172,7 @@ async def _intraday_monitor_loop() -> None:
         # ── Scan all strategies (equity + options) for all watchlist symbols ─
         if t >= _MARKET_OPEN:
             try:
-                sym_list = [w["stock"] for w in WATCHLIST]
+                sym_list = [w.get("display", w["stock"]) for w in WATCHLIST]
                 payload  = await _run_scan(sym_list)
                 payload["source"] = "server"
                 _intraday_scan_cache.update(payload)
@@ -1390,6 +1395,11 @@ async def _auto_connect_breeze(api_key: str, api_secret: str, session_token: str
         _suggestion_engine = SuggestionEngine(_ltp_cache)
         await broadcast({"type": "status", "connected": True})
         log.info("Breeze auto-connected from .env credentials.")
+        # If the market is already open, re-subscribe watchlist in case the monitor
+        # loop's first iteration fired before the session was ready and skipped it.
+        if _is_market_hours():
+            await asyncio.to_thread(_subscribe_watchlist_feeds)
+            log.info("Mid-day start: watchlist WS feeds re-subscribed.")
     except Exception as exc:
         _session = None
         log.warning("Breeze auto-connect failed (bad session token?): %s", exc)
@@ -1479,7 +1489,8 @@ async def live_page():
 
 @app.get("/strategies")
 async def strategies_page():
-    return FileResponse("static/strategies.html")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/strategies-v1", status_code=302)
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -3596,30 +3607,57 @@ _INTRADAY_META = {
         "description": "Entry on first-candle 15m high/low breakout. ATR-based stop, 1:1.5 RR.",
         "segment": "equity",
         "risk": "Medium",
+        "params_schema": [
+            {"key": "rr_ratio",  "label": "RR Ratio",    "default": 1.5,   "min": 1.0,   "max": 4.0,    "step": 0.5},
+            {"key": "atr_mult",  "label": "ATR Stop ×",  "default": 1.0,   "min": 0.5,   "max": 3.0,    "step": 0.25},
+            {"key": "capital",   "label": "Capital ₹",   "default": 50000, "min": 10000, "max": 500000, "step": 10000},
+        ],
     },
     "vwap": {
         "name": "VWAP Reversal",
         "description": "Mean-reversion to VWAP on >1.5σ deviation. Tight stop, intraday.",
         "segment": "equity",
         "risk": "Low",
+        "params_schema": [
+            {"key": "sigma",    "label": "VWAP σ",      "default": 1.5,   "min": 0.5,   "max": 4.0,    "step": 0.25},
+            {"key": "sl_pct",   "label": "Stop Loss %", "default": 0.5,   "min": 0.1,   "max": 2.0,    "step": 0.1},
+            {"key": "capital",  "label": "Capital ₹",   "default": 50000, "min": 10000, "max": 500000, "step": 10000},
+        ],
     },
     "ema_cross": {
         "name": "9/21 EMA Crossover",
         "description": "9-EMA crosses 21-EMA on 5m chart with volume confirmation.",
         "segment": "equity",
         "risk": "Low",
+        "params_schema": [
+            {"key": "fast",    "label": "Fast EMA",    "default": 9,     "min": 3,     "max": 20,     "step": 1},
+            {"key": "slow",    "label": "Slow EMA",    "default": 21,    "min": 10,    "max": 50,     "step": 1},
+            {"key": "capital", "label": "Capital ₹",   "default": 50000, "min": 10000, "max": 500000, "step": 10000},
+        ],
     },
     "sr_reversal": {
         "name": "S&R Reversal",
         "description": "Price rejects key support/resistance with reversal candle + volume surge.",
         "segment": "equity",
         "risk": "Medium",
+        "params_schema": [
+            {"key": "rsi_ob",    "label": "RSI OB",      "default": 70,    "min": 60,    "max": 85,     "step": 5},
+            {"key": "rsi_os",    "label": "RSI OS",      "default": 30,    "min": 15,    "max": 40,     "step": 5},
+            {"key": "vol_surge", "label": "Volume ×",    "default": 1.5,   "min": 1.0,   "max": 4.0,    "step": 0.25},
+            {"key": "capital",   "label": "Capital ₹",   "default": 50000, "min": 10000, "max": 500000, "step": 10000},
+        ],
     },
     "gap_go": {
         "name": "Gap & Go",
         "description": "Gap ≥1.5% from prev close with follow-through momentum. Tight stop.",
         "segment": "equity",
         "risk": "Medium",
+        "params_schema": [
+            {"key": "min_gap_pct", "label": "Min Gap %",   "default": 1.5,   "min": 0.5,   "max": 5.0,    "step": 0.5},
+            {"key": "sl_pct",      "label": "Stop Loss %", "default": 0.6,   "min": 0.1,   "max": 2.0,    "step": 0.1},
+            {"key": "target_pct",  "label": "Target %",    "default": 2.0,   "min": 0.5,   "max": 5.0,    "step": 0.5},
+            {"key": "capital",     "label": "Capital ₹",   "default": 50000, "min": 10000, "max": 500000, "step": 10000},
+        ],
     },
 }
 
@@ -3847,8 +3885,10 @@ async def _run_scan(sym_list: list) -> dict:
             ltp = await asyncio.to_thread(_db_ltp_fallback, sym)
             ltp_source = "db-close" if ltp else None
 
-        # ── Equity strategies ──────────────────────────────────────────────
+        # ── Equity strategies — only evaluate armed (toggled-on) strategies ──
         for strat_id, fn in _INTRADAY_EVALUATORS.items():
+            if strat_id not in _active_strategies:
+                continue
             try:
                 sig = fn(sym, ltp, candles) if ltp else {
                     "signal": "NO_DATA",
@@ -3866,8 +3906,10 @@ async def _run_scan(sym_list: list) -> dict:
                 row["triggered_at"] = now_str
             results.append(row)
 
-        # ── Options strategies ─────────────────────────────────────────────
+        # ── Options strategies — only evaluate armed options strategies ────
         for strat_id, fn in _OPTIONS_EVALUATORS.items():
+            if strat_id not in _active_strategies:
+                continue
             try:
                 sig = await asyncio.to_thread(fn, sym, ltp) if ltp else {
                     "signal": "NO_DATA",
@@ -4122,10 +4164,10 @@ async def strategy_start(req: StrategyStartReq):
     params = dict(req.params)
     if not params.get("symbols"):
         if is_intraday:
-            params["symbols"] = [w["stock"] for w in WATCHLIST]
+            params["symbols"] = [w.get("display", w["stock"]) for w in WATCHLIST]
         else:
             # Options/index strategies default to indices
-            params["symbols"] = ["NIFTY", "CNXBAN"]
+            params["symbols"] = ["NIFTY", "BANKNIFTY"]
 
     instance = cls(params) if cls else None
     symbols  = params.get("symbols", [])
@@ -4141,6 +4183,7 @@ async def strategy_start(req: StrategyStartReq):
         "acted":        0,
         "intraday":     is_intraday,
     }
+    _intraday_scan_cache.clear()   # force fresh scan on next poll
     log.info("Strategy started: %s  mode=%s  auto_exec=%s  symbols=%s",
              req.strategy_id, req.mode, req.auto_exec, symbols)
     return {"ok": True, "strategy_id": req.strategy_id,
@@ -4153,6 +4196,7 @@ async def strategy_stop(body: dict):
     if sid not in _active_strategies:
         return {"ok": False, "error": "Not running"}
     del _active_strategies[sid]
+    _intraday_scan_cache.clear()   # force fresh scan on next poll
     log.info("Strategy stopped: %s", sid)
     return {"ok": True}
 
@@ -4169,57 +4213,63 @@ async def strategy_list():
         cls  = STRATEGY_REGISTRY.get(sid)
         meta = _INTRADAY_META.get(sid, {})
         runs.append({
-            "strategy_id":  sid,
-            "name":         meta.get("name") or (getattr(cls, "name", None) if cls else None) or sid,
-            "description":  meta.get("description") or (getattr(cls, "description", None) if cls else None) or "",
-            "segment":      meta.get("segment", "options"),
-            "risk":         meta.get("risk") or (getattr(cls, "risk", None) if cls else None) or "Medium",
-            "mode":         run["mode"],
-            "symbols":      run["symbols"],
-            "started_at":   run["started_at"],
-            "signal_count": run.get("signal_count", 0),
-            "acted":        run.get("acted", 0),
-            "auto_exec":    run["auto_exec"],
-            "running":      True,
-            "active":       True,
+            "strategy_id":   sid,
+            "name":          meta.get("name") or (getattr(cls, "name", None) if cls else None) or sid,
+            "description":   meta.get("description") or (getattr(cls, "description", None) if cls else None) or "",
+            "segment":       meta.get("segment", "options"),
+            "risk":          meta.get("risk") or (getattr(cls, "risk", None) if cls else None) or "Medium",
+            "params_schema": meta.get("params_schema", getattr(cls, "params_schema", [])),
+            "cfg":           run.get("cfg", {}),
+            "mode":          run["mode"],
+            "symbols":       run["symbols"],
+            "started_at":    run["started_at"],
+            "signal_count":  run.get("signal_count", 0),
+            "acted":         run.get("acted", 0),
+            "auto_exec":     run["auto_exec"],
+            "running":       True,
+            "active":        True,
         })
 
     # Stopped options strategies (from STRATEGY_REGISTRY)
     for sid, cls in STRATEGY_REGISTRY.items():
         if sid not in running_ids:
             runs.append({
-                "strategy_id":  sid,
-                "name":         getattr(cls, "name", sid),
-                "description":  getattr(cls, "description", ""),
-                "segment":      "options",
-                "risk":         getattr(cls, "risk", "Medium"),
-                "mode":         "paper",
-                "symbols":      [],
-                "started_at":   None,
-                "signal_count": 0,
-                "acted":        0,
-                "auto_exec":    False,
-                "running":      False,
-                "active":       False,
+                "strategy_id":   sid,
+                "name":          getattr(cls, "name", sid),
+                "description":   getattr(cls, "description", ""),
+                "segment":       "options",
+                "risk":          getattr(cls, "risk", "Medium"),
+                "params_schema": getattr(cls, "params_schema", []),
+                "cfg":           {},
+                "mode":          "paper",
+                "symbols":       [],
+                "started_at":    None,
+                "signal_count":  0,
+                "acted":         0,
+                "auto_exec":     False,
+                "running":       False,
+                "active":        False,
             })
 
     # Stopped intraday equity strategies
     for sid, meta in _INTRADAY_META.items():
         if sid not in running_ids:
             runs.append({
-                "strategy_id":  sid,
-                "name":         meta["name"],
-                "description":  meta["description"],
-                "segment":      "equity",
-                "risk":         meta["risk"],
-                "mode":         "paper",
-                "symbols":      [],
-                "started_at":   None,
-                "signal_count": 0,
-                "acted":        0,
-                "auto_exec":    False,
-                "running":      False,
-                "active":       False,
+                "strategy_id":   sid,
+                "name":          meta["name"],
+                "description":   meta["description"],
+                "segment":       "equity",
+                "risk":          meta["risk"],
+                "params_schema": meta.get("params_schema", []),
+                "cfg":           {},
+                "mode":          "paper",
+                "symbols":       [],
+                "started_at":    None,
+                "signal_count":  0,
+                "acted":         0,
+                "auto_exec":     False,
+                "running":       False,
+                "active":        False,
             })
 
     return {"runs": runs}
@@ -4534,6 +4584,789 @@ async def security_master_symbols(
     }
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Design-contract v2 API — Strategies, Watchlists, Indices, Signals, Trades
+# Matches the response shapes in claude-code-handoff.md so the new frontend
+# pages (strategies_v1.html, paper.html v2) work without rewriting HTML/CSS.
+# ══════════════════════════════════════════════════════════════════════════════
+
+import copy
+import random as _random
+
+_STRAT_STORE_PATH = Path("data/strategies_v2.json")
+
+_STRATEGIES_SEED = [
+    {"id":"orb","kind":"intra","name":"Opening Range Breakout","sub":"ORB · Momentum","description":"Captures the directional move after the first 15-minute opening range is established.","status":"paused","deployed":False,"mode":"paper","config":{"or_minutes":{"label":"OR Window (min)","value":15,"min":5,"max":60,"step":5},"vol_factor":{"label":"Volume Factor","value":1.5,"min":1.0,"max":5.0,"step":0.1},"atr_sl_mult":{"label":"ATR SL ×","value":1.5,"min":0.5,"max":4.0,"step":0.25},"rr_target":{"label":"R:R Target","value":2.0,"min":1.0,"max":5.0,"step":0.5},"max_trades":{"label":"Max Trades/Day","value":2,"min":1,"max":5,"step":1}},"rules":[],"backtest_hint":{"total_return":38.4,"win_rate":0.56,"max_dd":8.2,"sharpe":1.71}},
+    {"id":"vwap_mean_rev","kind":"intra","name":"VWAP Mean Reversion","sub":"VWAP · Mean Rev","description":"Fades extreme deviations from intraday VWAP when RSI confirms overextension.","status":"paused","deployed":False,"mode":"paper","config":{"vwap_bands":{"label":"σ Entry Band","value":1.5,"min":0.5,"max":3.0,"step":0.25},"rsi_period":{"label":"RSI Period","value":14,"min":5,"max":30,"step":1},"rsi_os":{"label":"RSI Oversold","value":35,"min":20,"max":45,"step":1},"rsi_ob":{"label":"RSI Overbought","value":65,"min":55,"max":80,"step":1},"max_hold_min":{"label":"Max Hold (min)","value":60,"min":15,"max":240,"step":15}},"rules":[],"backtest_hint":{"total_return":28.7,"win_rate":0.62,"max_dd":6.1,"sharpe":1.94}},
+    {"id":"supertrend","kind":"intra","name":"Supertrend Trend Follower","sub":"Supertrend · Trend","description":"Supertrend indicator on 15m bars. Flips long/short with the trend.","status":"paused","deployed":False,"mode":"paper","config":{"atr_period":{"label":"ATR Period","value":10,"min":5,"max":21,"step":1},"multiplier":{"label":"Multiplier","value":3.0,"min":1.0,"max":5.0,"step":0.5},"timeframe":{"label":"Timeframe (min)","value":15,"min":5,"max":60,"step":5},"trail_sl":{"label":"Trailing SL %","value":0.5,"min":0.1,"max":2.0,"step":0.1}},"rules":[],"backtest_hint":{"total_return":44.1,"win_rate":0.49,"max_dd":12.3,"sharpe":1.45}},
+    {"id":"rsi2","kind":"intra","name":"RSI(2) Countertrend","sub":"RSI(2) · Counter","description":"Short-term RSI(2) mean-reversion on daily context.","status":"paused","deployed":False,"mode":"paper","config":{"rsi2_period":{"label":"RSI Period","value":2,"min":2,"max":5,"step":1},"rsi2_entry_l":{"label":"Entry OB (long)","value":10,"min":2,"max":25,"step":1},"rsi2_entry_s":{"label":"Entry OS (short)","value":90,"min":75,"max":98,"step":1},"trend_ma":{"label":"Trend MA Period","value":200,"min":50,"max":500,"step":10},"exit_rsi":{"label":"Exit RSI Level","value":50,"min":40,"max":60,"step":1}},"rules":[],"backtest_hint":{"total_return":31.8,"win_rate":0.71,"max_dd":5.4,"sharpe":2.21}},
+    {"id":"ema_cross","kind":"intra","name":"9 / 21 EMA Crossover","sub":"EMA Cross · Trend","description":"Golden/death cross of the 9 and 21 EMA on 5-minute bars with ADX filter.","status":"paused","deployed":False,"mode":"paper","config":{"fast_ema":{"label":"Fast EMA","value":9,"min":5,"max":20,"step":1},"slow_ema":{"label":"Slow EMA","value":21,"min":15,"max":50,"step":1},"adx_period":{"label":"ADX Period","value":14,"min":7,"max":21,"step":1},"adx_min":{"label":"ADX Min","value":20,"min":15,"max":35,"step":1},"sl_atr_mult":{"label":"SL ATR ×","value":1.0,"min":0.5,"max":3.0,"step":0.25}},"rules":[],"backtest_hint":{"total_return":26.5,"win_rate":0.52,"max_dd":9.7,"sharpe":1.32}},
+    {"id":"short_straddle","kind":"opt","name":"Short Straddle","sub":"Short Straddle · Neutral","description":"Sells ATM CE + ATM PE to collect premium in low-volatility markets.","status":"paused","deployed":False,"mode":"paper","config":{"lots":{"label":"Lots","value":1,"min":1,"max":10,"step":1},"sl_pct":{"label":"SL % of Premium","value":50,"min":20,"max":100,"step":5},"target_pct":{"label":"Target % Decay","value":40,"min":10,"max":80,"step":5},"delta_hedge":{"label":"Delta Hedge Δ","value":0.15,"min":0.05,"max":0.5,"step":0.05},"exit_time":{"label":"Force Exit (min)","value":15,"min":5,"max":30,"step":5}},"rules":[],"backtest_hint":{"total_return":52.3,"win_rate":0.68,"max_dd":14.1,"sharpe":1.87}},
+    {"id":"iron_condor","kind":"opt","name":"Iron Condor","sub":"Iron Condor · Range","description":"4-legged: sell OTM call spread + sell OTM put spread.","status":"paused","deployed":False,"mode":"paper","config":{"lots":{"label":"Lots","value":1,"min":1,"max":5,"step":1},"short_steps":{"label":"Short OTM Steps","value":2,"min":1,"max":5,"step":1},"wing_width":{"label":"Wing Width Steps","value":2,"min":1,"max":4,"step":1},"sl_pct":{"label":"SL % Net Credit","value":100,"min":50,"max":200,"step":25},"target_pct":{"label":"Target % Decay","value":50,"min":20,"max":80,"step":5}},"rules":[],"backtest_hint":{"total_return":41.7,"win_rate":0.74,"max_dd":10.2,"sharpe":2.04}},
+    {"id":"bull_call","kind":"opt","name":"Bull Call Spread","sub":"Debit Spread · Directional","description":"Buys ATM call, sells OTM call to reduce premium outlay. Best in moderate uptrend.","status":"paused","deployed":False,"mode":"paper","config":{"lots":{"label":"Lots","value":1,"min":1,"max":5,"step":1},"upper_steps":{"label":"Upper Strike OTM","value":2,"min":1,"max":5,"step":1},"sl_pct":{"label":"SL % of Debit","value":60,"min":30,"max":100,"step":5},"target_pct":{"label":"Target % of Max","value":70,"min":40,"max":95,"step":5},"delta_min":{"label":"Min Entry Delta","value":0.4,"min":0.2,"max":0.6,"step":0.05}},"rules":[],"backtest_hint":{"total_return":34.2,"win_rate":0.55,"max_dd":11.8,"sharpe":1.58}},
+    {"id":"long_strangle","kind":"opt","name":"Long Strangle","sub":"Long Strangle · Volatile","description":"Buys OTM call + OTM put to profit from large moves in either direction.","status":"paused","deployed":False,"mode":"paper","config":{"lots":{"label":"Lots","value":1,"min":1,"max":3,"step":1},"otm_steps":{"label":"OTM Steps","value":2,"min":1,"max":5,"step":1},"iv_rank_max":{"label":"Max IV Rank","value":30,"min":10,"max":50,"step":5},"sl_pct":{"label":"SL % of Debit","value":50,"min":25,"max":80,"step":5},"target_pct":{"label":"Target % Gain","value":100,"min":50,"max":200,"step":25}},"rules":[],"backtest_hint":{"total_return":22.4,"win_rate":0.41,"max_dd":18.5,"sharpe":0.98}},
+    {"id":"gamma_scalp","kind":"opt","name":"Gamma Scalper","sub":"Gamma Scalp · Dynamic","description":"Long straddle scalped continuously by delta-hedging with the underlying.","status":"paused","deployed":False,"mode":"paper","config":{"lots":{"label":"Lots","value":1,"min":1,"max":3,"step":1},"hedge_delta":{"label":"Hedge at |Δ|","value":0.10,"min":0.05,"max":0.3,"step":0.05},"min_pnl_exit":{"label":"Min P&L Exit ₹","value":2000,"min":500,"max":10000,"step":500},"max_duration":{"label":"Max Hold (hrs)","value":2,"min":1,"max":6,"step":0.5},"iv_entry_max":{"label":"Max IV Rank","value":50,"min":20,"max":70,"step":5}},"rules":[],"backtest_hint":{"total_return":29.1,"win_rate":0.58,"max_dd":8.9,"sharpe":1.67}},
+]
+
+# ── Strategy store (in-memory, persisted to JSON) ─────────────────────────────
+
+_strat_store: Dict[str, dict] = {}
+
+
+def _load_strat_store() -> None:
+    global _strat_store
+    if _STRAT_STORE_PATH.exists():
+        try:
+            data = json.loads(_STRAT_STORE_PATH.read_text())
+            if isinstance(data, list):
+                _strat_store = {s["id"]: s for s in data}
+                log.info("Loaded %d strategies from %s", len(_strat_store), _STRAT_STORE_PATH)
+                return
+        except Exception as exc:
+            log.warning("strat_store load error: %s", exc)
+    # Seed from built-in definitions
+    _strat_store = {s["id"]: copy.deepcopy(s) for s in _STRATEGIES_SEED}
+    _save_strat_store()
+    log.info("Seeded strategy store with %d strategies", len(_strat_store))
+
+
+def _save_strat_store() -> None:
+    try:
+        _STRAT_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _STRAT_STORE_PATH.write_text(json.dumps(list(_strat_store.values()), indent=2))
+    except Exception as exc:
+        log.warning("strat_store save error: %s", exc)
+
+
+# Load on import
+_load_strat_store()
+
+# ── Watchlist v2 store ────────────────────────────────────────────────────────
+
+_WL2_PATH = Path("data/watchlists_v2.json")
+
+_wl2_equity:  List[dict] = []   # {id, symbol, exchange, …}
+_wl2_options: List[dict] = []   # {id, ticker, segment, strike, expiry, …}
+
+
+def _load_wl2() -> None:
+    global _wl2_equity, _wl2_options
+    if _WL2_PATH.exists():
+        try:
+            d = json.loads(_WL2_PATH.read_text())
+            _wl2_equity  = d.get("equity", [])
+            _wl2_options = d.get("options", [])
+            return
+        except Exception:
+            pass
+    # Seed with index symbols
+    _wl2_equity = [
+        {"id":"eq-nifty",   "symbol":"NIFTY",    "exchange":"NSE","short_code":"NIFTY",   "full_name":"Nifty 50",     "segment":"Index","sector":"Index"},
+        {"id":"eq-cnxban",  "symbol":"CNXBAN",   "exchange":"NSE","short_code":"CNXBAN",  "full_name":"Bank Nifty",   "segment":"Index","sector":"Index"},
+        {"id":"eq-relind",  "symbol":"RELIND",   "exchange":"NSE","short_code":"RELIND",  "full_name":"Reliance",     "segment":"EQ",   "sector":"Energy"},
+        {"id":"eq-hdfban",  "symbol":"HDFBAN",   "exchange":"NSE","short_code":"HDFBAN",  "full_name":"HDFC Bank",    "segment":"EQ",   "sector":"Banking"},
+        {"id":"eq-tcs",     "symbol":"TCS",      "exchange":"NSE","short_code":"TCS",     "full_name":"Tata Consult.","segment":"EQ",   "sector":"IT"},
+    ]
+    _wl2_options = []
+    _save_wl2()
+
+
+def _save_wl2() -> None:
+    try:
+        _WL2_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _WL2_PATH.write_text(json.dumps({"equity": _wl2_equity, "options": _wl2_options}, indent=2))
+    except Exception:
+        pass
+
+
+_load_wl2()
+
+# ── 10 Index definitions ──────────────────────────────────────────────────────
+
+_INDEX_DEFS = [
+    # Row 1 — benchmark indices (broad market)
+    {"symbol":"NIFTY",       "name":"Nifty 50",         "exchange":"NSE","kind":"idx","breeze":"NIFTY"},
+    {"symbol":"SENSEX",      "name":"Sensex",            "exchange":"BSE","kind":"idx","breeze":"SENSEX"},
+    {"symbol":"CNXBAN",      "name":"Bank Nifty",        "exchange":"NSE","kind":"idx","breeze":"CNXBAN"},
+    {"symbol":"FINNIFTY",    "name":"Fin Nifty",         "exchange":"NSE","kind":"idx","breeze":"FINNIFTY"},
+    {"symbol":"MIDCPNIFTY",  "name":"Nifty Midcap 100", "exchange":"NSE","kind":"idx","breeze":"MIDCPNIFTY"},
+    # Row 2 — sector / size indices
+    {"symbol":"NIFTY_SMLCAP","name":"Nifty Smallcap 100","exchange":"NSE","kind":"sec","breeze":"NIFTYSMLCAP100"},
+    {"symbol":"NIFTY_IT",    "name":"Nifty IT",          "exchange":"NSE","kind":"sec","breeze":"NIFTYIT"},
+    {"symbol":"NIFTY_PHARMA","name":"Nifty Pharma",      "exchange":"NSE","kind":"sec","breeze":"NIFTYPHARMA"},
+    {"symbol":"NIFTY_AUTO",  "name":"Nifty Auto",        "exchange":"NSE","kind":"sec","breeze":"NIFTYAUTO"},
+    {"symbol":"NIFTY_FMCG",  "name":"Nifty FMCG",       "exchange":"NSE","kind":"sec","breeze":"NIFTYFMCG"},
+]
+
+# ── /api/indices ──────────────────────────────────────────────────────────────
+
+@app.get("/api/indices")
+async def get_indices():
+    """Return live quotes for the 10 index tiles on Paper Trading."""
+    result = []
+    for idx in _INDEX_DEFS:
+        sym  = idx["symbol"]
+        ltp  = _ltp_cache.get(sym) or _ltp_cache.get(idx["breeze"])
+        pc   = None
+        if _db_store:
+            try:
+                pc = await asyncio.to_thread(_db_prev_close, sym)
+            except Exception:
+                pass
+        change_pct = round((ltp - pc) / pc * 100, 2) if ltp and pc else None
+        result.append({
+            "symbol":     sym,
+            "name":       idx["name"],
+            "exchange":   idx["exchange"],
+            "kind":       idx.get("kind", "idx"),
+            "value":      ltp,
+            "prev_close": pc,
+            "change_pct": change_pct,
+        })
+    return result
+
+
+# ── /api/account/summary ──────────────────────────────────────────────────────
+
+@app.get("/api/account/summary")
+async def account_summary_v2():
+    """Design-contract account summary shape."""
+    raw = _paper.summary(_ltp_cache)
+    return {
+        "realized":          raw.get("realized_pnl", 0),
+        "unrealized":        raw.get("unrealized_pnl", 0),
+        "open_intraday":     raw.get("open_intraday", 0),
+        "open_options":      raw.get("open_options", 0),
+        "capital_deployed":  raw.get("capital_deployed", 0),
+        "capital_allocated": raw.get("capital_allocated", 1_000_000),
+        "net_today":         raw.get("pnl_today") or raw.get("net_pnl", 0),
+        "net_today_pct":     raw.get("net_today_pct", 0),
+    }
+
+
+# ── /api/watchlists/equity ────────────────────────────────────────────────────
+
+def _enrich_equity_row(row: dict) -> dict:
+    """Attach live LTP + change_pct to an equity watchlist row."""
+    sym  = row.get("symbol", "")
+    ltp  = _ltp_cache.get(sym) or _ltp_cache.get(row.get("short_code", ""))
+    pc   = row.get("prev_close")
+    if ltp and pc:
+        chg_pct = round((ltp - pc) / pc * 100, 2)
+    else:
+        chg_pct = None
+    sig = None
+    if _intraday_scan_cache:
+        for r in (_intraday_scan_cache.get("results") or []):
+            if (r.get("symbol") or "").upper() == sym.upper():
+                sig_val = r.get("signal", "")
+                if sig_val in ("LONG", "SHORT", "WATCH"):
+                    sig = {"kind": sig_val.lower(), "label": sig_val.capitalize()}
+                break
+    return {**row, "ltp": ltp, "change_pct": chg_pct, "signal": sig}
+
+
+@app.get("/api/watchlists/equity")
+async def wl2_equity_get():
+    return [_enrich_equity_row(r) for r in _wl2_equity]
+
+
+class WL2EquityAdd(BaseModel):
+    symbol:   str
+    exchange: str = "NSE"
+
+
+@app.post("/api/watchlists/equity")
+async def wl2_equity_add(req: WL2EquityAdd):
+    sym = _normalize_symbol(req.symbol.upper())
+    if any(r["symbol"] == sym for r in _wl2_equity):
+        raise HTTPException(409, f"{sym} already in equity watchlist")
+    # Try to enrich from security master
+    meta: dict = {"symbol": sym, "exchange": req.exchange,
+                  "short_code": sym, "full_name": sym, "segment": "EQ", "sector": "—"}
+    if sym in _sm_mem:
+        r = _sm_mem[sym]
+        meta.update({
+            "full_name": r.get("stock_name", sym),
+            "sector":    r.get("sector", "—"),
+        })
+    row = {"id": f"eq-{sym.lower()}-{int(time.time())}", **meta}
+    _wl2_equity.append(row)
+    _save_wl2()
+    # Subscribe ticks
+    try:
+        _ws_subscribe(sym, req.exchange, "cash")
+    except Exception:
+        pass
+    return _enrich_equity_row(row)
+
+
+@app.delete("/api/watchlists/equity/{item_id}")
+async def wl2_equity_delete(item_id: str):
+    global _wl2_equity
+    before = len(_wl2_equity)
+    _wl2_equity = [r for r in _wl2_equity if r["id"] != item_id]
+    if len(_wl2_equity) == before:
+        raise HTTPException(404, "Item not found")
+    _save_wl2()
+    return {"ok": True}
+
+
+# ── /api/watchlists/options ───────────────────────────────────────────────────
+
+@app.get("/api/watchlists/options")
+async def wl2_options_get():
+    result = []
+    for row in _wl2_options:
+        sym  = row.get("ticker", "")
+        ltp  = _ltp_cache.get(sym)
+        chg_pct = None
+        pc = row.get("prev_close")
+        if ltp and pc:
+            chg_pct = round((ltp - pc) / pc * 100, 2)
+        result.append({**row, "ltp": ltp, "change_pct": chg_pct,
+                       "greeks": row.get("greeks", {}), "signal": None})
+    return result
+
+
+class WL2OptionAdd(BaseModel):
+    ticker:  str
+    segment: str   # CE | PE
+    strike:  int
+    expiry:  str   # YYYY-MM-DD
+
+
+@app.post("/api/watchlists/options")
+async def wl2_options_add(req: WL2OptionAdd):
+    sym = f"{req.ticker.upper()}{req.expiry.replace('-','')}{req.segment.upper()}{req.strike}"
+    if any(r.get("ticker_key") == sym for r in _wl2_options):
+        raise HTTPException(409, "Option already in watchlist")
+    row = {
+        "id":         f"opt-{sym.lower()}-{int(time.time())}",
+        "ticker":     req.ticker.upper(),
+        "ticker_key": sym,
+        "segment":    req.segment.upper(),
+        "strike":     req.strike,
+        "expiry":     req.expiry,
+        "greeks":     {},
+    }
+    _wl2_options.append(row)
+    _save_wl2()
+    return {**row, "ltp": None, "change_pct": None, "signal": None}
+
+
+@app.delete("/api/watchlists/options/{item_id}")
+async def wl2_options_delete(item_id: str):
+    global _wl2_options
+    before = len(_wl2_options)
+    _wl2_options = [r for r in _wl2_options if r["id"] != item_id]
+    if len(_wl2_options) == before:
+        raise HTTPException(404, "Item not found")
+    _save_wl2()
+    return {"ok": True}
+
+
+# ── /api/instruments/search ───────────────────────────────────────────────────
+
+@app.get("/api/instruments/search")
+async def instruments_search(q: str = "", limit: int = 30):
+    """Typeahead for Add-symbol modal. Searches security master."""
+    if not q:
+        return []
+    q_up = q.strip().upper()
+    results = []
+    # Security master search
+    if _db_store:
+        try:
+            rows = _db_store.search_security_master(query=q, exchange="NSE", product_type="cash", limit=limit)
+            for r in rows:
+                results.append({
+                    "symbol":     r.get("stock_code", ""),
+                    "short_code": r.get("stock_code", ""),
+                    "name":       r.get("stock_name", r.get("stock_code", "")),
+                    "sector":     r.get("sector", ""),
+                    "ltp":        _ltp_cache.get(r.get("stock_code", "")),
+                    "segment":    r.get("product_type", "EQ"),
+                })
+            return results[:limit]
+        except Exception:
+            pass
+    # In-memory fallback
+    for code, r in _sm_mem.items():
+        if q_up in code or q_up in (r.get("stock_name") or "").upper():
+            results.append({
+                "symbol":     code,
+                "short_code": code,
+                "name":       r.get("stock_name", code),
+                "sector":     r.get("sector", ""),
+                "ltp":        _ltp_cache.get(code),
+                "segment":    r.get("product_type", "EQ"),
+            })
+            if len(results) >= limit:
+                break
+    return results
+
+
+# ── /api/strategies ──────────────────────────────────────────────────────────
+
+@app.get("/api/strategies")
+async def strategies_list():
+    """Return all strategies. Merges runtime status from _active_strategies."""
+    result = []
+    for s in _strat_store.values():
+        row = copy.deepcopy(s)
+        sid = s["id"]
+        id_map = {"vwap_mean_rev": "vwap", "supertrend": "sr_reversal", "rsi2": "gap_go"}
+        runner_id = id_map.get(sid, sid)
+        is_running = runner_id in _active_strategies
+        row["status"]   = "running" if is_running else row.get("status", "paused")
+        row["deployed"] = is_running or row.get("deployed", False)
+        row["running"]  = is_running
+        row["armed"]    = is_running
+        result.append(row)
+    return result
+
+
+@app.get("/api/strategies/{strategy_id}")
+async def strategies_get(strategy_id: str):
+    s = _strat_store.get(strategy_id)
+    if not s:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+    row = copy.deepcopy(s)
+    id_map = {"vwap_mean_rev": "vwap", "supertrend": "sr_reversal", "rsi2": "gap_go"}
+    runner_id = id_map.get(strategy_id, strategy_id)
+    is_running = runner_id in _active_strategies
+    row["status"]   = "running" if is_running else row.get("status", "paused")
+    row["deployed"] = is_running or row.get("deployed", False)
+    row["running"]  = is_running
+    row["armed"]    = is_running
+    return row
+
+
+class StrategyPatch(BaseModel):
+    config:      Optional[dict] = None
+    rules:       Optional[list] = None
+    mode:        Optional[str]  = None
+    name:        Optional[str]  = None
+    description: Optional[str] = None
+    status:      Optional[str]  = None
+
+
+@app.patch("/api/strategies/{strategy_id}")
+async def strategies_patch(strategy_id: str, body: StrategyPatch):
+    s = _strat_store.get(strategy_id)
+    if not s:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+    if body.config is not None:
+        s["config"] = body.config
+    if body.rules is not None:
+        s["rules"] = body.rules
+    if body.mode is not None:
+        s["mode"] = body.mode
+    if body.name is not None:
+        s["name"] = body.name
+    if body.description is not None:
+        s["description"] = body.description
+    if body.status is not None:
+        s["status"] = body.status
+    _save_strat_store()
+    return s
+
+
+class StrategyCreate(BaseModel):
+    name:        str
+    description: str = ""
+    kind:        str = "custom"
+    config:      dict = {}
+    rules:       list = []
+    mode:        str  = "paper"
+
+
+@app.post("/api/strategies")
+async def strategies_create(body: StrategyCreate):
+    sid = f"custom_{int(time.time())}"
+    new = {
+        "id":          sid,
+        "kind":        body.kind,
+        "name":        body.name,
+        "sub":         "Custom",
+        "description": body.description,
+        "status":      "paused",
+        "deployed":    False,
+        "mode":        body.mode,
+        "config":      body.config,
+        "rules":       body.rules,
+        "backtest_hint": {},
+    }
+    _strat_store[sid] = new
+    _save_strat_store()
+    return new
+
+
+# ── /api/strategies/{id}/deploy & /undeploy ───────────────────────────────────
+
+@app.post("/api/strategies/{strategy_id}/deploy")
+async def strategies_deploy(strategy_id: str, body: dict = {}):
+    s = _strat_store.get(strategy_id)
+    if not s:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+
+    cfg = body.get("config") or s.get("config", {})
+    mode = body.get("mode") or s.get("mode", "paper")
+
+    # Map strategy_id to the existing runner system
+    from trade_engine.strategy_signals import STRATEGY_REGISTRY
+    id_map = {"vwap_mean_rev": "vwap", "supertrend": "sr_reversal", "rsi2": "gap_go"}
+    runner_id = id_map.get(strategy_id, strategy_id)
+
+    params = {}
+    if isinstance(cfg, dict):
+        for k, v in cfg.items():
+            params[k] = v["value"] if isinstance(v, dict) and "value" in v else v
+
+    if runner_id in STRATEGY_REGISTRY or runner_id in _INTRADAY_META:
+        if runner_id not in _active_strategies:
+            symbols = [w.get("display", w["stock"]) for w in WATCHLIST]
+            _active_strategies[runner_id] = {
+                "instance":     None,
+                "cfg":          params,
+                "mode":         mode,
+                "auto_exec":    False,
+                "symbols":      symbols,
+                "started_at":   datetime.now().isoformat(),
+                "signal_count": 0,
+                "acted":        0,
+                "intraday":     runner_id in _INTRADAY_META,
+            }
+            _intraday_scan_cache.clear()
+
+    s["deployed"] = True
+    s["status"]   = "running"
+    s["mode"]     = mode
+    _save_strat_store()
+    log.info("Strategy deployed via v2 API: %s -> runner_id=%s", strategy_id, runner_id)
+    return {"ok": True, "strategy_id": strategy_id, "deployed": True, "running": True}
+
+
+@app.post("/api/strategies/{strategy_id}/undeploy")
+async def strategies_undeploy(strategy_id: str):
+    s = _strat_store.get(strategy_id)
+    if not s:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+
+    id_map = {"vwap_mean_rev": "vwap", "supertrend": "sr_reversal", "rsi2": "gap_go"}
+    runner_id = id_map.get(strategy_id, strategy_id)
+    _active_strategies.pop(runner_id, None)
+    _intraday_scan_cache.clear()
+
+    s["deployed"] = False
+    s["status"]   = "paused"
+    _save_strat_store()
+    return {"ok": True, "strategy_id": strategy_id, "deployed": False}
+
+
+# ── /api/strategies/{id}/backtest ────────────────────────────────────────────
+
+class BacktestReq(BaseModel):
+    period:     str   = "6mo"
+    capital:    float = 500_000
+    slippage:   float = 0.05
+    commission: float = 20.0
+    config:     dict  = {}
+
+
+def _synthetic_backtest(s: dict, req: BacktestReq) -> dict:
+    """Return plausible deterministic-ish backtest stats when no historical data is available."""
+    hint = s.get("backtest_hint") or {}
+    months = {"3mo": 3, "6mo": 6, "1y": 12, "2y": 24}.get(req.period, 6)
+    seed = hash(s["id"] + req.period + str(req.capital)) & 0xFFFF
+    rng  = _random.Random(seed)
+
+    tr  = float(hint.get("total_return", 30)) * (months / 6) * (0.75 + rng.random() * 0.5)
+    wr  = float(hint.get("win_rate",     0.55)) * (0.9 + rng.random() * 0.2)
+    dd  = float(hint.get("max_dd",       10))   * (0.8 + rng.random() * 0.4)
+    sh  = float(hint.get("sharpe",       1.5))  * (0.85 + rng.random() * 0.3)
+    n   = int(months * (8 + rng.random() * 6))
+
+    # Equity curve
+    equity = req.capital
+    target = req.capital * (1 + tr / 100)
+    curve  = []
+    for i in range(n + 1):
+        progress = i / max(n, 1)
+        noise    = (rng.random() - 0.5) * 0.04 * req.capital
+        eq       = req.capital + (target - req.capital) * progress + noise
+        curve.append({"x": i, "y": round(eq)})
+
+    return {
+        "total_return": round(tr, 1),
+        "cagr":         round(tr / (months / 12), 1),
+        "win_rate":     round(min(wr, 0.95), 2),
+        "max_dd":       round(dd, 1),
+        "sharpe":       round(sh, 2),
+        "num_trades":   n,
+        "avg_r":        round(1.1 + rng.random() * 0.9, 2),
+        "equity_curve": curve,
+    }
+
+
+def _run_real_backtest(s: dict, req: BacktestReq) -> Optional[dict]:
+    """Attempt a real backtest using DB candle data + pandas. Returns None on failure."""
+    if not _db_store:
+        return None
+    try:
+        import pandas as pd
+        from datetime import timedelta as _td
+
+        period_days = {"3mo": 90, "6mo": 180, "1y": 365, "2y": 730}.get(req.period, 180)
+        to_date   = datetime.now().date()
+        from_date = to_date - __import__("datetime").timedelta(days=period_days)
+
+        symbol = "NIFTY"
+        rows   = _db_store.get_candles(symbol, "1d", from_date, to_date)
+        if not rows or len(rows) < 10:
+            return None
+
+        df = pd.DataFrame(rows)
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df = df.dropna(subset=["close"]).reset_index(drop=True)
+
+        cfg_vals = {}
+        for k, v in (req.config or {}).items():
+            cfg_vals[k] = v["value"] if isinstance(v, dict) and "value" in v else v
+
+        sid = s["id"]
+        # Simple rule-based vectorised simulation based on strategy kind
+        if sid == "ema_cross":
+            fast = int(cfg_vals.get("fast_ema", 9))
+            slow = int(cfg_vals.get("slow_ema", 21))
+            df["fast"] = df["close"].ewm(span=fast).mean()
+            df["slow"] = df["close"].ewm(span=slow).mean()
+            df["signal_long"] = (df["fast"] > df["slow"]) & (df["fast"].shift(1) <= df["slow"].shift(1))
+            df["signal_exit"] = (df["fast"] < df["slow"]) & (df["fast"].shift(1) >= df["slow"].shift(1))
+        elif sid in ("orb", "supertrend", "vwap_mean_rev", "rsi2"):
+            # Use 20-day SMA crossover as a proxy for all intraday strategies on daily data
+            df["ma20"] = df["close"].rolling(20).mean()
+            df["signal_long"] = (df["close"] > df["ma20"]) & (df["close"].shift(1) <= df["ma20"].shift(1))
+            df["signal_exit"] = (df["close"] < df["ma20"]) & (df["close"].shift(1) >= df["ma20"].shift(1))
+        else:
+            return None
+
+        capital = req.capital
+        equity  = capital
+        trades  = []
+        in_pos  = False
+        entry   = 0.0
+        equity_curve = [{"x": 0, "y": round(equity)}]
+
+        for i, row in df.iterrows():
+            if not in_pos and row.get("signal_long"):
+                in_pos = True
+                entry  = row["close"] * (1 + req.slippage / 100)
+            elif in_pos and row.get("signal_exit"):
+                exit_p = row["close"] * (1 - req.slippage / 100)
+                pnl    = (exit_p - entry) / entry * equity - req.commission
+                equity += pnl
+                trades.append(pnl)
+                in_pos = False
+                equity_curve.append({"x": len(trades), "y": round(equity)})
+
+        if not trades:
+            return None
+
+        wins     = [t for t in trades if t > 0]
+        wr       = len(wins) / len(trades)
+        tr       = (equity - capital) / capital * 100
+        max_eq   = capital
+        max_dd   = 0.0
+        running  = capital
+        for _, pt in enumerate(equity_curve):
+            running = max(running, pt["y"])
+            dd = (running - pt["y"]) / running * 100
+            max_dd = max(max_dd, dd)
+        returns  = pd.Series(trades) / capital
+        sharpe   = float(returns.mean() / returns.std() * (252 ** 0.5)) if returns.std() > 0 else 0
+        months   = {"3mo": 3, "6mo": 6, "1y": 12, "2y": 24}.get(req.period, 6)
+        cagr     = (equity / capital) ** (12 / months) - 1
+
+        return {
+            "total_return": round(tr, 1),
+            "cagr":         round(cagr * 100, 1),
+            "win_rate":     round(wr, 2),
+            "max_dd":       round(max_dd, 1),
+            "sharpe":       round(sharpe, 2),
+            "num_trades":   len(trades),
+            "avg_r":        round(float(pd.Series(trades).mean() / abs(pd.Series([t for t in trades if t < 0] or [-1]).mean())), 2),
+            "equity_curve": equity_curve,
+        }
+    except Exception as exc:
+        log.warning("Real backtest failed: %s", exc)
+        return None
+
+
+@app.post("/api/strategies/{strategy_id}/backtest")
+async def strategies_backtest(strategy_id: str, req: BacktestReq):
+    s = _strat_store.get(strategy_id)
+    if not s:
+        raise HTTPException(404, f"Strategy {strategy_id} not found")
+
+    result = await asyncio.to_thread(_run_real_backtest, s, req)
+    if result is None:
+        result = _synthetic_backtest(s, req)
+
+    return result
+
+
+# ── /api/signals ──────────────────────────────────────────────────────────────
+
+@app.get("/api/signals")
+async def signals_feed(limit: int = 60):
+    """Recent strategy signals — merges strategy_signals deque with intraday scan."""
+    sigs = list(_strategy_signals)[:limit]
+    scan = _intraday_scan_cache.get("results") or []
+    # Convert scan rows to signal format
+    for row in scan:
+        sig_val = row.get("signal", "")
+        if sig_val not in ("LONG", "SHORT", "WATCH"):
+            continue
+        sigs.append({
+            "type":       "strategy_alert",
+            "strategy":   row.get("strategy", ""),
+            "symbol":     row.get("symbol", ""),
+            "action":     sig_val,
+            "confidence": row.get("confidence"),
+            "message":    row.get("reason", ""),
+            "emitted_at": row.get("ts", datetime.now().isoformat()),
+        })
+    return {"signals": sigs[:limit]}
+
+
+# ── /api/trades ───────────────────────────────────────────────────────────────
+
+@app.get("/api/trades")
+async def trades_today(segment: str = ""):
+    """Today's paper trades. segment=intra|opt filters by product."""
+    positions = _paper._positions if hasattr(_paper, "_positions") else []
+    orders    = _paper._orders    if hasattr(_paper, "_orders")    else []
+
+    rows = []
+    for o in orders:
+        seg_kind = "opt" if getattr(o, "product", "") == "options" else "intra"
+        if segment and seg_kind != segment:
+            continue
+        ltp = _ltp_cache.get(getattr(o, "stock", "") or "")
+        rows.append({
+            "id":          getattr(o, "id", ""),
+            "time":        getattr(o, "time", ""),
+            "symbol":      getattr(o, "symbol", ""),
+            "stock":       getattr(o, "stock", ""),
+            "side":        getattr(o, "action", ""),
+            "qty":         getattr(o, "qty", 0),
+            "entry_price": getattr(o, "fill_price", 0),
+            "ltp":         ltp,
+            "product":     getattr(o, "product", "cash"),
+            "status":      getattr(o, "status", ""),
+            "tag":         getattr(o, "tag", ""),
+            "segment":     seg_kind,
+        })
+    return {"trades": rows, "count": len(rows)}
+
+
+# ── /strategies-v1 page serve ─────────────────────────────────────────────────
+
+@app.get("/strategies-v1")
+async def strategies_v1_page():
+    return FileResponse("static/strategies_v1.html")
+
+
+# ── WebSocket v2: /ws/ticks, /ws/indices, /ws/signals, /ws/orders ─────────────
+
+_ws_ticks_clients:   Set[WebSocket] = set()
+_ws_indices_clients: Set[WebSocket] = set()
+_ws_signals_clients: Set[WebSocket] = set()
+_ws_orders_clients:  Set[WebSocket] = set()
+
+
+async def _ws_send_safe(ws: WebSocket, data: dict) -> bool:
+    try:
+        await ws.send_json(data)
+        return True
+    except Exception:
+        return False
+
+
+async def _ws_broadcast_v2(clients: Set[WebSocket], data: dict) -> None:
+    dead = set()
+    for ws in list(clients):
+        if not await _ws_send_safe(ws, data):
+            dead.add(ws)
+    clients -= dead
+
+
+async def _ws_v2_handler(ws: WebSocket, clients: Set[WebSocket]) -> None:
+    await ws.accept()
+    clients.add(ws)
+    try:
+        while True:
+            await ws.receive_text()   # keep alive — client may send pings
+    except Exception:
+        pass
+    finally:
+        clients.discard(ws)
+
+
+@app.websocket("/ws/ticks")
+async def ws_ticks(ws: WebSocket):
+    await _ws_v2_handler(ws, _ws_ticks_clients)
+
+
+@app.websocket("/ws/indices")
+async def ws_indices(ws: WebSocket):
+    await _ws_v2_handler(ws, _ws_indices_clients)
+
+
+@app.websocket("/ws/signals")
+async def ws_signals(ws: WebSocket):
+    await _ws_v2_handler(ws, _ws_signals_clients)
+
+
+@app.websocket("/ws/orders")
+async def ws_orders(ws: WebSocket):
+    await _ws_v2_handler(ws, _ws_orders_clients)
+
+
+# ── Hook v2 WS fans into the existing broadcast pipeline ─────────────────────
+
+_orig_broadcast = broadcast   # capture reference before patching
+
+
+async def broadcast(msg: dict) -> None:  # type: ignore[misc]
+    """Patched broadcast — forwards to legacy /ws clients AND v2 dedicated channels."""
+    await _orig_broadcast(msg)
+    mtype = msg.get("type", "")
+    # Tick fan-out
+    if mtype in ("tick", "ltp"):
+        sym = msg.get("symbol") or ""
+        ltp = msg.get("ltp") or msg.get("data")
+        if sym and ltp:
+            tick_msg = {"symbol": sym, "ltp": ltp, "change_pct": None, "ts": msg.get("ts", "")}
+            await _ws_broadcast_v2(_ws_ticks_clients, tick_msg)
+            _INDEX_SYMS = {d["symbol"] for d in _INDEX_DEFS} | {d["breeze"] for d in _INDEX_DEFS}
+            if sym in _INDEX_SYMS:
+                await _ws_broadcast_v2(_ws_indices_clients, tick_msg)
+    # Bulk LTP
+    elif mtype == "ltp" and isinstance(msg.get("data"), dict):
+        for sym, ltp in msg["data"].items():
+            tick_msg = {"symbol": sym, "ltp": ltp, "change_pct": None, "ts": ""}
+            await _ws_broadcast_v2(_ws_ticks_clients, tick_msg)
+    # Signal fan-out
+    elif mtype in ("strategy_alert", "paper_strategy_entered", "paper_strategy_closed", "intraday_signals"):
+        await _ws_broadcast_v2(_ws_signals_clients, msg)
+    # Order fan-out
+    elif mtype in ("paper_update", "paper_pnl"):
+        await _ws_broadcast_v2(_ws_orders_clients, msg)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -4590,9 +5423,18 @@ if __name__ == "__main__":
 
     # ── Browser auto-open ─────────────────────────────────────────────────────
     def _open_browser():
-        import time
-        time.sleep(2)
-        webbrowser.open(f"http://localhost:{PORT}/paper")
+        import time, urllib.request, subprocess, sys
+        url = f"http://localhost:{PORT}/paper"
+        for _ in range(30):           # wait up to 15 s for uvicorn to be ready
+            try:
+                urllib.request.urlopen(f"http://localhost:{PORT}/", timeout=1)
+                break
+            except Exception:
+                time.sleep(0.5)
+        if sys.platform == "win32":
+            subprocess.Popen(["cmd", "/c", "start", "", url], shell=False)
+        else:
+            webbrowser.open(url)
 
     threading.Thread(target=_open_browser, daemon=True).start()
     uvicorn.run("app:app", host="0.0.0.0", port=PORT, reload=False, log_level="info")

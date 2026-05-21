@@ -115,6 +115,68 @@
   .kpi-sub .delta-pos { color: var(--tu-success); }
   .kpi-sub .delta-neg { color: var(--tu-danger); }
 
+  /* ── Indices ticker tile ── */
+  .idx-ticker {
+    margin: 20px 0 28px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  .idx-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+  }
+  .idx-cell {
+    padding: 13px 18px 11px;
+    border-right: 1px solid var(--border-1);
+    border-bottom: 1px solid var(--border-1);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    transition: background 0.15s ease;
+    position: relative;
+  }
+  .idx-cell:nth-child(5n)   { border-right: 0; }
+  .idx-cell:nth-child(n+6)  { border-bottom: 0; }
+  .idx-cell.flash-up   { background: rgba(95,138,107,0.10); }
+  .idx-cell.flash-down { background: rgba(182,106,90,0.10); }
+  .idx-head {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .idx-name {
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--fg-2);
+  }
+  .idx-badge {
+    font-size: 9.5px; font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 1px 5px; border-radius: var(--r-xs);
+    line-height: 1.5;
+    flex: none;
+  }
+  .idx-badge.nse { background: var(--tu-teal-50);  color: var(--tu-teal-700); }
+  .idx-badge.bse { background: #E8F0F8;             color: #2B5FAD; }
+  .idx-badge.sec { background: var(--bg-sunken);    color: var(--fg-3); }
+  .idx-val {
+    font-family: var(--font-mono);
+    font-size: 17px; font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--fg-1);
+    white-space: nowrap;
+    display: flex; align-items: baseline; gap: 6px;
+  }
+  .idx-chg {
+    font-size: 12px; font-weight: 500;
+    font-family: var(--font-mono);
+  }
+  .idx-chg.pos { color: var(--tu-success); }
+  .idx-chg.neg { color: var(--tu-danger); }
+  .idx-chg.flat { color: var(--fg-3); }
+  .idx-cell.loading .idx-val { color: var(--fg-4); }
+
   /* ── Section ── */
   .section { padding: 40px 0 8px; }
   .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
@@ -175,6 +237,13 @@
   .strategy .stats b { color: var(--fg-1); font-weight: 600; font-family: var(--font-mono); }
   .strategy .stats .pos { color: var(--tu-success); }
   .strategy .stats .neg { color: var(--tu-danger); }
+  /* Strategy config grid */
+  .cfg-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; padding: 10px 12px; background: var(--bg-sunken); border-radius: var(--r-md); border: 1px solid var(--border-1); }
+  .cfg-field { display: flex; flex-direction: column; gap: 3px; min-width: 80px; }
+  .cfg-field label { font-size: 10px; font-weight: 600; color: var(--fg-3); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+  .cfg-field input[type=number] { width: 80px; padding: 3px 6px; font-size: 12px; font-family: var(--font-mono); background: var(--bg); border: 1px solid var(--border-1); border-radius: var(--r-xs); color: var(--fg-1); text-align: right; }
+  .cfg-field input[type=number]:focus { outline: none; border-color: var(--accent); }
+  .cfg-field input[type=number]:disabled { opacity: .5; cursor: not-allowed; }
   .toggle { position: relative; width: 34px; height: 20px; border-radius: 999px; background: var(--tu-ink-100); border: 0; cursor: pointer; padding: 0; transition: background var(--dur-base) var(--ease-out); }
   .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: white; box-shadow: var(--shadow-1); transition: transform var(--dur-base) var(--ease-out); }
   .toggle.on { background: var(--tu-teal-500); }
@@ -272,7 +341,7 @@
       <a href="/live">Live</a>
       <a href="/charts">Charts</a>
       <a href="/paper" class="active">Paper trading</a>
-      <a href="/strategies">Strategies</a>
+      <a href="/strategies-v1">Strategies</a>
     </nav>
     <div class="spacer"></div>
     <div class="session">
@@ -285,7 +354,7 @@
     <button class="btn-square" aria-label="Notifications" title="Alerts">
       <svg class="ic" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9zM10 21a2 2 0 0 0 4 0"/></svg>
     </button>
-    <a class="btn btn-primary" href="/strategies">
+    <a class="btn btn-primary" href="/strategies-v1">
       <svg class="ic" viewBox="0 0 24 24" style="stroke:currentColor"><path d="M5 12h14M12 5v14"/></svg>
       New strategy
     </a>
@@ -332,6 +401,54 @@
       <span class="kpi-label">Orders placed</span>
       <span class="kpi-value" id="kpi-orders">—</span>
       <span class="kpi-sub" id="kpi-orders-sub">filled · open · closed</span>
+    </div>
+  </section>
+
+  <!-- ── Market indices ticker (10 indices, live via WebSocket) ── -->
+  <section class="idx-ticker" aria-label="Market indices" id="idx-ticker">
+    <div class="idx-grid" id="idx-grid">
+      <!-- Row 1 — broad market -->
+      <div class="idx-cell loading" data-sym="NIFTY">
+        <div class="idx-head"><span class="idx-name">NIFTY 50</span><span class="idx-badge nse">NSE</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="SENSEX">
+        <div class="idx-head"><span class="idx-name">SENSEX</span><span class="idx-badge bse">BSE</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="CNXBAN">
+        <div class="idx-head"><span class="idx-name">BANK NIFTY</span><span class="idx-badge nse">NSE</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="FINNIFTY">
+        <div class="idx-head"><span class="idx-name">FIN NIFTY</span><span class="idx-badge nse">NSE</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="MIDCPNIFTY">
+        <div class="idx-head"><span class="idx-name">NIFTY MIDCAP 100</span><span class="idx-badge nse">NSE</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <!-- Row 2 — sector / size -->
+      <div class="idx-cell loading" data-sym="NIFTY_SMLCAP">
+        <div class="idx-head"><span class="idx-name">NIFTY SMALLCAP 100</span><span class="idx-badge sec">SEC</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="NIFTY_IT">
+        <div class="idx-head"><span class="idx-name">NIFTY IT</span><span class="idx-badge sec">SEC</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="NIFTY_PHARMA">
+        <div class="idx-head"><span class="idx-name">NIFTY PHARMA</span><span class="idx-badge sec">SEC</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="NIFTY_AUTO">
+        <div class="idx-head"><span class="idx-name">NIFTY AUTO</span><span class="idx-badge sec">SEC</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
+      <div class="idx-cell loading" data-sym="NIFTY_FMCG">
+        <div class="idx-head"><span class="idx-name">NIFTY FMCG</span><span class="idx-badge sec">SEC</span></div>
+        <div class="idx-val"><span class="idx-ltp">—</span><span class="idx-chg flat"></span></div>
+      </div>
     </div>
   </section>
 
@@ -410,7 +527,7 @@
             <svg class="spark" viewBox="0 0 120 30" preserveAspectRatio="none"><polyline points="0,12 20,13 40,15 60,16 80,18 100,19 120,20" fill="none" stroke="var(--tu-danger)" stroke-width="1.4"/></svg>
             <span class="signal-cell"><span class="signal flat"><span class="blip"></span>Scanning…</span></span>
           </div>
-          <div class="watch-row" data-sym="HDFCBANK" data-stock="HDFCBANK" data-exch="NSE" data-prod="cash" data-tick="1672.80" data-vol="0.8">
+          <div class="watch-row" data-sym="HDFBAN" data-stock="HDFBAN" data-exch="NSE" data-prod="cash" data-tick="1672.80" data-vol="0.8">
             <span class="num">05</span>
             <span class="sym"><span class="ticker">HDFC BANK</span><span class="meta"><span class="tag-eq">EQ</span> <span style="font-size:10px;opacity:.7;">HDFBAN</span> · NSE · Banks</span></span>
             <span class="ltp">1,672.80</span>
@@ -425,7 +542,7 @@
       <div class="card">
         <div class="card-head">
           <div class="card-title">Strategies running <span class="count" id="strat-count-eq">loading</span></div>
-          <div class="card-actions"><a href="/strategies" class="filter-link">Manage →</a></div>
+          <div class="card-actions"><a href="/strategies-v1" class="filter-link">Manage →</a></div>
         </div>
         <div class="strategy-list" id="strategy-list-eq">
           <div style="padding:32px;text-align:center;color:var(--fg-3);font-size:13px">Loading strategies…</div>
@@ -571,7 +688,7 @@
       <div class="card">
         <div class="card-head">
           <div class="card-title">Strategies running <span class="count" id="strat-count-opt">loading</span></div>
-          <div class="card-actions"><a href="/strategies" class="filter-link">Manage →</a></div>
+          <div class="card-actions"><a href="/strategies-v1" class="filter-link">Manage →</a></div>
         </div>
         <div class="strategy-list" id="strategy-list-opt">
           <div style="padding:32px;text-align:center;color:var(--fg-3);font-size:13px">Loading strategies…</div>
@@ -728,6 +845,9 @@
 let _ws        = null;
 let _ordersData  = [];
 let _orderFilter = 'All';
+const _sparkHistory  = {};   // sym → circular LTP array for sparkline redraws
+const _stratConfigs  = {};   // strategy_id → {key: value} editable params
+let _armedStratIds = new Set(); // strategy IDs currently toggled ON
 let _eqTradeF    = 'All';
 let _optTradeF   = 'All';
 let _scanData    = [];
@@ -777,7 +897,13 @@ function connectWS() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'ltp' || msg.type === 'tick') onLTP(msg);
       if (msg.type === 'paper_update' || msg.type === 'paper_pnl') { loadSummary(); loadOrders(); }
-      if (msg.type === 'intraday_signals' || msg.type === 'strategy_alert') onSignal(msg);
+      if (msg.type === 'intraday_signals') {
+        if (msg.results) {
+          applyWatchlistSignals(msg.results);
+          populateFeedFromScan(msg.results);
+        }
+      }
+      if (msg.type === 'strategy_alert') onSignal(msg);
       if (msg.type === 'paper_strategy_entered' || msg.type === 'paper_strategy_closed') onSignal(msg);
       if (msg.type === 'market_open') { loadScan(); loadOrders(); loadSummary(); }
       if (msg.type === 'day_reset') {
@@ -793,22 +919,73 @@ function connectWS() {
 }
 
 function onLTP(msg) {
+  // Bulk broadcast: {type:"ltp", data:{NIFTY:23473, BANKNIFTY:52942, ...}}
+  if (msg.type === 'ltp' && msg.data && typeof msg.data === 'object') {
+    Object.entries(msg.data).forEach(([sym, ltp]) => _setRowLTP(sym, ltp));
+    return;
+  }
+  // Single tick: {type:"tick", symbol:"NIFTY", ltp:23473}
   const sym = (msg.symbol || msg.stock_code || '').toUpperCase().replace(/\s+/g,'');
-  if (!sym) return;
+  if (sym) _setRowLTP(sym, msg.ltp ?? msg.data);
+}
+
+function _setRowLTP(symRaw, ltp) {
+  const sym = symRaw.toUpperCase().replace(/\s+/g,'');
+  const next = parseFloat(ltp);
+  if (isNaN(next)) return;
+
+  // Maintain rolling sparkline history (last 30 samples, one per broadcast tick)
+  if (!_sparkHistory[sym]) _sparkHistory[sym] = [];
+  const hist = _sparkHistory[sym];
+  hist.push(next);
+  if (hist.length > 30) hist.shift();
+
   document.querySelectorAll('[data-sym]').forEach(row => {
     const rowSym = (row.dataset.sym || '').toUpperCase().replace(/\s+/g,'');
     if (rowSym !== sym) return;
+
+    // ── LTP with flash ────────────────────────────────────────────────
     const ltpEl = row.querySelector('.ltp');
-    if (!ltpEl) return;
-    const prev = parseFloat(ltpEl.textContent.replace(/,/g,'')) || 0;
-    const next = parseFloat(msg.ltp);
-    if (isNaN(next)) return;
-    ltpEl.classList.remove('flash-up','flash-dn');
-    void ltpEl.offsetWidth;
-    ltpEl.classList.add(next >= prev ? 'flash-up' : 'flash-dn');
-    ltpEl.textContent = fmtIN(next, 2);
+    if (ltpEl) {
+      const prev = parseFloat(ltpEl.textContent.replace(/,/g,'')) || 0;
+      ltpEl.classList.remove('flash-up','flash-dn');
+      void ltpEl.offsetWidth;
+      ltpEl.classList.add(next >= prev ? 'flash-up' : 'flash-dn');
+      ltpEl.textContent = fmtIN(next, 2);
+      setTimeout(() => ltpEl.classList.remove('flash-up','flash-dn'), 1200);
+    }
     row.dataset.tick = next;
-    setTimeout(() => ltpEl.classList.remove('flash-up','flash-dn'), 1200);
+
+    // ── Change % from stored prev_close ──────────────────────────────
+    const pc = parseFloat(row.dataset.prevclose);
+    if (pc > 0) {
+      const chg = next - pc;
+      const pct = (chg / pc) * 100;
+      const chgEl = row.querySelector('.chg');
+      if (chgEl) {
+        chgEl.className   = 'chg ' + (chg >= 0 ? 'pos' : 'neg');
+        chgEl.textContent = (chg >= 0 ? '+' : '') + fmtIN(chg, 2) + ' (' + pct.toFixed(2) + '%)';
+      }
+    }
+
+    // ── Sparkline redraw ──────────────────────────────────────────────
+    if (hist.length >= 2) {
+      const sparkEl = row.querySelector('.spark polyline');
+      if (sparkEl) {
+        const lo = Math.min(...hist), hi = Math.max(...hist);
+        const range = hi - lo || 1;
+        const W = 120, H = 30, pad = 3;
+        const pts = hist.map((v, i) => {
+          const x = i / (hist.length - 1) * W;
+          const y = H - pad - ((v - lo) / range) * (H - pad * 2);
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const up = next >= hist[0];
+        sparkEl.setAttribute('points', pts);
+        sparkEl.setAttribute('stroke', up ? 'var(--tu-success)' : 'var(--tu-danger)');
+        sparkEl.parentElement.setAttribute('stroke', up ? 'var(--tu-success)' : 'var(--tu-danger)');
+      }
+    }
   });
 }
 
@@ -894,23 +1071,36 @@ async function loadScan() {
 }
 
 function applyWatchlistSignals(rows) {
-  rows.forEach(row => {
-    const sym = (row.symbol||'').toUpperCase().replace(/\s+/g,'');
+  // Only consider rows from armed strategies (if any are armed)
+  const eligible = _armedStratIds.size > 0
+    ? rows.filter(r => !r.strategy || _armedStratIds.has(r.strategy))
+    : [];
+
+  // Pick the best signal per symbol: LONG/SHORT (2) > WATCH (1) > hide WAIT/NO_DATA/ERROR (0)
+  const sigPriority = s => (s === 'LONG' || s === 'SHORT') ? 2 : s === 'WATCH' ? 1 : 0;
+  const best = {};
+  eligible.forEach(row => {
+    const sym = (row.symbol || '').toUpperCase().replace(/\s+/g, '');
+    if (!sym || !row.signal) return;
+    if (!best[sym] || sigPriority(row.signal) > sigPriority(best[sym].signal)) best[sym] = row;
+  });
+  Object.values(best).forEach(row => {
+    const sym = (row.symbol || '').toUpperCase().replace(/\s+/g, '');
     document.querySelectorAll('[data-sym]').forEach(el => {
-      const elSym = (el.dataset.sym||'').toUpperCase().replace(/\s+/g,'');
+      const elSym = (el.dataset.sym || '').toUpperCase().replace(/\s+/g, '');
       if (elSym !== sym) return;
-      const ltp = row.ltp;
-      if (ltp) {
+      if (row.ltp) {
         const ltpEl = el.querySelector('.ltp');
-        if (ltpEl) ltpEl.textContent = fmtIN(ltp, 2);
+        if (ltpEl) ltpEl.textContent = fmtIN(row.ltp, 2);
       }
       const sig = row.signal;
-      if (!sig) return;
-      const cls = sig==='LONG'?'buy':sig==='SHORT'?'sell':sig==='WATCH'?'hold':'flat';
-      const label = sig==='LONG'?'Buy':sig==='SHORT'?'Short':sig==='WATCH'?'Watch':sig;
-      const strat = row.strategy ? ` · ${row.strategy}` : '';
+      // WAIT/NO_DATA/ERROR → leave as "Scanning…" (no overwrite)
+      if (!sig || sig === 'WAIT' || sig === 'NO_DATA' || sig === 'ERROR') return;
+      const cls = sig === 'LONG' ? 'buy' : sig === 'SHORT' ? 'sell' : 'hold';
+      const label = sig === 'LONG' ? 'Long' : sig === 'SHORT' ? 'Short' : 'Watch';
+      const strat = row.strategy_name || row.strategy || '';
       const sigCell = el.querySelector('.signal-cell');
-      if (sigCell) sigCell.innerHTML = `<span class="signal ${cls}"><span class="blip"></span>${label}${strat}</span>`;
+      if (sigCell) sigCell.innerHTML = `<span class="signal ${cls}"><span class="blip"></span>${label}${strat ? ' · '+strat : ''}</span>`;
     });
   });
 }
@@ -918,7 +1108,12 @@ function applyWatchlistSignals(rows) {
 function populateFeedFromScan(rows) {
   const feed = document.getElementById('feed-intra');
   const empty = feed && feed.querySelector('.feed-empty');
-  const active = rows.filter(r => r.signal === 'LONG' || r.signal === 'SHORT');
+  // Only show signals from armed strategies; if none armed → show nothing
+  const active = rows.filter(r =>
+    (r.signal === 'LONG' || r.signal === 'SHORT') &&
+    _armedStratIds.size > 0 &&
+    _armedStratIds.has(r.strategy)
+  );
   if (!active.length || !feed) return;
   if (empty) empty.remove();
   // Only add rows not already present
@@ -986,6 +1181,14 @@ async function loadStrategies() {
       signal_count: 0, acted: 0, pnl: null,
     }));
   }
+  // Update armed set — drives signal filtering in watchlist + feed
+  _armedStratIds = new Set(
+    [...equity, ...options]
+      .filter(s => s.active || s.running)
+      .map(s => s.strategy_id || s.id)
+      .filter(Boolean)
+  );
+
   renderStratList('strategy-list-eq', equity);
   renderStratList('strategy-list-opt', options);
   const eqArmed  = equity.filter(s => s.active || s.running).length;
@@ -1002,22 +1205,49 @@ function renderStratList(listId, strats) {
     return;
   }
   el.innerHTML = strats.map(s => {
-    const on = !!(s.active || s.running || s.status === 'running');
-    const pnl = s.pnl ?? s.total_pnl ?? null;
-    const pnlCls = pnl == null ? 'pnl-flat' : pnl >= 0 ? 'pos' : 'neg';
-    const pnlTxt = pnl == null ? '— flat' : (pnl>=0?'+ ':'− ')+'₹'+fmtIN(Math.abs(pnl),0);
+    const on      = !!(s.active || s.running || s.status === 'running');
+    const pnl     = s.pnl ?? s.total_pnl ?? null;
+    const pnlCls  = pnl == null ? 'pnl-flat' : pnl >= 0 ? 'pos' : 'neg';
+    const pnlTxt  = pnl == null ? '— flat' : (pnl>=0?'+ ':'− ')+'₹'+fmtIN(Math.abs(pnl),0);
     const pillCls = s.in_trade ? 'armed' : on ? '' : 'idle';
     const pillLbl = s.in_trade ? 'In trade' : on ? 'Armed' : 'Paused';
-    const id = s.strategy_id || s.id || '';
-    const risk = s.risk || '';
+    const id      = s.strategy_id || s.id || '';
+    const risk    = s.risk || '';
     const riskBadge = risk ? `<span style="font-size:10px;font-weight:600;letter-spacing:.04em;padding:2px 7px;border-radius:99px;margin-left:6px;${
       risk==='High'   ? 'background:#fde8e8;color:#c0392b;' :
       risk==='Medium' ? 'background:#fef3cd;color:#856404;' :
                         'background:#d4edda;color:#155724;'}">${risk}</span>` : '';
+
+    // Merge server cfg + any user edits already in _stratConfigs
+    const schema = s.params_schema || [];
+    const runCfg = s.cfg || {};
+    if (!_stratConfigs[id]) _stratConfigs[id] = {};
+    schema.forEach(p => {
+      if (_stratConfigs[id][p.key] == null)
+        _stratConfigs[id][p.key] = runCfg[p.key] ?? p.default;
+    });
+
+    const cfgHtml = schema.length ? `
+      <div class="cfg-grid">
+        ${schema.map(p => `
+          <div class="cfg-field">
+            <label>${p.label}</label>
+            <input type="number" data-strat="${id}" data-key="${p.key}"
+              value="${_stratConfigs[id][p.key]}"
+              min="${p.min}" max="${p.max}" step="${p.step}"
+              oninput="_onCfgChange(this)"
+              title="${p.label}: ${p.min}–${p.max}">
+          </div>`).join('')}
+      </div>` : '';
+
+    const startedAt = s.started_at
+      ? `<span style="color:var(--fg-3)">since ${s.started_at.slice(11,16)}</span>` : '';
+
     return `<div class="strategy">
       <div>
-        <div class="name">${s.name||id}${riskBadge} <span class="pill-dot ${pillCls}">${pillLbl}</span></div>
+        <div class="name">${s.name||id}${riskBadge} <span class="pill-dot ${pillCls}">${pillLbl}</span>${startedAt}</div>
         <div class="desc">${s.description||s.desc||''}</div>
+        ${cfgHtml}
         <div class="stats">
           Signals <b>${s.signal_count??s.signals??0}</b> · Acted <b>${s.acted??s.orders??0}</b> · Win <b>${s.wins??'—'}/${s.trades??'—'}</b> · <span class="${pnlCls}">${pnlTxt}</span>
         </div>
@@ -1025,6 +1255,16 @@ function renderStratList(listId, strats) {
       <button class="toggle${on?' on':''}" onclick="toggleStrategy('${id}',${on})" aria-label="Strategy ${on?'on':'off'}"></button>
     </div>`;
   }).join('');
+}
+
+function _onCfgChange(input) {
+  const id  = input.dataset.strat;
+  const key = input.dataset.key;
+  const val = parseFloat(input.value);
+  if (!isNaN(val)) {
+    if (!_stratConfigs[id]) _stratConfigs[id] = {};
+    _stratConfigs[id][key] = val;
+  }
 }
 
 async function toggleStrategy(id, currentlyOn) {
@@ -1039,7 +1279,12 @@ async function toggleStrategy(id, currentlyOn) {
     } else {
       resp = await fetch('/api/strategy/start', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({strategy_id: id, auto_exec: true, mode: 'paper'}),
+        body: JSON.stringify({
+          strategy_id: id,
+          auto_exec:   true,
+          mode:        'paper',
+          params:      _stratConfigs[id] || {},
+        }),
       });
       data = await resp.json();
       if (!data.ok && data.error) {
@@ -1051,6 +1296,12 @@ async function toggleStrategy(id, currentlyOn) {
       }
     }
     await loadStrategies();
+    // Reset watchlist signal cells so stale signals don't linger after toggle
+    document.querySelectorAll('.signal-cell').forEach(cell => {
+      cell.innerHTML = '<span class="signal flat"><span class="blip"></span>Scanning…</span>';
+    });
+    // Re-apply current scan data filtered by new armed set
+    if (_scanData.length) applyWatchlistSignals(_scanData);
   } catch(e) {
     console.error('toggleStrategy error:', e);
   }
@@ -1332,6 +1583,7 @@ async function seedWatchlistFromDB() {
       if (!entry || !entry.ltp) return;
       const ltp       = parseFloat(entry.ltp);
       const prevClose = entry.prev_close ? parseFloat(entry.prev_close) : null;
+      if (prevClose > 0) row.dataset.prevclose = prevClose;  // persist for live change calc
       const ltpEl  = row.querySelector('.ltp');
       const chgEl  = row.querySelector('.chg');
       if (ltpEl && ltp) {
@@ -1463,13 +1715,87 @@ async function refreshWatchlist() {
 
 // Prices update only via WebSocket onLTP() — no simulated ticks.
 
+// ── Indices ticker ────────────────────────────────────────────────────
+const _idxPrevClose = {};  // symbol → prev_close
+
+function _idxFmt(v) {
+  if (v == null) return '—';
+  return Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function _idxUpdateCell(sym, ltp, changePct) {
+  const cell = document.querySelector(`.idx-cell[data-sym="${sym}"]`);
+  if (!cell) return;
+  cell.classList.remove('loading');
+
+  const ltpEl = cell.querySelector('.idx-ltp');
+  const chgEl = cell.querySelector('.idx-chg');
+  if (ltpEl) ltpEl.textContent = _idxFmt(ltp);
+
+  let pct = changePct;
+  // Derive pct from prev_close if not provided
+  if (pct == null && ltp != null && _idxPrevClose[sym]) {
+    pct = (ltp - _idxPrevClose[sym]) / _idxPrevClose[sym] * 100;
+  }
+
+  if (chgEl) {
+    if (pct != null) {
+      const sign = pct >= 0 ? '+' : '';
+      chgEl.textContent = `(${sign}${pct.toFixed(2)}%)`;
+      chgEl.className = 'idx-chg ' + (pct > 0 ? 'pos' : pct < 0 ? 'neg' : 'flat');
+    } else {
+      chgEl.textContent = '';
+      chgEl.className = 'idx-chg flat';
+    }
+  }
+
+  // Flash animation
+  const prevLtp = parseFloat(cell.dataset.lastLtp || '0');
+  if (ltp != null && prevLtp) {
+    const flashCls = ltp >= prevLtp ? 'flash-up' : 'flash-down';
+    cell.classList.add(flashCls);
+    setTimeout(() => cell.classList.remove(flashCls), 500);
+  }
+  if (ltp != null) cell.dataset.lastLtp = ltp;
+}
+
+async function loadIndices() {
+  try {
+    const r = await fetch('/api/indices');
+    if (!r.ok) return;
+    const data = await r.json();
+    data.forEach(d => {
+      if (d.prev_close) _idxPrevClose[d.symbol] = d.prev_close;
+      _idxUpdateCell(d.symbol, d.value, d.change_pct);
+    });
+  } catch (_) {}
+}
+
+function connectIdxWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/indices`);
+  ws.onmessage = ev => {
+    try {
+      const msg = JSON.parse(ev.data);
+      const sym = msg.symbol;
+      const ltp = msg.ltp;
+      if (sym && ltp != null) _idxUpdateCell(sym, ltp, msg.change_pct ?? null);
+    } catch (_) {}
+  };
+  ws.onclose = () => setTimeout(connectIdxWS, 3000);
+}
+
 // ── Init ─────────────────────────────────────────────────────────────
 async function init() {
   syncRefreshBtn();
   setInterval(syncRefreshBtn, 60000);
   seedWatchlistFromDB();   // restore last-known prices without a Breeze call
   connectWS();
-  await Promise.allSettled([loadSummary(), loadScan(), loadStrategies(), loadOrders()]);
+  connectIdxWS();
+  loadIndices();
+  setInterval(loadIndices, 30000);  // refresh every 30s as fallback
+  await loadStrategies();  // must complete first so _armedStratIds is populated
+  await Promise.allSettled([loadSummary(), loadScan(), loadOrders()]);
   setInterval(loadSummary,   10000);
   setInterval(loadStrategies, 60000);
   setInterval(loadScan,       60000);
