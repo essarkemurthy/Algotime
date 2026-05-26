@@ -26,12 +26,11 @@ log = logging.getLogger(__name__)
 _INTERVAL_TO_DB = {
     "1minute":  "1m",
     "5minute":  "5m",
-    "15minute": "15m",
     "30minute": "30m",
     "1day":     "1d",
 }
 
-_INTRADAY_INTERVALS = {"1minute", "5minute", "15minute", "30minute"}
+_INTRADAY_INTERVALS = {"1minute", "5minute", "30minute"}
 
 
 class HistoricalBackfill:

@@ -102,7 +102,7 @@ BREEZE_SESSION_TOKEN=your_session_token_here
 # ── Optional: PostgreSQL (only needed for the data collector) ─────────────────
 # The dashboard (app.py) works fine without this.
 # Format: postgresql://username:password@host:port/database
-DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
+DB_URL=postgresql://postgres:your_password@localhost:5432/market_data
 
 # ── Optional: AI Morning Brief (Claude Haiku) ─────────────────────────────────
 ANTHROPIC_API_KEY=your_anthropic_key_here
@@ -164,12 +164,12 @@ Start-Service postgresql-x64-18
 ### 3. Create the database
 ```powershell
 $env:PGPASSWORD = "your_postgres_password"
-& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres -h localhost trading_data
+& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -U postgres -h localhost market_data
 ```
 
 ### 4. Set DB_URL in `.env`
 ```env
-DB_URL=postgresql://postgres:your_password@localhost:5432/trading_data
+DB_URL=postgresql://postgres:your_password@localhost:5432/market_data
 ```
 
 ### 5. Create all tables

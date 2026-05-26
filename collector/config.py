@@ -93,7 +93,7 @@ class CollectorConfig:
     backfill_days: int              = 90    # 1m / 5m data window
     backfill_days_daily: int        = 730   # ~2 years of daily candles
     historical_intervals: List[str] = field(default_factory=lambda: [
-        "1minute", "5minute", "15minute", "30minute", "1day",
+        "1minute", "5minute", "30minute", "1day",
     ])
 
     # ── Greeks / IV ───────────────────────────────────────────────────────────

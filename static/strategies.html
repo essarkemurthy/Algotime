@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Strategies · techultime algo desk</title>
+<link rel="stylesheet" href="/static/colors_and_type.css" />
+<link rel="stylesheet" href="/static/app-shell.css" />
+<style>
+  /* ============================================================
+     Strategies page — tile rows + slide-out config pane
+     ============================================================ */
+  .kpi-4 { grid-template-columns: repeat(4, 1fr); }
+
+  .tile-section { margin-top: 28px; }
+  .tile-section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .tile-section-head .left {
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  .tile-section-head h2 {
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 400;
+    letter-spacing: -0.02em;
+    margin: 0; color: var(--fg-1);
+  }
+  .tile-section-head .count {
+    font-size: 11px;
+    background: var(--bg-sunken);
+    color: var(--fg-2);
+    border-radius: var(--r-pill);
+    padding: 2px 9px;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .tile-section-head .meta {
+    font-size: 12px; color: var(--fg-3);
+  }
+  .tile-section-head .meta b { color: var(--fg-1); font-weight: 500; }
+
+  .tile-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+  }
+  .tile-row.add-row {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .strat-tile {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    padding: 18px 18px 16px;
+    cursor: pointer;
+    position: relative;
+    display: flex; flex-direction: column; gap: 10px;
+    transition: border-color var(--dur-base) var(--ease-out),
+                box-shadow var(--dur-base) var(--ease-out),
+                transform var(--dur-fast) var(--ease-out);
+    text-align: left;
+    font-family: var(--font-sans);
+    min-height: 116px;
+  }
+  .strat-tile:hover {
+    border-color: var(--tu-teal-300);
+    box-shadow: var(--shadow-2);
+    transform: translateY(-1px);
+  }
+  .strat-tile.running {
+    border-color: var(--tu-teal-300);
+    box-shadow: inset 0 0 0 1px var(--tu-teal-300);
+    background: linear-gradient(180deg, var(--tu-teal-50) 0%, var(--bg-surface) 60%);
+  }
+  .strat-tile .tile-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px;
+  }
+  .strat-tile .num {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-3);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+  .strat-tile .status-dot {
+    width: 8px; height: 8px; border-radius: 999px;
+    background: var(--fg-4);
+    flex: none;
+    margin-top: 4px;
+  }
+  .strat-tile.running .status-dot {
+    background: var(--tu-success);
+    box-shadow: 0 0 0 3px rgba(95,138,107,0.18);
+  }
+  .strat-tile.armed .status-dot { background: var(--tu-amber-400); }
+  .strat-tile .nm {
+    font-size: 15px; font-weight: 600;
+    color: var(--fg-1);
+    letter-spacing: -0.005em;
+    line-height: 1.25;
+  }
+  .strat-tile.running .nm { color: var(--tu-teal-800); }
+  .strat-tile .foot {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px;
+    color: var(--fg-3);
+    margin-top: auto;
+  }
+  .strat-tile .foot .lbl {
+    font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-4);
+  }
+  .strat-tile .foot .val {
+    font-family: var(--font-mono);
+    color: var(--fg-2);
+  }
+  .strat-tile .foot .val.pos { color: var(--tu-success); }
+  .strat-tile .foot .val.neg { color: var(--tu-danger); }
+
+  .strat-tile.add {
+    background: transparent;
+    border: 1.5px dashed var(--border-3);
+    align-items: center; justify-content: center;
+    color: var(--fg-2);
+    min-height: 116px;
+  }
+  .strat-tile.add:hover {
+    background: var(--tu-teal-50);
+    border-color: var(--tu-teal-400);
+    border-style: dashed;
+    color: var(--tu-teal-800);
+  }
+  .strat-tile.add .plus-icon {
+    width: 36px; height: 36px;
+    border-radius: 999px;
+    background: var(--tu-teal-500); color: var(--fg-on-brand);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 400;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .strat-tile.add .plus-icon svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2.2; fill: none; }
+  .strat-tile.add .nm { font-size: 13.5px; font-weight: 500; }
+
+  /* ── Slide-out config pane ───────────────────────────────── */
+  .pane-backdrop {
+    position: fixed; inset: 0; z-index: 80;
+    background: rgba(20, 19, 14, 0.32);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out;
+  }
+  .pane-backdrop.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .pane {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 640px; max-width: calc(100vw - 32px);
+    background: var(--bg-page);
+    box-shadow: -24px 0 60px -20px rgba(20,19,14,0.18);
+    transform: translateX(100%);
+    transition: transform 0.28s var(--ease-out);
+    z-index: 90;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .pane.show { transform: translateX(0); }
+
+  .pane-head {
+    padding: 22px 28px 18px;
+    border-bottom: 1px solid var(--border-1);
+    background: var(--bg-surface);
+    display: flex; align-items: flex-start; gap: 14px;
+    flex: none;
+  }
+  .pane-head .num-box {
+    width: 44px; height: 44px;
+    border-radius: var(--r-md);
+    background: var(--bg-sunken);
+    color: var(--fg-2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display);
+    font-size: 20px; font-weight: 500;
+    flex: none;
+  }
+  .pane-head .num-box.running { background: var(--tu-teal-500); color: var(--fg-on-brand); }
+  .pane-head .num-box.add { background: #F8EAD7; color: var(--tu-amber-500); }
+  .pane-head .body { flex: 1; min-width: 0; }
+  .pane-head .kind-tag {
+    display: inline-block;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--tu-teal-700);
+    background: var(--tu-teal-50);
+    padding: 3px 8px; border-radius: var(--r-xs);
+    margin-bottom: 6px;
+  }
+  .pane-head .kind-tag.opt { background: rgba(107,138,163,0.12); color: #3D5B72; }
+  .pane-head .kind-tag.custom { background: #F8EAD7; color: var(--tu-amber-500); }
+  .pane-head h2 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 24px; font-weight: 400;
+    letter-spacing: -0.02em;
+    color: var(--fg-1);
+    line-height: 1.2;
+  }
+  .pane-head .desc {
+    margin: 6px 0 0; color: var(--fg-3);
+    font-size: 13px; line-height: 1.55;
+  }
+  .pane-close {
+    width: 32px; height: 32px;
+    border-radius: var(--r-sm);
+    background: transparent;
+    border: 1px solid var(--border-2);
+    color: var(--fg-2);
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: none;
+  }
+  .pane-close:hover { background: var(--bg-sunken); color: var(--fg-1); }
+  .pane-close svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+
+  .pane-body {
+    padding: 22px 28px;
+    overflow: auto;
+    flex: 1;
+  }
+  .pane-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    margin-bottom: 20px;
+    background: var(--bg-sunken);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .pane-stats .cell {
+    padding: 11px 14px;
+    border-right: 1px solid rgba(33,31,24,0.06);
+  }
+  .pane-stats .cell:last-child { border-right: 0; }
+  .pane-stats .l {
+    font-size: 10px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+  }
+  .pane-stats .v {
+    font-family: var(--font-mono);
+    font-size: 15px; font-weight: 500; color: var(--fg-1);
+    margin-top: 3px;
+  }
+  .pane-stats .v.pos { color: var(--tu-success); }
+  .pane-stats .v.neg { color: var(--tu-danger); }
+  .pane-stats .v.flat { color: var(--fg-3); }
+
+  .cfg-section {
+    border-top: 1px dashed var(--border-1);
+    padding-top: 18px;
+    margin-top: 6px;
+  }
+  .cfg-section:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .cfg-section .section-title {
+    font-size: 11px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500; margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .cfg-section .section-title .add-mini {
+    font-family: var(--font-sans);
+    font-size: 11px; font-weight: 500;
+    color: var(--tu-teal-700);
+    background: transparent; border: 0;
+    cursor: pointer; padding: 0;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .cfg-section .section-title .add-mini:hover { color: var(--tu-teal-800); }
+
+  .cfg-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 18px;
+  }
+  .cfg-field { display: flex; flex-direction: column; gap: 6px; }
+  .cfg-field label {
+    font-size: 11px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+  }
+  .cfg-field input, .cfg-field select, .cfg-field textarea {
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    padding: 9px 12px;
+    border: 1px solid var(--border-3);
+    background: var(--bg-surface);
+    color: var(--fg-1);
+    border-radius: var(--r-md);
+    outline: none;
+    transition: border-color var(--dur-base) var(--ease-out),
+                box-shadow var(--dur-base) var(--ease-out);
+  }
+  .cfg-field input.mono, .cfg-field textarea.mono {
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .cfg-field input:focus, .cfg-field select:focus, .cfg-field textarea:focus {
+    border-color: var(--tu-teal-400);
+    box-shadow: 0 0 0 3px rgba(61,106,96,0.13);
+  }
+  .cfg-field .hint {
+    font-size: 11px; color: var(--fg-3);
+    line-height: 1.45;
+  }
+  .cfg-field .hint b { color: var(--fg-1); font-weight: 500; font-family: var(--font-mono); }
+  .cfg-field.span2 { grid-column: 1 / -1; }
+
+  .sym-multi {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    padding: 8px 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-3);
+    border-radius: var(--r-md);
+    min-height: 38px;
+    align-items: center;
+  }
+  .sym-multi .chip-sel {
+    background: var(--tu-teal-50);
+    color: var(--tu-teal-700);
+    font-size: 12px; font-weight: 500;
+    padding: 3px 8px; border-radius: var(--r-pill);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .sym-multi .chip-sel .x {
+    cursor: pointer; color: var(--tu-teal-500);
+    font-size: 14px; line-height: 1;
+  }
+  .sym-multi input {
+    flex: 1; min-width: 60px;
+    border: 0; outline: 0; background: transparent;
+    font-family: var(--font-sans); font-size: 13px;
+    padding: 0;
+  }
+
+  .rule-row {
+    display: grid;
+    grid-template-columns: 0.9fr 0.6fr 1fr 28px;
+    gap: 10px; align-items: end;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border-1);
+  }
+  .rule-row:last-child { border-bottom: 0; padding-bottom: 4px; }
+  .rule-del {
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--r-sm);
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    align-self: end;
+    margin-bottom: 4px;
+  }
+  .rule-del:hover { background: var(--sell-bg); color: var(--tu-danger); border-color: rgba(182,106,90,0.25); }
+  .rule-del svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+
+  .pane-foot {
+    padding: 14px 28px;
+    border-top: 1px solid var(--border-1);
+    background: var(--bg-surface);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px;
+    flex: none;
+  }
+  .pane-foot .left-side {
+    display: flex; gap: 10px; align-items: center;
+    font-size: 12px; color: var(--fg-3);
+  }
+  .pane-foot .left-side .when { font-family: var(--font-mono); color: var(--fg-2); }
+  .pane-foot .actions { display: flex; gap: 10px; align-items: center; }
+
+  .mode-seg {
+    display: inline-flex;
+    background: var(--bg-sunken);
+    border-radius: var(--r-md);
+    padding: 3px;
+    font-size: 12px;
+  }
+  .mode-seg button {
+    background: transparent; border: 0;
+    padding: 5px 12px; border-radius: 7px;
+    color: var(--fg-2); font-weight: 500; cursor: pointer;
+    font-family: var(--font-sans);
+  }
+  .mode-seg button.on.paper {
+    background: var(--tu-amber-100); color: var(--tu-amber-500);
+    box-shadow: var(--shadow-1);
+  }
+  .mode-seg button.on.live {
+    background: var(--tu-teal-50); color: var(--tu-teal-700);
+    box-shadow: var(--shadow-1);
+  }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 500;
+    padding: 4px 10px; border-radius: var(--r-pill);
+    background: var(--bg-sunken); color: var(--fg-2);
+  }
+  .status-pill::before { content:""; width:6px; height:6px; border-radius: 999px; background: var(--fg-3); }
+  .status-pill.running { color: var(--tu-teal-700); background: var(--tu-teal-50); }
+  .status-pill.running::before { background: var(--tu-success); }
+  .status-pill.armed { color: var(--tu-amber-500); background: var(--tu-amber-100); }
+  .status-pill.armed::before { background: var(--tu-amber-400); }
+
+  .log-table-wrap { overflow: auto; max-height: 520px; }
+  .conf {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 500;
+    padding: 2px 8px; border-radius: var(--r-pill);
+    background: var(--bg-sunken);
+    color: var(--fg-2);
+  }
+  .conf.hi { background: var(--tu-teal-50); color: var(--tu-teal-700); }
+  .conf.lo { background: var(--bg-sunken); color: var(--fg-3); }
+  .rationale {
+    font-size: 12px; color: var(--fg-2);
+    line-height: 1.5;
+    max-width: 380px;
+  }
+  .rationale b { color: var(--fg-1); font-weight: 500; font-family: var(--font-mono); }
+  .action {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 3px 10px; border-radius: var(--r-pill);
+  }
+  .action.buy_call { background: var(--buy-bg); color: var(--buy); }
+  .action.buy_put  { background: var(--sell-bg); color: var(--sell); }
+  .action.iron_condor { background: var(--tu-teal-50); color: var(--tu-teal-700); }
+  .action.hedge { background: rgba(107,138,163,0.12); color: #3D5B72; }
+  .action.regime_change { background: #F8EAD7; color: var(--tu-amber-500); }
+  .action.skip { background: var(--bg-sunken); color: var(--fg-3); }
+  .action::before {
+    content:""; width: 5px; height: 5px; border-radius: 999px;
+    background: currentColor;
+  }
+
+  .bt-results {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border-1);
+  }
+  .bt-curve {
+    background: #FDFBF6;
+    border: 1px solid var(--border-1);
+    border-radius: var(--r-md);
+    padding: 10px 12px 8px;
+    display: flex; flex-direction: column; gap: 6px;
+    min-height: 110px;
+  }
+  .bt-curve .bt-label {
+    font-size: 10px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+  }
+  .bt-curve svg {
+    width: 100%; height: 76px;
+    flex: 1;
+  }
+  .bt-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border-1);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    align-content: start;
+  }
+  .bt-metrics .mcell {
+    background: var(--bg-surface);
+    padding: 8px 12px;
+  }
+  .bt-metrics .mcell .l {
+    font-size: 9.5px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+  }
+  .bt-metrics .mcell .v {
+    font-family: var(--font-mono);
+    font-size: 13px; font-weight: 500;
+    color: var(--fg-1);
+    margin-top: 2px;
+  }
+  .bt-metrics .mcell .v.pos { color: var(--tu-success); }
+  .bt-metrics .mcell .v.neg { color: var(--tu-danger); }
+
+  .strat-tile.deployed::after {
+    content: "→ Paper";
+    position: absolute; top: 12px; right: 14px;
+    font-family: var(--font-mono); font-size: 9px;
+    letter-spacing: 0.06em;
+    color: var(--tu-teal-700);
+    background: var(--tu-teal-50);
+    padding: 1px 6px; border-radius: var(--r-xs);
+    font-weight: 600;
+  }
+
+  @media (max-width: 1100px) {
+    .tile-row, .tile-row.add-row { grid-template-columns: repeat(2, 1fr); }
+    .cfg-form { grid-template-columns: 1fr; }
+    .kpi-4 { grid-template-columns: repeat(2, 1fr); }
+    .pane { width: 100vw; }
+    .bt-results { grid-template-columns: 1fr; }
+  }
+  /* ── DB-only mode banner ──────────────────────────────────── */
+  .db-only-banner { display: none; background: #FFF8E1; border-bottom: 1px solid #FFD54F; padding: 8px 0; }
+  .db-only-banner .inner { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .db-only-banner .msg { color: #E65100; font-weight: 500; }
+  .db-only-banner a { margin-left: auto; font-size: 12px; color: #F57F17; text-decoration: underline; }
+
+  /* ── Math strategy: type chooser + pipeline + backtest ─────── */
+  .type-chooser-head {
+    font-size: 14px; color: var(--fg-2); margin-bottom: 18px; line-height: 1.55;
+  }
+  .type-cards {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 6px;
+  }
+  .type-card {
+    border: 2px solid var(--border-2);
+    border-radius: var(--r-lg);
+    padding: 18px 18px 16px;
+    cursor: pointer;
+    background: var(--bg-surface);
+    text-align: left;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .type-card:hover { border-color: var(--tu-teal-400); box-shadow: var(--shadow-1); }
+  .type-card.rule:hover { border-color: var(--tu-amber-400); }
+  .type-card .tc-icon { font-size: 26px; margin-bottom: 8px; line-height: 1; }
+  .type-card .tc-name { font-size: 14px; font-weight: 600; color: var(--fg-1); margin-bottom: 4px; }
+  .type-card .tc-desc { font-size: 12px; color: var(--fg-3); line-height: 1.5; }
+
+  .pipeline-wrap { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .pipeline-step {
+    display: grid;
+    grid-template-columns: 28px 1fr 80px 70px 28px;
+    gap: 8px; align-items: center;
+    background: var(--bg-sunken);
+    border-radius: var(--r-md);
+    padding: 8px 10px;
+  }
+  .pipeline-step .step-num {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--fg-3); text-align: center;
+  }
+  .pipeline-step select, .pipeline-step input {
+    font-family: var(--font-sans); font-size: 12.5px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-3);
+    background: var(--bg-surface); color: var(--fg-1);
+    border-radius: var(--r-sm); outline: none;
+  }
+  .pipeline-step select:focus, .pipeline-step input:focus { border-color: var(--tu-teal-400); }
+  .pipeline-step .step-del {
+    width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--r-sm);
+    background: transparent; border: 1px solid transparent;
+    color: var(--fg-3); cursor: pointer;
+  }
+  .pipeline-step .step-del:hover { background: var(--sell-bg); color: var(--tu-danger); }
+  .pipeline-step .step-del svg { width: 11px; height: 11px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+
+  .formula-preview {
+    font-family: var(--font-mono);
+    font-size: 13px; color: var(--tu-teal-700);
+    background: var(--tu-teal-50);
+    border: 1px solid rgba(61,106,96,0.18);
+    border-radius: var(--r-md);
+    padding: 9px 14px;
+    margin-bottom: 16px;
+    word-break: break-all;
+  }
+  .formula-preview .fp-label {
+    font-size: 9.5px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--tu-teal-600);
+    font-weight: 500; display: block; margin-bottom: 4px;
+    font-family: var(--font-sans);
+  }
+
+  .mcond-row {
+    display: grid;
+    grid-template-columns: 60px 120px 1fr 80px 28px;
+    gap: 8px; align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border-1);
+  }
+  .mcond-row:last-child { border-bottom: 0; }
+  .mcond-row select, .mcond-row input {
+    font-family: var(--font-sans); font-size: 12.5px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-3);
+    background: var(--bg-surface); color: var(--fg-1);
+    border-radius: var(--r-sm); outline: none;
+  }
+  .mcond-row select:focus, .mcond-row input:focus { border-color: var(--tu-teal-400); }
+  .logic-seg {
+    display: inline-flex;
+    background: var(--bg-sunken); border-radius: var(--r-md); padding: 2px;
+    font-size: 11px;
+  }
+  .logic-seg button {
+    background: transparent; border: 0;
+    padding: 3px 9px; border-radius: 6px;
+    color: var(--fg-2); font-weight: 500; cursor: pointer;
+    font-family: var(--font-sans);
+  }
+  .logic-seg button.on { background: var(--bg-surface); color: var(--fg-1); box-shadow: var(--shadow-1); }
+
+  .bt-running {
+    display: flex; align-items: center; gap: 10px;
+    padding: 18px 0; color: var(--fg-2); font-size: 13px;
+  }
+  .spinner {
+    width: 18px; height: 18px; border-radius: 999px;
+    border: 2px solid var(--border-2);
+    border-top-color: var(--tu-teal-500);
+    animation: spin 0.75s linear infinite;
+    flex: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .bt-error {
+    padding: 12px 14px;
+    background: var(--sell-bg);
+    border: 1px solid rgba(182,106,90,0.2);
+    border-radius: var(--r-md);
+    color: var(--tu-danger);
+    font-size: 12.5px; line-height: 1.5;
+  }
+</style>
+</head>
+<body class="tu">
+
+<!-- App bar -->
+<header class="appbar">
+  <div class="wrap appbar-inner">
+    <div class="brand">
+      <span class="brand-orb" aria-hidden="true"></span>
+      <span class="brand-wordmark"><span class="light">Algo</span><span class="bold">time</span></span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="/">Live</a>
+      <a href="/charts">Charts</a>
+      <a href="/options">Options</a>
+      <a href="/paper">Paper trading</a>
+      <a href="/strategies" class="active">Strategies</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="session">
+      <span><span class="live-dot" style="display:inline-block;margin-right:8px;"></span>Breeze connected · NSE</span>
+      <span class="session-time" id="clock">10:42:18</span>
+    </div>
+    <button class="btn-square" aria-label="Notifications" title="Alerts">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9zM10 21a2 2 0 0 0 4 0"/></svg>
+    </button>
+    <a class="profile-btn" href="/profile" aria-label="My profile" title="My profile">SK</a>
+  </div>
+</header>
+
+<div class="db-only-banner" id="db-only-banner">
+  <div class="wrap inner">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5L14.5 13.5H1.5Z" stroke="#F57F17" stroke-width="1.5" stroke-linejoin="round"/><line x1="8" y1="6" x2="8" y2="9.5" stroke="#F57F17" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.5" r="0.75" fill="#F57F17"/></svg>
+    <span class="msg">Broker not connected — showing stored data from database</span>
+    <a href="/profile">Configure broker →</a>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Page intro -->
+  <section class="page-intro">
+    <div class="eyebrow">Design · build · back-test</div>
+    <h1>Strategies workshop</h1>
+    <p>Pick a strategy to inspect and edit its parameters, run a back-test on historical data, and deploy the ones you trust to the paper-trading desk. Build your own from scratch when nothing in the library fits.</p>
+  </section>
+
+  <!-- KPI strip -->
+  <section class="kpi kpi-4" aria-label="Workshop summary">
+    <div class="kpi-cell">
+      <span class="kpi-label">Strategies in library</span>
+      <span class="kpi-value" id="kpi-lib">20</span>
+      <span class="kpi-sub">10 intraday · 10 options</span>
+    </div>
+    <div class="kpi-cell">
+      <span class="kpi-label">Custom built</span>
+      <span class="kpi-value" id="kpi-custom">0</span>
+      <span class="kpi-sub">your own designs</span>
+    </div>
+    <div class="kpi-cell">
+      <span class="kpi-label">Back-tests run</span>
+      <span class="kpi-value" id="kpi-bt">28</span>
+      <span class="kpi-sub">across 12 unique strategies</span>
+    </div>
+    <div class="kpi-cell">
+      <span class="kpi-label">Deployed to paper</span>
+      <span class="kpi-value pos" id="kpi-deployed">3</span>
+      <span class="kpi-sub">running on the paper desk</span>
+    </div>
+  </section>
+
+  <!-- Intraday tile row -->
+  <section class="tile-section" id="row-intraday">
+    <div class="tile-section-head">
+      <div class="left">
+        <h2>Intraday strategies</h2>
+        <span class="count" id="cnt-intra">5</span>
+      </div>
+      <div class="meta">Equity &amp; index · auto square-off at <b>15:15 IST</b></div>
+    </div>
+    <div class="tile-row" id="tiles-intra"><!-- populated by JS --></div>
+  </section>
+
+  <!-- Options tile row -->
+  <section class="tile-section" id="row-options">
+    <div class="tile-section-head">
+      <div class="left">
+        <h2>Option strategies</h2>
+        <span class="count" id="cnt-opt">5</span>
+      </div>
+      <div class="meta">Weekly &amp; monthly expiries</div>
+    </div>
+    <div class="tile-row" id="tiles-opt"><!-- populated by JS --></div>
+  </section>
+
+  <!-- Custom strategies tile row + Add tile -->
+  <section class="tile-section" id="row-custom">
+    <div class="tile-section-head">
+      <div class="left">
+        <h2>Custom strategies</h2>
+        <span class="count" id="cnt-cust">0</span>
+      </div>
+      <div class="meta">Your own — fully editable</div>
+    </div>
+    <div class="tile-row add-row" id="tiles-cust">
+      <!-- populated by JS + Add tile -->
+    </div>
+  </section>
+
+  <!-- Signal log -->
+  <section class="section" id="signal-log">
+    <div class="section-head">
+      <div class="left">
+        <div class="eyebrow">Real-time log</div>
+        <h2>Signal feed</h2>
+      </div>
+      <div class="meta">All signals routed by any runner, regardless of mode · <b>42</b> today</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span class="live-dot" style="display:inline-block;"></span></span>
+          Strategy signals
+          <span class="count">streaming · last 60 min</span>
+        </div>
+        <div class="card-actions">
+          <div class="seg">
+            <button class="on">All</button>
+            <button>Acted</button>
+            <button>Filtered</button>
+          </div>
+          <a href="#" class="filter-link">Export CSV →</a>
+        </div>
+      </div>
+      <div class="log-table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Strategy</th>
+              <th>Symbol</th>
+              <th>Action</th>
+              <th>Confidence</th>
+              <th>Mode</th>
+              <th>Rationale</th>
+              <th>Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">10:41:54</td>
+              <td><b>Supertrend</b></td>
+              <td><b>RELIANCE</b></td>
+              <td><span class="action buy_call">BUY</span></td>
+              <td><span class="conf hi">0.84</span></td>
+              <td><span class="status filled">Paper</span></td>
+              <td class="rationale">5m Supertrend flipped green, daily trend filter aligned. Bought 20 sh, stop <b>2,902.10</b>.</td>
+              <td><span class="status open">Routed</span></td>
+            </tr>
+            <tr>
+              <td class="mono">10:40:08</td>
+              <td><b>Gamma scalper</b></td>
+              <td><b>NIFTY straddle</b></td>
+              <td><span class="action hedge">HEDGE_LONG</span></td>
+              <td><span class="conf hi">auto</span></td>
+              <td><span class="status filled">Paper</span></td>
+              <td class="rationale">Basket Δ drifted to <b>+ 0.18</b>, beyond +0.15 threshold. Buying 25 qty 22500 PE to re-center.</td>
+              <td><span class="status open">Routed</span></td>
+            </tr>
+            <tr>
+              <td class="mono">10:34:28</td>
+              <td><b>Iron condor</b></td>
+              <td><b>NIFTY</b></td>
+              <td><span class="action iron_condor">ENTER_IC</span></td>
+              <td><span class="conf hi">0.81</span></td>
+              <td><span class="status filled">Paper</span></td>
+              <td class="rationale">IVR crossed <b>62</b> (≥ 60). Sold 22400P / 22600C, bought 22300P / 22700C. Net credit <b>₹3,750</b>.</td>
+              <td><span class="status open">4 legs open</span></td>
+            </tr>
+            <tr>
+              <td class="mono">10:32:07</td>
+              <td><b>VWAP mean reversion</b></td>
+              <td><b>BANKNIFTY</b></td>
+              <td><span class="action buy_put">SHORT</span></td>
+              <td><span class="conf hi">0.72</span></td>
+              <td><span class="status filled">Paper</span></td>
+              <td class="rationale">Price 1.4σ above VWAP, RSI(14) 74. Sold 1 lot, stop <b>48,265</b>.</td>
+              <td><span class="status open">Open</span></td>
+            </tr>
+            <tr>
+              <td class="mono">10:24:55</td>
+              <td><b>Opening range breakout</b></td>
+              <td><b>NIFTY</b></td>
+              <td><span class="action buy_call">BUY</span></td>
+              <td><span class="conf hi">0.78</span></td>
+              <td><span class="status filled">Paper</span></td>
+              <td class="rationale">ORB high <b>22,521</b> broken with volume <b>1.6×</b> 20-bar mean. 1 lot, stop <b>22,478</b>.</td>
+              <td><span class="pnl-pos mono">+ ₹3,150</span></td>
+            </tr>
+            <tr>
+              <td class="mono">09:32:40</td>
+              <td><b>Short straddle</b></td>
+              <td><b>NIFTY straddle</b></td>
+              <td><span class="action iron_condor">ENTER_STRADDLE</span></td>
+              <td><span class="conf hi">0.79</span></td>
+              <td><span class="status filled">Paper</span></td>
+              <td class="rationale">Expiry-day open. Sold ATM CE @ <b>148.10</b>, PE @ <b>103.55</b>. Credit <b>₹18,873</b>.</td>
+              <td><span class="status open">2 legs open</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding: 12px 22px; border-top: 1px solid var(--border-1); background: #FDFBF6; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size:12px; color: var(--fg-3);">Showing 6 of 42 · earlier rows compressed</span>
+        <div style="display:flex; gap: 8px;">
+          <button class="chip on">All</button>
+          <button class="chip">Acted</button>
+          <button class="chip">Filtered</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="disc">
+      Signal generators poll every 10 seconds. <b>Paper mode</b> auto-routes filled actions to the paper engine; <b>live mode</b> logs only. Custom strategies are persisted to the signal database alongside built-ins.
+    </div>
+    <div class="credit">
+      Developed and maintained by <b>Techultime Technologies Pvt Ltd</b><span class="sep">·</span>&copy; 2026 All rights reserved
+    </div>
+  </footer>
+
+</div>
+
+<!-- Slide-out config pane -->
+<div class="pane-backdrop" id="pane-backdrop"></div>
+<aside class="pane" id="pane" role="dialog" aria-modal="true" aria-labelledby="pane-title">
+  <!-- populated by JS -->
+</aside>
+
+<script src="/static/strategies-data.js"></script>
+<script src="/static/strategies-app.js"></script>
+<div id="theme-picker-mount"></div>
+<script src="/static/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,399 @@
+/* =========================================================
+   TechUltime — Colors & Type
+   Soothing, eye-comfortable palette. Warm neutrals + muted
+   teal as a calm anchor. Designed for long sessions.
+   ========================================================= */
+
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,600;1,9..144,300;1,9..144,500;1,9..144,600&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  /* ---- Brand: Calm Teal (primary) ---------------------- */
+  --tu-teal-50:  #EAF1EF;
+  --tu-teal-100: #CFDEDA;
+  --tu-teal-200: #A8C2BC;
+  --tu-teal-300: #7FA59B;
+  --tu-teal-400: #588479;
+  --tu-teal-500: #3D6A60;   /* primary */
+  --tu-teal-600: #2E544C;
+  --tu-teal-700: #1F3E38;
+  --tu-teal-800: #152B27;
+  --tu-teal-900: #0E1D1A;
+
+  /* ---- Warm Sand (background system) ------------------- */
+  --tu-sand-50:  #FAF7F1;   /* page bg, soft on eyes */
+  --tu-sand-100: #F3EDE0;
+  --tu-sand-200: #E8DCC4;
+  --tu-sand-300: #D8C6A4;
+  --tu-sand-400: #C0AC85;
+  --tu-sand-500: #9C8865;
+
+  /* ---- Warm Neutrals (text + ink) ---------------------- */
+  --tu-ink-50:   #F5F2EC;
+  --tu-ink-100:  #E6E1D7;
+  --tu-ink-200:  #C7C0B2;
+  --tu-ink-300:  #9A9384;
+  --tu-ink-400:  #6E6859;
+  --tu-ink-500:  #4A4538;
+  --tu-ink-600:  #322F26;
+  --tu-ink-700:  #211F18;
+  --tu-ink-800:  #14130E;     /* near-black, warm */
+  --tu-ink-900:  #0A0907;
+
+  /* ---- Accent: Warm Amber (use sparingly) -------------- */
+  --tu-amber-100: #F4E2C9;
+  --tu-amber-200: #E8C79C;
+  --tu-amber-300: #D8A972;
+  --tu-amber-400: #C68B5E;   /* accent */
+  --tu-amber-500: #A4683E;
+
+  /* ---- Accent: Dusty Rose (subtle, for highlights) ----- */
+  --tu-rose-200: #E8CFC8;
+  --tu-rose-300: #D4ABA3;
+  --tu-rose-400: #B88078;
+
+  /* ---- Semantic ---------------------------------------- */
+  --tu-success: #5F8A6B;
+  --tu-warning: #C68B5E;
+  --tu-danger:  #B66A5A;
+  --tu-info:    #6B8AA3;
+
+  /* ---- Foreground / Background semantic tokens --------- */
+  --fg-1: var(--tu-ink-800);      /* primary text */
+  --fg-2: var(--tu-ink-500);      /* secondary text */
+  --fg-3: var(--tu-ink-400);      /* tertiary / captions */
+  --fg-4: var(--tu-ink-300);      /* placeholder / disabled */
+  --fg-on-brand: var(--tu-sand-50);
+  --fg-on-dark:  var(--tu-sand-50);
+
+  --bg-page:    var(--tu-sand-50);
+  --bg-surface: #FFFFFF;
+  --bg-sunken:  var(--tu-sand-100);
+  --bg-muted:   var(--tu-ink-50);
+  --bg-brand:   var(--tu-teal-500);
+  --bg-dark:    var(--tu-teal-800);
+
+  --border-1: rgba(33, 31, 24, 0.08);  /* hairline */
+  --border-2: rgba(33, 31, 24, 0.14);  /* card */
+  --border-3: rgba(33, 31, 24, 0.22);  /* input */
+  --border-brand: var(--tu-teal-500);
+
+  /* ---- Appbar (themeable across brand directions) ------ */
+  --appbar-bg:        var(--tu-teal-800);
+  --appbar-fg:        var(--tu-sand-50);
+  --appbar-fg-2:      rgba(245, 242, 236, 0.7);
+  --appbar-border:    rgba(255, 255, 255, 0.08);
+  --appbar-active-bg: rgba(255, 255, 255, 0.10);
+  --appbar-hover-bg:  rgba(255, 255, 255, 0.06);
+  --appbar-accent:    var(--tu-amber-300);
+
+  /* ---- Type families ----------------------------------- */
+  --font-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --font-sans:    "Manrope", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-brand:   "Fraunces", "Newsreader", Georgia, serif;
+
+  /* ---- Type scale (modular, 1.250 ratio) --------------- */
+  --fs-xs:   12px;
+  --fs-sm:   14px;
+  --fs-base: 16px;
+  --fs-md:   18px;
+  --fs-lg:   20px;
+  --fs-xl:   24px;
+  --fs-2xl:  30px;
+  --fs-3xl:  38px;
+  --fs-4xl:  48px;
+  --fs-5xl:  62px;
+  --fs-6xl:  78px;
+
+  /* ---- Line heights ------------------------------------ */
+  --lh-tight: 1.08;
+  --lh-snug:  1.22;
+  --lh-base:  1.55;
+  --lh-loose: 1.72;
+
+  /* ---- Tracking ---------------------------------------- */
+  --tr-tight:  -0.025em;
+  --tr-normal: 0;
+  --tr-wide:   0.04em;
+  --tr-wider:  0.12em;
+
+  /* ---- Spacing scale (4-pt) ---------------------------- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+  --s-32: 128px;
+
+  /* ---- Radii ------------------------------------------- */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-2xl: 32px;
+  --r-pill: 999px;
+
+  /* ---- Shadows (soft, warm-tinted) --------------------- */
+  --shadow-1: 0 1px 2px rgba(33, 31, 24, 0.04), 0 1px 1px rgba(33, 31, 24, 0.03);
+  --shadow-2: 0 2px 6px rgba(33, 31, 24, 0.06), 0 1px 2px rgba(33, 31, 24, 0.04);
+  --shadow-3: 0 8px 24px rgba(33, 31, 24, 0.08), 0 2px 6px rgba(33, 31, 24, 0.05);
+  --shadow-4: 0 24px 56px rgba(33, 31, 24, 0.12), 0 4px 12px rgba(33, 31, 24, 0.06);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(33, 31, 24, 0.04);
+
+  /* ---- Motion ------------------------------------------ */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0.05, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+  --dur-slow: 420ms;
+}
+
+/* =========================================================
+   Semantic type styles
+   ========================================================= */
+
+.tu-body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  color: var(--fg-1);
+  font-weight: 400;
+  letter-spacing: var(--tr-normal);
+}
+
+.tu-h1, h1.tu {
+  font-family: var(--font-display);
+  font-size: var(--fs-5xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tr-tight);
+  font-weight: 400;
+  color: var(--fg-1);
+  text-wrap: balance;
+}
+
+.tu-h2, h2.tu {
+  font-family: var(--font-display);
+  font-size: var(--fs-3xl);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--tr-tight);
+  font-weight: 400;
+  color: var(--fg-1);
+  text-wrap: balance;
+}
+
+.tu-h3, h3.tu {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xl);
+  line-height: var(--lh-snug);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--fg-1);
+}
+
+.tu-h4, h4.tu {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: var(--lh-snug);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.tu-eyebrow {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: var(--tr-wider);
+  text-transform: uppercase;
+  color: var(--tu-teal-500);
+}
+
+.tu-lede {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  line-height: var(--lh-snug);
+  font-weight: 300;
+  font-style: italic;
+  color: var(--fg-2);
+  text-wrap: pretty;
+}
+
+.tu-p {
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  color: var(--fg-1);
+  text-wrap: pretty;
+}
+
+.tu-small {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--fg-2);
+}
+
+.tu-caption {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+  color: var(--fg-3);
+  letter-spacing: var(--tr-wide);
+}
+
+.tu-code, code.tu {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-sunken);
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  color: var(--tu-teal-700);
+}
+
+/* =========================================================
+   Base
+   ========================================================= */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+body.tu {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+}
+
+::selection { background: var(--tu-teal-200); color: var(--tu-teal-800); }
+
+/* =========================================================
+   Brand themes — swap brand color set + appbar + page bg.
+   Toggle by setting body class: theme-olive | theme-tidal |
+   theme-wheat | theme-cedar | theme-moss. No class = default
+   Calm Teal.
+   ========================================================= */
+
+/* 1. Olive Grove — earthy, mediterranean */
+body.theme-olive {
+  --tu-teal-50:  #EDF1E0;
+  --tu-teal-100: #D9E1C2;
+  --tu-teal-200: #BFCC9F;
+  --tu-teal-300: #A0B47B;
+  --tu-teal-400: #849663;
+  --tu-teal-500: #6B7F4E;
+  --tu-teal-600: #5A6C40;
+  --tu-teal-700: #475636;
+  --tu-teal-800: #2A3D1C;
+  --tu-teal-900: #1C2A14;
+  --tu-amber-100: #F2DDD3;
+  --tu-amber-400: #C97A5D;
+  --tu-amber-500: #B85F45;
+  --bg-page:    #F6F1E6;
+  --bg-sunken:  #EFE7D6;
+  --appbar-bg:  #2A3D1C;
+  --appbar-accent: #C97A5D;
+}
+
+/* 2. Tidal Dusk — cool, oceanic */
+body.theme-tidal {
+  --tu-teal-50:  #DFE7EB;
+  --tu-teal-100: #C6D2D8;
+  --tu-teal-200: #A2B5BE;
+  --tu-teal-300: #7E96A2;
+  --tu-teal-400: #5F7A87;
+  --tu-teal-500: #4A6B7A;
+  --tu-teal-600: #3D5B6A;
+  --tu-teal-700: #2D4655;
+  --tu-teal-800: #1E2832;
+  --tu-teal-900: #131A22;
+  --tu-amber-100: #EFE0DE;
+  --tu-amber-400: #C89B95;
+  --tu-amber-500: #A86A65;
+  --bg-page:    #F1F4F4;
+  --bg-sunken:  #E6EAEB;
+  --appbar-bg:  #1E2832;
+  --appbar-accent: #C89B95;
+}
+
+/* 3. Wheat & Indigo — editorial, archival */
+body.theme-wheat {
+  --tu-teal-50:  #DBE0E8;
+  --tu-teal-100: #BFC8D6;
+  --tu-teal-200: #9CA8BC;
+  --tu-teal-300: #7888A4;
+  --tu-teal-400: #586886;
+  --tu-teal-500: #3F4D6B;
+  --tu-teal-600: #2F3B55;
+  --tu-teal-700: #222C40;
+  --tu-teal-800: #14182A;
+  --tu-teal-900: #0B0F1D;
+  --tu-amber-100: #ECD9CC;
+  --tu-amber-400: #B8924A;
+  --tu-amber-500: #8F5235;
+  --bg-page:    #F4EFE2;
+  --bg-sunken:  #EBE3CF;
+  --appbar-bg:  #14182A;
+  --appbar-accent: #B8924A;
+}
+
+/* 4. Cedar Bloom — warm, boutique */
+body.theme-cedar {
+  --tu-teal-50:  #F0DDD0;
+  --tu-teal-100: #E1C2B0;
+  --tu-teal-200: #C9A18B;
+  --tu-teal-300: #B08068;
+  --tu-teal-400: #9A6B55;
+  --tu-teal-500: #8A5A4A;
+  --tu-teal-600: #724838;
+  --tu-teal-700: #5A382A;
+  --tu-teal-800: #2A211B;
+  --tu-teal-900: #1B1410;
+  --tu-amber-100: #E5EAD9;
+  --tu-amber-400: #6B4860;
+  --tu-amber-500: #4D3245;
+  --bg-page:    #F6ECE2;
+  --bg-sunken:  #EFE0D0;
+  --appbar-bg:  #2A211B;
+  --appbar-accent: #6B4860;
+}
+
+/* 5. Moss & Linen — zen, restrained */
+body.theme-moss {
+  --tu-teal-50:  #DFE6D9;
+  --tu-teal-100: #C5D1BC;
+  --tu-teal-200: #A2B196;
+  --tu-teal-300: #7E9272;
+  --tu-teal-400: #5C7355;
+  --tu-teal-500: #3F5141;
+  --tu-teal-600: #324236;
+  --tu-teal-700: #26342B;
+  --tu-teal-800: #1F2620;
+  --tu-teal-900: #131814;
+  --tu-amber-100: #EFDDCB;
+  --tu-amber-400: #C9A14A;
+  --tu-amber-500: #8A5535;
+  --bg-page:    #EFEBE0;
+  --bg-sunken:  #E5DFCE;
+  --appbar-bg:  #1F2620;
+  --appbar-accent: #C9A14A;
+}
+
+/* All themes adjust their derived semantic colors that key off the
+   brand. Buy/Sell/Success/Danger stay consistent across themes for
+   trading-color sanity. */
+body[class*="theme-"] {
+  --bg-brand:   var(--tu-teal-500);
+  --bg-dark:    var(--tu-teal-800);
+  --tu-success: var(--tu-success); /* preserved */
+}

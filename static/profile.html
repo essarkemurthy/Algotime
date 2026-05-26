@@ -1,0 +1,1590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>My account · techultime</title>
+<link rel="stylesheet" href="/static/colors_and_type.css" />
+<link rel="stylesheet" href="/static/app-shell.css" />
+<style>
+  /* ============================================================
+     Profile page
+     ============================================================ */
+  .profile-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    grid-template-areas:
+      "id     settings"
+      "funds  funds"
+      "demat  demat";
+    gap: 24px;
+    margin-top: 28px;
+    align-items: stretch;
+  }
+  .profile-grid > aside { display: contents; }
+  .profile-grid .id-card    { grid-area: id; }
+  .profile-grid .settings   { grid-area: settings; display: flex; flex-direction: column; }
+  .profile-grid .rail-card.funds-card { grid-area: funds; }
+  .profile-grid .rail-card.demat-card { grid-area: demat; }
+
+  /* Credential selector chips (id-card) */
+  .role-band {
+    display: flex; flex-direction: column; align-items: stretch;
+    gap: 8px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border-1);
+    border-bottom: 1px solid var(--border-1);
+    background: #FDFBF6;
+  }
+  .cred-chip {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    text-align: left;
+    font-family: var(--font-sans);
+    color: var(--fg-2);
+    transition: border-color var(--dur-base) var(--ease-out),
+                background var(--dur-base) var(--ease-out),
+                box-shadow var(--dur-base) var(--ease-out);
+  }
+  .cred-chip:hover { border-color: var(--tu-teal-300); }
+  .cred-chip.on {
+    border-color: var(--tu-teal-400);
+    background: var(--tu-teal-50);
+    box-shadow: 0 0 0 3px rgba(61, 106, 96, 0.08);
+  }
+  .cred-chip .ic-wrap {
+    width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-sunken);
+    color: var(--fg-2);
+    flex: none;
+    transition: background var(--dur-base) var(--ease-out),
+                color var(--dur-base) var(--ease-out);
+  }
+  .cred-chip.on .ic-wrap { background: var(--tu-teal-500); color: var(--fg-on-brand); }
+  .cred-chip .ic-wrap svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .cred-chip .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .cred-chip .title { font-size: 13px; font-weight: 600; color: var(--fg-1); letter-spacing: -0.005em; }
+  .cred-chip .sub { font-size: 11px; color: var(--fg-3); }
+  .cred-chip .status-dot {
+    width: 7px; height: 7px; border-radius: 999px;
+    background: var(--tu-success);
+    flex: none;
+  }
+  .cred-chip .status-dot.warn { background: var(--tu-warning); }
+  .cred-chip .status-dot.off  { background: var(--fg-4); }
+  .cred-chip.hidden { display: none; }
+
+  /* Broker selector strip (top of right pane) */
+  .broker-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-1);
+    background: linear-gradient(180deg, #FDFBF6, var(--bg-surface));
+  }
+  .broker-selector { position: relative; flex: 1; min-width: 0; max-width: 460px; }
+  .broker-trigger {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%;
+    padding: 8px 12px 8px 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    text-align: left;
+    transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+  }
+  .broker-trigger:hover { border-color: var(--tu-teal-300); }
+  .broker-trigger.open { border-color: var(--tu-teal-400); box-shadow: 0 0 0 3px var(--tu-teal-50); }
+  .bicon {
+    width: 36px; height: 36px;
+    border-radius: var(--r-sm);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #fff;
+    flex: none;
+  }
+  .broker-option .bicon { width: 32px; height: 32px; font-size: 11px; }
+  .ab-broker .bicon { width: 30px; height: 30px; font-size: 11px; margin: 0 auto 6px; }
+  .binfo { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .bname {
+    font-size: 13.5px; font-weight: 600;
+    color: var(--fg-1); letter-spacing: -0.005em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bmeta {
+    font-size: 11px; color: var(--fg-3);
+    margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chev {
+    width: 14px; height: 14px;
+    stroke: var(--fg-3); stroke-width: 1.6; fill: none;
+    flex: none;
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+  .broker-trigger.open .chev { transform: rotate(180deg); }
+
+  .broker-dropdown {
+    position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-3);
+    z-index: 10;
+    max-height: 320px; overflow: auto;
+    display: none;
+    animation: brup 180ms var(--ease-out);
+  }
+  @keyframes brup { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .broker-dropdown.show { display: block; }
+  .broker-option {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-1);
+  }
+  .broker-option:last-child { border-bottom: 0; }
+  .broker-option:hover { background: var(--bg-sunken); }
+  .broker-option.on { background: var(--tu-teal-50); }
+  .broker-option .body { flex: 1; min-width: 0; }
+  .broker-option .nm { font-size: 13px; font-weight: 600; color: var(--fg-1); letter-spacing: -0.005em; }
+  .broker-option .meta { font-size: 11px; color: var(--fg-3); margin-top: 2px; }
+  .broker-option .b-dot {
+    width: 8px; height: 8px; border-radius: 999px;
+    background: var(--fg-4); flex: none;
+  }
+  .broker-option.connected .b-dot { background: var(--tu-success); }
+  .broker-option.warn .b-dot      { background: var(--tu-amber-400); }
+
+  /* Add-broker modal */
+  .ab-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(20,19,14,0.34);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: none; align-items: center; justify-content: center;
+  }
+  .ab-backdrop.show { display: flex; }
+  .ab-modal {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-4);
+    width: 520px; max-width: calc(100vw - 48px);
+    padding: 24px 28px 20px;
+    animation: brup 220ms var(--ease-out);
+  }
+  .ab-modal h3 {
+    margin: 0 0 4px;
+    font-family: var(--font-display);
+    font-size: 24px; font-weight: 400;
+    letter-spacing: -0.015em;
+    color: var(--fg-1);
+  }
+  .ab-modal .sub {
+    margin: 0 0 18px;
+    font-size: 12.5px; color: var(--fg-3);
+    line-height: 1.5;
+  }
+  .ab-brokers {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .ab-broker {
+    padding: 14px 8px 12px;
+    border: 1.5px solid var(--border-2);
+    border-radius: var(--r-md);
+    background: var(--bg-surface);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    text-align: center;
+    transition: border-color 150ms, background 150ms;
+  }
+  .ab-broker:hover { background: var(--bg-sunken); }
+  .ab-broker.on { border-color: var(--tu-teal-400); background: var(--tu-teal-50); }
+  .ab-broker .nm { font-size: 12px; font-weight: 600; color: var(--fg-1); }
+  .ab-modal-actions {
+    display: flex; justify-content: flex-end; gap: 10px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border-1);
+  }
+
+  /* Admin-only elements: hidden unless body.admin-mode */
+  body:not(.admin-mode) [data-admin-only] { display: none !important; }
+
+  /* Left rail */
+  .id-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+    overflow: hidden;
+  }
+  .id-card .top {
+    padding: 28px 24px 22px;
+    background: linear-gradient(180deg, var(--tu-teal-50), var(--bg-surface));
+    border-bottom: 1px solid var(--border-1);
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    text-align: center;
+  }
+  .id-card .avatar {
+    width: 76px; height: 76px;
+    border-radius: 999px;
+    background: var(--tu-teal-500);
+    color: var(--fg-on-brand);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display);
+    font-size: 30px; font-weight: 500;
+    letter-spacing: 0.02em;
+    box-shadow: inset 0 -2px 6px rgba(0,0,0,0.16), 0 0 0 4px var(--bg-surface), 0 0 0 5px var(--tu-teal-100);
+  }
+  .id-card .name {
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 400;
+    letter-spacing: -0.015em;
+    color: var(--fg-1);
+    margin: 0;
+  }
+  .id-card .email {
+    font-size: 12px; color: var(--fg-3);
+    font-family: var(--font-mono);
+    letter-spacing: 0;
+  }
+  .id-card .tier {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 500;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    background: var(--tu-amber-100);
+    color: var(--tu-amber-500);
+    letter-spacing: 0.04em; text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .id-card .meta-rows {
+    padding: 14px 24px 6px;
+    display: flex; flex-direction: column;
+    font-size: 12px;
+  }
+  .id-card .meta-rows .r {
+    display: flex; justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-1);
+    align-items: baseline;
+  }
+  .id-card .meta-rows .r:last-child { border-bottom: 0; }
+  .id-card .meta-rows .l { color: var(--fg-3); letter-spacing: 0.02em; }
+  .id-card .meta-rows .v { color: var(--fg-1); font-family: var(--font-mono); font-weight: 500; }
+
+  .id-card .foot {
+    padding: 14px 24px 18px;
+    display: flex; gap: 10px;
+  }
+  .id-card .foot .btn { flex: 1; justify-content: center; }
+
+  /* Funds + Demat run full-width across the grid */
+  .profile-grid .funds-card,
+  .profile-grid .demat-card { margin-top: 0; }
+  .profile-grid .funds-card #funds-rows {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px 24px;
+  }
+  .profile-grid .funds-card .stat-row {
+    flex-direction: column; align-items: flex-start;
+    gap: 4px;
+    padding: 6px 0 2px;
+    border-bottom: 0;
+  }
+  .profile-grid .funds-card .stat-row .l {
+    font-size: 10px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+  }
+  .profile-grid .funds-card .stat-row .v { font-size: 15px; }
+  .profile-grid .demat-card .demat-band { grid-template-columns: repeat(5, 1fr); }
+
+  /* Standalone left-rail cards under identity */
+  .rail-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+    padding: 16px 20px 18px;
+    margin-top: 16px;
+  }
+  .rail-card h3 {
+    margin: 0 0 12px;
+    font-family: var(--font-sans);
+    font-size: 13px; font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--fg-1);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .rail-card h3 .sub {
+    font-size: 10px; font-weight: 500; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--fg-3);
+  }
+  .rail-card .stat-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--border-1);
+    font-size: 13px;
+  }
+  .rail-card .stat-row:last-child { border-bottom: 0; padding-bottom: 0; }
+  .rail-card .stat-row .l { color: var(--fg-3); font-size: 12px; }
+  .rail-card .stat-row .v {
+    font-family: var(--font-mono); color: var(--fg-1); font-weight: 500;
+  }
+  .rail-card .stat-row .v.pos { color: var(--tu-success); }
+  .rail-card .stat-row .v.neg { color: var(--tu-danger); }
+
+  /* Demat / account meta strip */
+  .demat-band {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 6px 14px;
+    padding-top: 6px;
+  }
+  .demat-band .cell .l {
+    font-size: 10px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+  }
+  .demat-band .cell .v {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg-1);
+    font-weight: 500;
+    margin-top: 2px;
+  }
+
+  /* ── Right column: settings tabs + content ──────────────── */
+  .settings {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+    overflow: hidden;
+  }
+  .tab-bar {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--border-1);
+    background: #FDFBF6;
+    padding: 0 24px;
+    overflow: auto;
+  }
+  .tab-bar button {
+    background: transparent; border: 0;
+    padding: 16px 18px 14px;
+    font-family: var(--font-sans);
+    font-size: 13px; font-weight: 500;
+    color: var(--fg-2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+    white-space: nowrap;
+    letter-spacing: -0.005em;
+  }
+  .tab-bar button:hover { color: var(--fg-1); }
+  .tab-bar button.on {
+    color: var(--tu-teal-700);
+    border-bottom-color: var(--tu-teal-500);
+  }
+  .tab-bar button .count {
+    margin-left: 6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-3);
+    background: var(--bg-sunken);
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+  }
+
+  .tab-pane { display: none; padding: 28px 28px 24px; }
+  .tab-pane.on { display: block; }
+  .tab-pane h2 {
+    margin: 0 0 4px;
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 400;
+    letter-spacing: -0.015em;
+    color: var(--fg-1);
+  }
+  .tab-pane .lead {
+    margin: 0 0 22px;
+    color: var(--fg-3);
+    font-size: 13px; line-height: 1.55;
+    max-width: 620px;
+  }
+
+  /* Credentials form */
+  .cred-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px 20px;
+  }
+  .cred-form .span2 { grid-column: 1 / -1; }
+  .cred-form label {
+    font-size: 11px; letter-spacing: var(--tr-wider);
+    text-transform: uppercase; color: var(--fg-3);
+    font-weight: 500;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .cred-form .field { display: flex; flex-direction: column; }
+  .cred-form input,
+  .cred-form select {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 10px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-3);
+    color: var(--fg-1);
+    border-radius: var(--r-md);
+    outline: none;
+    transition: border-color var(--dur-base) var(--ease-out),
+                box-shadow var(--dur-base) var(--ease-out);
+  }
+  .cred-form input:focus, .cred-form select:focus {
+    border-color: var(--tu-teal-400);
+    box-shadow: 0 0 0 3px var(--tu-teal-100);
+  }
+  .cred-form .input-with-toggle {
+    position: relative;
+    display: flex;
+  }
+  .cred-form .input-with-toggle input { flex: 1; padding-right: 70px; }
+  .cred-form .input-with-toggle .toggle-show {
+    position: absolute; right: 8px; top: 50%;
+    transform: translateY(-50%);
+    font-family: var(--font-sans);
+    font-size: 11px; font-weight: 500;
+    color: var(--tu-teal-600);
+    background: transparent; border: 0;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: var(--r-sm);
+  }
+  .cred-form .input-with-toggle .toggle-show:hover { background: var(--tu-teal-50); }
+  .cred-form .hint {
+    font-size: 11.5px; color: var(--fg-3);
+    margin-top: 6px; line-height: 1.5;
+  }
+  .cred-form .hint b { color: var(--fg-1); font-weight: 500; font-family: var(--font-mono); }
+  .cred-form .hint a { color: var(--tu-teal-600); text-decoration: none; }
+  .cred-form .hint a:hover { text-decoration: underline; }
+
+  .form-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px dashed var(--border-1);
+    gap: 14px;
+  }
+  .form-foot .status {
+    background: transparent; padding: 0;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--fg-3);
+  }
+  .form-foot .status::before { display: none; }
+  .form-foot .status .dot {
+    width: 7px; height: 7px; border-radius: 999px;
+    background: var(--tu-success);
+    box-shadow: 0 0 0 3px rgba(95,138,107,0.18);
+    flex: none;
+  }
+  .form-foot .status.warn .dot { background: var(--tu-warning); box-shadow: 0 0 0 3px rgba(196,139,94,0.22); }
+  .form-foot .status.err  .dot { background: var(--tu-danger);  box-shadow: 0 0 0 3px rgba(182,106,90,0.22); }
+  .form-foot .actions { display: flex; gap: 10px; }
+
+  /* Risk panel (range sliders) */
+  .risk-form { display: grid; gap: 22px; max-width: 620px; }
+  .risk-row {
+    display: grid;
+    grid-template-columns: 200px 1fr 110px;
+    gap: 16px;
+    align-items: center;
+  }
+  .risk-row label { font-size: 13px; color: var(--fg-1); font-weight: 500; }
+  .risk-row .desc { font-size: 11.5px; color: var(--fg-3); margin-top: 2px; font-weight: 400; }
+  .risk-row input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%; height: 4px;
+    background: var(--bg-sunken);
+    border-radius: 999px; outline: none;
+  }
+  .risk-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 999px;
+    background: var(--tu-teal-500);
+    border: 2px solid var(--bg-surface);
+    box-shadow: 0 0 0 1px var(--tu-teal-300);
+    cursor: pointer;
+  }
+  .risk-row .val {
+    font-family: var(--font-mono); font-size: 13px;
+    color: var(--fg-1); font-weight: 500; text-align: right;
+  }
+
+  /* Positions table */
+  .positions-wrap { overflow: auto; }
+  .table.positions thead th { background: #FDFBF6; }
+
+  /* Notification preferences */
+  .pref-list { display: flex; flex-direction: column; gap: 14px; max-width: 620px; }
+  .pref-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 0;
+    border-bottom: 1px dashed var(--border-1);
+    gap: 16px;
+  }
+  .pref-row:last-child { border-bottom: 0; }
+  .pref-row .l { font-size: 13.5px; font-weight: 500; color: var(--fg-1); letter-spacing: -0.005em; }
+  .pref-row .desc { font-size: 12px; color: var(--fg-3); margin-top: 2px; }
+
+  /* Activity log */
+  .log-row {
+    display: grid;
+    grid-template-columns: 70px 1fr auto;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-1);
+    font-size: 13px;
+  }
+  .log-row:last-child { border-bottom: 0; }
+  .log-row .when { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); }
+  .log-row .what { color: var(--fg-1); line-height: 1.5; }
+  .log-row .what b { color: var(--fg-1); font-weight: 600; font-family: var(--font-mono); }
+  .log-row .tag {
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: var(--r-xs);
+    background: var(--bg-sunken); color: var(--fg-2);
+    align-self: center; height: max-content;
+  }
+  .log-row .tag.broker   { background: var(--tu-teal-50); color: var(--tu-teal-700); }
+  .log-row .tag.security { background: #F4E1DC; color: var(--tu-danger); }
+  .log-row .tag.config   { background: #F8EAD7; color: var(--tu-amber-500); }
+
+  @media (max-width: 1100px) {
+    .profile-grid {
+      grid-template-columns: 1fr;
+      grid-template-areas: "id" "settings" "funds" "demat";
+    }
+    .cred-form { grid-template-columns: 1fr; }
+    .risk-row  { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body class="tu">
+
+<!-- App bar -->
+<header class="appbar">
+  <div class="wrap appbar-inner">
+    <div class="brand">
+      <span class="brand-orb" aria-hidden="true"></span>
+      <span class="brand-wordmark"><span class="light">Algo</span><span class="bold">time</span></span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="/">Live</a>
+      <a href="/charts">Charts</a>
+      <a href="/paper">Paper trading</a>
+      <a href="/strategies">Strategies</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="session">
+      <span><span class="live-dot" style="display:inline-block;margin-right:8px;"></span>Breeze connected · NSE</span>
+      <span class="session-time" id="clock">10:42:18</span>
+    </div>
+    <button class="btn-square" aria-label="Notifications" title="Alerts">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9zM10 21a2 2 0 0 0 4 0"/></svg>
+    </button>
+    <a class="profile-btn active" href="/profile" aria-label="My profile" title="My profile">SK</a>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="page-intro">
+    <div class="eyebrow">Account &amp; settings</div>
+    <h1>My account</h1>
+    <p>Manage your broker and database credentials, review fund balances and open positions, and tune risk + notification preferences.</p>
+  </section>
+
+  <div class="profile-grid">
+
+    <!-- ===== Left rail ===== -->
+    <aside>
+      <!-- Identity card -->
+      <div class="id-card">
+        <div class="top">
+          <div class="avatar">SK</div>
+          <h2 class="name">Sridhar Kumar</h2>
+          <span class="email">essarkemurthy@gmail.com</span>
+          <span class="tier">Pro · expires 14 Jun 2026</span>
+        </div>
+        <div class="role-band" id="role-band">
+          <button class="cred-chip" id="chip-db" type="button" data-target="db" aria-pressed="false">
+            <span class="ic-wrap" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            </span>
+            <span class="body">
+              <span class="title">Database</span>
+              <span class="sub">PostgreSQL · signal &amp; ledger store</span>
+            </span>
+            <span class="status-dot off" id="chip-db-dot" aria-hidden="true"></span>
+          </button>
+
+        </div>
+        <div class="meta-rows">
+          <div class="r"><span class="l">Member since</span><span class="v">Mar 2024</span></div>
+          <div class="r"><span class="l">Time zone</span><span class="v">Asia/Kolkata</span></div>
+          <div class="r"><span class="l">2-factor auth</span><span class="v">TOTP · on</span></div>
+          <div class="r"><span class="l">Last sign-in</span><span class="v" id="last-signin">Today · 09:14 IST</span></div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-ghost btn-sm" type="button">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18 2l4 4-10 10H8v-4l10-10z"/></svg>
+            Edit profile
+          </button>
+          <button class="btn btn-danger-ghost btn-sm" type="button">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            Sign out
+          </button>
+        </div>
+      </div>
+
+      <!-- Funds -->
+      <div class="rail-card funds-card">
+        <h3>Funds <span class="sub" id="funds-broker-label">paper</span></h3>
+        <div id="funds-rows"><!-- populated by JS --></div>
+      </div>
+
+      <!-- Demat -->
+      <div class="rail-card demat-card">
+        <h3>Demat &amp; broker</h3>
+        <div class="demat-band" id="demat-band"><!-- populated by JS --></div>
+      </div>
+    </aside>
+
+    <!-- ===== Right column: settings tabs ===== -->
+    <section class="settings">
+
+      <!-- Broker selector strip -->
+      <div class="broker-bar">
+        <div class="broker-selector">
+          <button class="broker-trigger" id="broker-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <div class="bicon" id="trig-icon">IC</div>
+            <div class="binfo">
+              <span class="bname" id="trig-name">ICICI Direct · Primary</span>
+              <span class="bmeta" id="trig-meta">Breeze Connect · Connected</span>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="broker-dropdown" id="broker-dropdown" role="listbox">
+            <!-- populated by JS -->
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="add-broker-btn" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg>
+          Add broker
+        </button>
+      </div>
+
+      <nav class="tab-bar" id="tabs" role="tablist">
+        <button class="on" data-tab="broker" role="tab">Broker credentials</button>
+        <button data-tab="db" role="tab" data-admin-only>Database</button>
+        <button data-tab="positions" role="tab">Open positions <span class="count" id="pos-count">0</span></button>
+        <button data-tab="risk" role="tab">Risk preferences</button>
+        <button data-tab="notif" role="tab">Notifications</button>
+        <button data-tab="activity" role="tab">Activity</button>
+      </nav>
+
+      <!-- ── Broker creds ── -->
+      <div class="tab-pane on" data-pane="broker" role="tabpanel">
+        <h2 id="broker-pane-title">Breeze Connect — ICICI Direct</h2>
+        <p class="lead" id="broker-pane-lead">Used to stream live ticks and place orders on this account. Session tokens expire daily — refresh through the broker login flow each morning.</p>
+        <form class="cred-form" id="broker-cred-form" autocomplete="off">
+          <!-- populated by JS based on selected broker -->
+        </form>
+        <div class="form-foot">
+          <span class="status warn" id="broker-status">
+            <span class="dot"></span>
+            <span id="broker-status-text">Credentials not saved — enter below</span>
+          </span>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm" type="button" id="broker-test-btn">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg>
+              Test connection
+            </button>
+            <button class="btn btn-primary btn-sm" type="button" id="broker-save-btn">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></svg>
+              Save credentials
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Database (admin-only) ── -->
+      <div class="tab-pane" data-pane="db" role="tabpanel" data-admin-only>
+        <h2>PostgreSQL — signal &amp; ledger store</h2>
+        <p class="lead">Persists every signal, order, and trade. Required for back-tests that span more than the current session. Make sure the role has both read and write on the <b style="color:var(--fg-1);font-family:var(--font-mono);font-weight:500;">algodesk</b> schema.</p>
+        <form class="cred-form" id="db-cred-form" autocomplete="off">
+          <div class="field">
+            <label for="pg-host">Host</label>
+            <input id="pg-host" type="text" value="" placeholder="localhost" />
+          </div>
+          <div class="field">
+            <label for="pg-port">Port</label>
+            <input id="pg-port" type="text" value="5432" />
+          </div>
+          <div class="field">
+            <label for="pg-db">Database</label>
+            <input id="pg-db" type="text" value="" placeholder="algodesk" />
+          </div>
+
+          <div class="field">
+            <label for="pg-user">Role / user</label>
+            <input id="pg-user" type="text" value="" placeholder="algo_runner" />
+          </div>
+          <div class="field">
+            <label for="pg-pass">Password</label>
+            <div class="input-with-toggle">
+              <input id="pg-pass" type="password" value="" placeholder="••••••••••••••••" />
+              <button type="button" class="toggle-show" data-toggle="pg-pass">Show</button>
+            </div>
+          </div>
+
+        </form>
+        <div class="form-foot">
+          <span class="status warn" id="db-status">
+            <span class="dot"></span>
+            <span id="db-status-text">Not connected — enter credentials below</span>
+          </span>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm" type="button" id="db-test-btn">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+              Test connection
+            </button>
+            <button class="btn btn-primary btn-sm" type="button" id="db-save-btn">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></svg>
+              Save credentials
+            </button>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- ── Open positions ── -->
+      <div class="tab-pane" data-pane="positions" role="tabpanel">
+        <h2>Open positions</h2>
+        <p class="lead">Live positions on the paper desk. Square-off intraday at 15:15 IST; F&amp;O held to expiry unless a strategy rule fires.</p>
+        <div class="positions-wrap">
+          <table class="table positions">
+            <thead>
+              <tr>
+                <th>Instrument</th>
+                <th>Segment</th>
+                <th class="right">Qty</th>
+                <th class="right">Avg cost</th>
+                <th class="right">CMP</th>
+                <th class="right">M2M</th>
+                <th class="right">Day Δ</th>
+                <th>Strategy</th>
+              </tr>
+            </thead>
+            <tbody id="positions-body"><!-- populated by JS --></tbody>
+          </table>
+        </div>
+        <div class="form-foot">
+          <span class="status" id="positions-status">
+            <span class="dot"></span>
+            <span id="positions-status-text">0 open</span>
+          </span>
+          <div class="actions">
+            <button class="btn btn-danger-ghost btn-sm" type="button">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+              Square off all
+            </button>
+            <a class="btn btn-ghost btn-sm" href="/paper">
+              View on desk
+              <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Risk ── -->
+      <div class="tab-pane" data-pane="risk" role="tabpanel">
+        <h2>Risk preferences</h2>
+        <p class="lead">Hard limits enforced by the paper engine. New orders are rejected before placement if a limit would be breached.</p>
+        <div class="risk-form">
+          <div class="risk-row">
+            <div>
+              <label for="r-cap">Per-trade capital</label>
+              <div class="desc">Max % of capital deployed on a single position.</div>
+            </div>
+            <input id="r-cap" type="range" min="0.1" max="5" step="0.1" value="2" />
+            <div class="val">2.0%</div>
+          </div>
+          <div class="risk-row">
+            <div>
+              <label for="r-loss">Daily loss cap</label>
+              <div class="desc">All strategies halt when net daily P&amp;L crosses below this.</div>
+            </div>
+            <input id="r-loss" type="range" min="0.5" max="10" step="0.5" value="3" />
+            <div class="val">− 3.0%</div>
+          </div>
+          <div class="risk-row">
+            <div>
+              <label for="r-leverage">Max leverage</label>
+              <div class="desc">Aggregate position notional / account value.</div>
+            </div>
+            <input id="r-leverage" type="range" min="1" max="10" step="0.5" value="4" />
+            <div class="val">4.0×</div>
+          </div>
+          <div class="risk-row">
+            <div>
+              <label for="r-pos">Concurrent positions</label>
+              <div class="desc">Cap on number of open positions across strategies.</div>
+            </div>
+            <input id="r-pos" type="range" min="1" max="30" step="1" value="12" />
+            <div class="val">12</div>
+          </div>
+        </div>
+        <div class="form-foot">
+          <span class="status warn">
+            <span class="dot"></span>
+            Pending changes — not yet saved
+          </span>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm" type="button">Reset to defaults</button>
+            <button class="btn btn-primary btn-sm" type="button">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></svg>
+              Save preferences
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Notifications ── -->
+      <div class="tab-pane" data-pane="notif" role="tabpanel">
+        <h2>Notifications</h2>
+        <p class="lead">Where you want to hear about signal events. Email is enabled by default.</p>
+        <div class="pref-list">
+          <div class="pref-row">
+            <div><div class="l">New signal fired</div><div class="desc">Any strategy emits a buy/sell/hedge signal.</div></div>
+            <button class="toggle on" type="button" aria-label="Toggle"></button>
+          </div>
+          <div class="pref-row">
+            <div><div class="l">Order filled</div><div class="desc">Paper engine fills a routed order.</div></div>
+            <button class="toggle on" type="button" aria-label="Toggle"></button>
+          </div>
+          <div class="pref-row">
+            <div><div class="l">Daily loss cap hit</div><div class="desc">Always on — cannot be disabled.</div></div>
+            <button class="toggle on" type="button" aria-label="Toggle" disabled style="opacity:0.6;"></button>
+          </div>
+          <div class="pref-row">
+            <div><div class="l">Broker disconnect</div><div class="desc">Breeze tick stream drops or session expires.</div></div>
+            <button class="toggle on" type="button" aria-label="Toggle"></button>
+          </div>
+          <div class="pref-row">
+            <div><div class="l">Back-test complete</div><div class="desc">A queued back-test finishes running.</div></div>
+            <button class="toggle" type="button" aria-label="Toggle"></button>
+          </div>
+          <div class="pref-row">
+            <div><div class="l">Weekly digest</div><div class="desc">Monday 09:00 summary of last week's runs.</div></div>
+            <button class="toggle on" type="button" aria-label="Toggle"></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Activity ── -->
+      <div class="tab-pane" data-pane="activity" role="tabpanel">
+        <h2>Recent activity</h2>
+        <p class="lead">Account, broker, and security events from the last 30 days.</p>
+        <div class="log-list" id="activity-log">
+          <div class="log-row">
+            <div class="when">09:14 IST</div>
+            <div class="what">Broker session token <b>refreshed</b> via Breeze login. Valid until 15:30 IST.</div>
+            <span class="tag broker">Broker</span>
+          </div>
+          <div class="log-row">
+            <div class="when">09:13 IST</div>
+            <div class="what">Signed in from <b>Bangalore, IN</b> on Chrome / macOS.</div>
+            <span class="tag security">Security</span>
+          </div>
+          <div class="log-row">
+            <div class="when">Yesterday</div>
+            <div class="what">Updated risk preferences — daily loss cap <b>− 3.5% → − 3.0%</b>.</div>
+            <span class="tag config">Config</span>
+          </div>
+          <div class="log-row">
+            <div class="when">Yesterday</div>
+            <div class="what">Deployed <b>Iron condor (IVR ≥ 60)</b> to the paper desk.</div>
+            <span class="tag">Strategy</span>
+          </div>
+          <div class="log-row">
+            <div class="when">Mon 19</div>
+            <div class="what">PostgreSQL credentials rotated. New connection verified.</div>
+            <span class="tag security">Security</span>
+          </div>
+          <div class="log-row">
+            <div class="when">Sun 18</div>
+            <div class="what">Pro plan renewed — next billing date <b>14 Jun 2026</b>.</div>
+            <span class="tag">Billing</span>
+          </div>
+          <div class="log-row">
+            <div class="when">Sat 17</div>
+            <div class="what">2-factor authentication enabled (TOTP, Authenticator app).</div>
+            <span class="tag security">Security</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <div class="disc">
+      Credentials are encrypted at rest with AES-256 and never shipped to the browser in plaintext. Broker session tokens auto-expire at end of day per ICICI Direct's API policy.
+    </div>
+    <div class="credit">
+      Developed and maintained by <b>Techultime Technologies Pvt Ltd</b><span class="sep">·</span>&copy; 2026 All rights reserved
+    </div>
+  </footer>
+
+</div>
+
+<!-- Add-broker modal -->
+<div class="ab-backdrop" id="ab-backdrop" role="dialog" aria-modal="true" aria-labelledby="ab-title">
+  <form class="ab-modal" id="ab-form" autocomplete="off">
+    <div class="eyebrow" style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--tu-teal-500);font-weight:500;margin-bottom:6px;">Connect a new account</div>
+    <h3 id="ab-title">Add broker account</h3>
+    <p class="sub">Pick your broker. We'll prompt for the right credentials in the next step — you can fill them in later.</p>
+    <div class="ab-brokers" id="ab-brokers"><!-- populated by JS --></div>
+    <div class="cred-form">
+      <div class="field span2">
+        <label for="ab-label">Account label</label>
+        <input id="ab-label" type="text" placeholder="e.g. Primary, Strategy, Backup" maxlength="32" />
+        <div class="hint">Shown in the broker dropdown to tell accounts apart.</div>
+      </div>
+    </div>
+    <div class="ab-modal-actions">
+      <button type="button" class="btn btn-ghost btn-sm" id="ab-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary btn-sm">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        Continue
+      </button>
+    </div>
+  </form>
+</div>
+
+<div id="theme-picker-mount"></div>
+<script src="/static/theme.js"></script>
+
+<script>
+  // ── Clock ───────────────────────────────────────────────────────────────────
+  (function () {
+    const el = document.getElementById('clock');
+    if (!el) return;
+    const pad = n => String(n).padStart(2, '0');
+    const tick = () => {
+      const d = new Date();
+      el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    };
+    tick(); setInterval(tick, 1000);
+  })();
+
+  // ── Credential chips — drive right-pane tab focus ────────────────────────────
+  const USER_ROLE = 'admin';
+
+  function syncCredChips() {
+    const active = document.querySelector('#tabs button.on');
+    const tab = active ? active.dataset.tab : null;
+    document.querySelectorAll('.cred-chip').forEach(c => {
+      const on = c.dataset.target === tab;
+      c.classList.toggle('on', on);
+      c.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function bootRoleUI() {
+    const dbChip = document.getElementById('chip-db');
+    if (USER_ROLE !== 'admin') {
+      document.body.classList.remove('admin-mode');
+      if (dbChip) dbChip.classList.add('hidden');
+    } else {
+      document.body.classList.add('admin-mode');
+    }
+    document.querySelectorAll('.cred-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const target = chip.dataset.target;
+        if (target) switchTab(target);
+      });
+    });
+    syncCredChips();
+  }
+
+  // ── Broker accounts ──────────────────────────────────────────────────────────
+  const BROKERS = [
+    {
+      id: 'icici',
+      name: 'ICICI Direct', label: 'Primary',
+      icon: 'IC', iconBg: '#B83A26',
+      sdk: 'Breeze Connect',
+      status: 'warn',
+      statusText: 'Credentials not saved — enter below',
+      paneTitle: 'Breeze Connect — ICICI Direct',
+      paneLead: 'Streams live ticks and routes orders for the ICICI Direct demat. Session tokens expire daily — refresh through the broker login flow each morning.',
+      cred: [
+        { key: 'apiKey',  label: 'API key',      value: '' },
+        { key: 'apiSec',  label: 'API secret',   value: '', secret: true },
+        { key: 'session', label: 'Session token', value: '', secret: true, span2: true,
+          hint: 'Token issued each morning via the Breeze login flow · valid until 15:30 IST. <a href="https://api.icicidirect.com/apiuser/login" target="_blank" rel="noopener">Regenerate via broker login →</a>' },
+      ],
+      funds: { suffix: 'paper', rows: [
+        { l: 'Total account value', v: '—', tone: '' },
+        { l: 'Available cash',      v: '—', tone: '' },
+        { l: 'Used margin',         v: '—', tone: '' },
+        { l: 'Realized P&L (MTD)',  v: '—', tone: '' },
+        { l: 'Unrealized P&L',      v: '—', tone: '' },
+      ]},
+      demat: [
+        { l: 'Broker',    v: 'ICICI Direct' },
+        { l: 'DP ID',     v: '—' },
+        { l: 'Client ID', v: '—' },
+        { l: 'Segments',  v: 'EQ · F&amp;O' },
+        { l: 'PAN',       v: '—' },
+        { l: 'Bank',      v: '—' },
+      ],
+      positions: [], positionsNet: '— flat', positionsNetTone: 'flat',
+    },
+    {
+      id: 'zerodha',
+      name: 'Zerodha', label: 'Options book',
+      icon: 'Z', iconBg: '#387ED1',
+      sdk: 'Kite Connect',
+      status: 'warn', statusText: 'Not configured',
+      paneTitle: 'Kite Connect — Zerodha',
+      paneLead: 'Used for option-leg execution and ledger reconciliation on the secondary account. Access tokens expire at 06:00 IST daily.',
+      cred: [
+        { key: 'apiKey',  label: 'API key',      value: '' },
+        { key: 'apiSec',  label: 'API secret',   value: '', secret: true },
+        { key: 'access',  label: 'Access token', value: '', secret: true, span2: true,
+          hint: 'Re-issue at <b>06:00 IST</b> tomorrow via the Kite login URL.' },
+        { key: 'userId',  label: 'Kite user ID', value: '' },
+        { key: 'env',     label: 'Environment',  type: 'select', options: ['Production', 'Sandbox'], value: 'Production' },
+      ],
+      funds: { suffix: 'pending', rows: [
+        { l: 'Total account value', v: '—', tone: '' }, { l: 'Available cash', v: '—', tone: '' },
+        { l: 'Used margin', v: '—', tone: '' }, { l: 'Realized P&L (MTD)', v: '—', tone: '' },
+        { l: 'Unrealized P&L', v: '—', tone: '' },
+      ]},
+      demat: [
+        { l: 'Broker', v: 'Zerodha' }, { l: 'DP ID', v: '—' }, { l: 'Client ID', v: '—' },
+        { l: 'Segments', v: 'EQ · F&amp;O · MCX' }, { l: 'PAN', v: '—' }, { l: 'Bank', v: '—' },
+      ],
+      positions: [], positionsNet: '— flat', positionsNetTone: 'flat',
+    },
+    {
+      id: 'upstox',
+      name: 'Upstox', label: 'Backup',
+      icon: 'UP', iconBg: '#592E83',
+      sdk: 'Upstox API v2',
+      status: 'warn', statusText: 'Token expired — re-authenticate to resume',
+      paneTitle: 'Upstox API v2 — Backup',
+      paneLead: 'Idle backup account. Token expired this morning — re-authenticate to resume streaming and order routing.',
+      cred: [
+        { key: 'apiKey',   label: 'Client ID',     value: '' },
+        { key: 'apiSec',   label: 'Client secret', value: '', secret: true },
+        { key: 'access',   label: 'Access token',  value: '', secret: true, span2: true,
+          hint: '<a href="#">Re-authenticate via Upstox login →</a>' },
+        { key: 'redirect', label: 'Redirect URI',  value: '' },
+      ],
+      funds: { suffix: 'idle', rows: [
+        { l: 'Total account value', v: '—', tone: '' }, { l: 'Available cash', v: '—', tone: '' },
+        { l: 'Used margin', v: '—', tone: '' }, { l: 'Realized P&L (MTD)', v: '—', tone: '' },
+        { l: 'Unrealized P&L', v: '—', tone: '' },
+      ]},
+      demat: [
+        { l: 'Broker', v: 'Upstox' }, { l: 'DP ID', v: '—' }, { l: 'Client ID', v: '—' },
+        { l: 'Segments', v: 'EQ · F&amp;O' }, { l: 'PAN', v: '—' }, { l: 'Bank', v: '—' },
+      ],
+      positions: [], positionsNet: '— flat', positionsNetTone: 'flat',
+    },
+  ];
+
+  const ADD_BROKER_TYPES = [
+    { id: 'icici',   name: 'ICICI Direct', icon: 'IC',  iconBg: '#B83A26' },
+    { id: 'zerodha', name: 'Zerodha',      icon: 'Z',   iconBg: '#387ED1' },
+    { id: 'upstox',  name: 'Upstox',       icon: 'UP',  iconBg: '#592E83' },
+    { id: 'fyers',   name: 'Fyers',        icon: 'FY',  iconBg: '#1C8C57' },
+    { id: 'angel',   name: 'Angel One',    icon: 'AO',  iconBg: '#D6492C' },
+    { id: 'kotak',   name: 'Kotak Neo',    icon: 'KN',  iconBg: '#EF3E23' },
+  ];
+
+  let activeBrokerId = BROKERS[0].id;
+
+  function findBroker(id) { return BROKERS.find(b => b.id === id) || BROKERS[0]; }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  function renderBrokerSelector() {
+    const b = findBroker(activeBrokerId);
+    document.getElementById('trig-icon').style.background = b.iconBg;
+    document.getElementById('trig-icon').textContent = b.icon;
+    document.getElementById('trig-name').textContent = b.name + ' · ' + b.label;
+    document.getElementById('trig-meta').textContent = b.sdk + ' · ' +
+      (b.status === 'connected' ? 'Connected' : b.status === 'warn' ? 'Needs attention' : 'Disconnected');
+
+    document.getElementById('broker-dropdown').innerHTML = BROKERS.map(x => (
+      '<div class="broker-option ' + (x.status === 'connected' ? 'connected' : x.status === 'warn' ? 'warn' : '') +
+      (x.id === activeBrokerId ? ' on' : '') + '" data-id="' + x.id + '">' +
+        '<div class="bicon" style="background:' + x.iconBg + ';">' + esc(x.icon) + '</div>' +
+        '<div class="body">' +
+          '<div class="nm">' + esc(x.name) + ' · ' + esc(x.label) + '</div>' +
+          '<div class="meta">' + esc(x.sdk) + ' · ' +
+            (x.status === 'connected' ? 'Connected' : x.status === 'warn' ? 'Token expired' : 'Disconnected') +
+          '</div>' +
+        '</div>' +
+        '<div class="b-dot"></div>' +
+      '</div>'
+    )).join('');
+  }
+
+  function renderFunds() {
+    const b = findBroker(activeBrokerId);
+    document.getElementById('funds-rows').innerHTML = b.funds.rows.map(r =>
+      '<div class="stat-row"><span class="l">' + esc(r.l) + '</span><span class="v ' + r.tone + '">' + esc(r.v) + '</span></div>'
+    ).join('');
+    document.getElementById('funds-broker-label').textContent = b.funds.suffix;
+  }
+
+  function renderDemat() {
+    const b = findBroker(activeBrokerId);
+    document.getElementById('demat-band').innerHTML = b.demat.map(d =>
+      '<div class="cell"><div class="l">' + esc(d.l) + '</div><div class="v">' + d.v + '</div></div>'
+    ).join('');
+  }
+
+  function renderBrokerCreds() {
+    const b = findBroker(activeBrokerId);
+    document.getElementById('broker-pane-title').textContent = b.paneTitle;
+    document.getElementById('broker-pane-lead').textContent  = b.paneLead;
+
+    const form = document.getElementById('broker-cred-form');
+    form.innerHTML = b.cred.map(f => {
+      const id = 'cred-' + b.id + '-' + f.key;
+      let control;
+      if (f.type === 'select') {
+        control = '<select id="' + id + '">' +
+          f.options.map(o => '<option' + (o === f.value ? ' selected' : '') + '>' + esc(o) + '</option>').join('') +
+        '</select>';
+      } else if (f.secret) {
+        control = '<div class="input-with-toggle">' +
+          '<input id="' + id + '" type="password" value="' + esc(f.value) + '" />' +
+          '<button type="button" class="toggle-show" data-toggle="' + id + '">Show</button>' +
+        '</div>';
+      } else {
+        control = '<input id="' + id + '" type="text" value="' + esc(f.value) + '" />';
+      }
+      return '<div class="field' + (f.span2 ? ' span2' : '') + '">' +
+        '<label for="' + id + '">' + esc(f.label) + '</label>' +
+        control +
+        (f.hint ? '<div class="hint">' + f.hint + '</div>' : '') +
+      '</div>';
+    }).join('');
+
+    const status = document.getElementById('broker-status');
+    status.classList.remove('warn', 'err');
+    if (b.status === 'warn') status.classList.add('warn');
+    if (b.status === 'err')  status.classList.add('err');
+    document.getElementById('broker-status-text').innerHTML =
+      b.statusText.replace(/(\d{2}:\d{2}:\d{2})/, '<b style="color:var(--fg-1);font-family:var(--font-mono);font-weight:500;">$1</b>');
+
+    bindPasswordToggles(form);
+  }
+
+  function renderPositions() {
+    const b = findBroker(activeBrokerId);
+    const body = document.getElementById('positions-body');
+    if (b.positions.length === 0) {
+      body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px 16px;color:var(--fg-3);font-size:13px;">No open positions on this account.</td></tr>';
+    } else {
+      body.innerHTML = b.positions.map(p =>
+        '<tr><td><b>' + esc(p.ticker) + '</b></td><td>' + p.seg + '</td>' +
+        '<td class="right mono">' + esc(p.qty)   + '</td>' +
+        '<td class="right mono">' + esc(p.entry) + '</td>' +
+        '<td class="right mono">' + esc(p.cmp)   + '</td>' +
+        '<td class="right pnl-' + p.m2mTone + ' mono">' + esc(p.m2m) + '</td>' +
+        '<td class="right pnl-' + p.dayTone + ' mono">' + esc(p.day) + '</td>' +
+        '<td>' + esc(p.strat) + '</td></tr>'
+      ).join('');
+    }
+    document.getElementById('pos-count').textContent = b.positions.length;
+    const tone  = b.positionsNetTone;
+    const color = tone === 'pos' ? 'var(--tu-success)' : tone === 'neg' ? 'var(--tu-danger)' : 'var(--fg-3)';
+    document.getElementById('positions-status-text').innerHTML =
+      b.positions.length + ' open · net M2M <b style="color:' + color + ';font-family:var(--font-mono);font-weight:500;">' + esc(b.positionsNet) + '</b>';
+  }
+
+  function selectBroker(id) {
+    activeBrokerId = id;
+    renderBrokerSelector();
+    renderFunds();
+    renderDemat();
+    renderBrokerCreds();
+    renderPositions();
+  }
+
+  // ── Broker dropdown ──────────────────────────────────────────────────────────
+  function wireBrokerDropdown() {
+    const trig = document.getElementById('broker-trigger');
+    const dd   = document.getElementById('broker-dropdown');
+    trig.addEventListener('click', () => {
+      const open = !dd.classList.contains('show');
+      dd.classList.toggle('show', open);
+      trig.classList.toggle('open', open);
+      trig.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    dd.addEventListener('click', (e) => {
+      const opt = e.target.closest('.broker-option');
+      if (!opt) return;
+      selectBroker(opt.dataset.id);
+      dd.classList.remove('show');
+      trig.classList.remove('open');
+    });
+    document.addEventListener('click', (e) => {
+      if (!dd.classList.contains('show')) return;
+      if (trig.contains(e.target) || dd.contains(e.target)) return;
+      dd.classList.remove('show');
+      trig.classList.remove('open');
+    });
+  }
+
+  // ── Tabs ─────────────────────────────────────────────────────────────────────
+  function switchTab(id) {
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === id));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('on', p.dataset.pane === id));
+    if (typeof syncCredChips === 'function') syncCredChips();
+  }
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-tab]');
+    if (!btn) return;
+    switchTab(btn.dataset.tab);
+  });
+
+  // ── Password show/hide ───────────────────────────────────────────────────────
+  function bindPasswordToggles(root) {
+    (root || document).querySelectorAll('.toggle-show').forEach(btn => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => {
+        const input = document.getElementById(btn.dataset.toggle);
+        if (!input) return;
+        const show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        btn.textContent = show ? 'Hide' : 'Show';
+      });
+    });
+  }
+  bindPasswordToggles(document);
+
+  // ── Notification toggles ─────────────────────────────────────────────────────
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => {
+      if (t.hasAttribute('disabled')) return;
+      t.classList.toggle('on');
+    });
+  });
+
+  // ── Risk sliders live-update ──────────────────────────────────────────────────
+  (function () {
+    const map = { 'r-cap': v => v + '.0%', 'r-loss': v => '− ' + v + '.0%', 'r-leverage': v => v + '.0×', 'r-pos': v => v };
+    Object.keys(map).forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const valEl = el.closest('.risk-row').querySelector('.val');
+      el.addEventListener('input', () => { valEl.textContent = map[id](el.value); });
+    });
+  })();
+
+  // ── Add-broker modal ─────────────────────────────────────────────────────────
+  (function () {
+    const backdrop = document.getElementById('ab-backdrop');
+    const form     = document.getElementById('ab-form');
+    const grid     = document.getElementById('ab-brokers');
+    const labelEl  = document.getElementById('ab-label');
+    let pickedType = null;
+
+    function renderGrid() {
+      grid.innerHTML = ADD_BROKER_TYPES.map(t =>
+        '<button type="button" class="ab-broker' + (pickedType === t.id ? ' on' : '') + '" data-type="' + t.id + '">' +
+          '<div class="bicon" style="background:' + t.iconBg + ';">' + esc(t.icon) + '</div>' +
+          '<div class="nm">' + esc(t.name) + '</div>' +
+        '</button>'
+      ).join('');
+    }
+    function open() { pickedType = null; labelEl.value = ''; renderGrid(); backdrop.classList.add('show'); setTimeout(() => labelEl.focus(), 30); }
+    function close() { backdrop.classList.remove('show'); }
+
+    document.getElementById('add-broker-btn').addEventListener('click', open);
+    document.getElementById('ab-cancel').addEventListener('click', close);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && backdrop.classList.contains('show')) close(); });
+
+    grid.addEventListener('click', (e) => {
+      const t = e.target.closest('.ab-broker');
+      if (!t) return;
+      pickedType = t.dataset.type;
+      renderGrid();
+    });
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!pickedType) return;
+      const meta  = ADD_BROKER_TYPES.find(x => x.id === pickedType);
+      const label = labelEl.value.trim() || 'Account ' + (BROKERS.filter(b => b.id.startsWith(pickedType)).length + 1);
+      const newId = pickedType + '-' + Date.now();
+      BROKERS.push({
+        id: newId, name: meta.name, label, icon: meta.icon, iconBg: meta.iconBg,
+        sdk: meta.name === 'ICICI Direct' ? 'Breeze Connect' : meta.name === 'Zerodha' ? 'Kite Connect' :
+             meta.name === 'Upstox' ? 'Upstox API v2' : meta.name === 'Fyers' ? 'Fyers API v3' :
+             meta.name === 'Angel One' ? 'SmartAPI' : meta.name === 'Kotak Neo' ? 'Neo API' : 'Broker SDK',
+        status: 'warn', statusText: 'New account — fill in credentials below',
+        paneTitle: meta.name + ' — ' + label,
+        paneLead: 'Connect this ' + meta.name + ' account by filling in the credentials below.',
+        cred: [
+          { key: 'apiKey', label: 'API key', value: '' },
+          { key: 'apiSec', label: 'API secret', value: '', secret: true },
+          { key: 'access', label: 'Access / session token', value: '', secret: true, span2: true, hint: 'Paste the token issued by ' + meta.name + '.' },
+        ],
+        funds: { suffix: 'pending', rows: [
+          { l: 'Total account value', v: '—', tone: '' }, { l: 'Available cash', v: '—', tone: '' },
+          { l: 'Used margin', v: '—', tone: '' }, { l: 'Realized P&L (MTD)', v: '—', tone: '' },
+          { l: 'Unrealized P&L', v: '—', tone: '' },
+        ]},
+        demat: [
+          { l: 'Broker', v: meta.name }, { l: 'DP ID', v: '—' }, { l: 'Client ID', v: '—' },
+          { l: 'Segments', v: '—' }, { l: 'PAN', v: '—' }, { l: 'Bank', v: '—' },
+        ],
+        positions: [], positionsNet: '— flat', positionsNetTone: 'flat',
+      });
+      close();
+      selectBroker(newId);
+      switchTab('broker');
+    });
+  })();
+
+  // ── API helpers ──────────────────────────────────────────────────────────────
+  function setStatus(el, textEl, cls, msg) {
+    if (!el || !textEl) return;
+    el.className = 'status' + (cls ? ' ' + cls : '');
+    textEl.innerHTML = msg;
+  }
+
+  async function apiTestBroker() {
+    const b      = findBroker(activeBrokerId);
+    const keyEl  = document.getElementById('cred-' + b.id + '-apiKey');
+    const secEl  = document.getElementById('cred-' + b.id + '-apiSec');
+    const sessEl = document.getElementById('cred-' + b.id + '-session') || document.getElementById('cred-' + b.id + '-access');
+    const st     = document.getElementById('broker-status');
+    const stT    = document.getElementById('broker-status-text');
+    setStatus(st, stT, 'warn', 'Testing…');
+    try {
+      const r = await fetch('/api/setup/broker/test', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ api_key: keyEl ? keyEl.value : '', api_secret: secEl ? secEl.value : '', session_token: sessEl ? sessEl.value : '' })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setStatus(st, stT, '', 'Connection successful' + (d.name ? ' · ' + esc(d.name) : ''));
+        b.status = 'connected'; b.statusText = 'Connected';
+        renderBrokerSelector();
+      } else {
+        setStatus(st, stT, 'err', 'Connection failed' + (d.error ? ' · ' + esc(d.error) : ''));
+      }
+    } catch(e) { setStatus(st, stT, 'err', 'Network error'); }
+  }
+
+  async function apiSaveBroker() {
+    const b      = findBroker(activeBrokerId);
+    const keyEl  = document.getElementById('cred-' + b.id + '-apiKey');
+    const secEl  = document.getElementById('cred-' + b.id + '-apiSec');
+    const sessEl = document.getElementById('cred-' + b.id + '-session') || document.getElementById('cred-' + b.id + '-access');
+    const st     = document.getElementById('broker-status');
+    const stT    = document.getElementById('broker-status-text');
+    if (b.id !== 'icici') { alert('Only ICICI Breeze Connect can be saved in this version.'); return; }
+    setStatus(st, stT, 'warn', 'Saving…');
+    try {
+      const r = await fetch('/api/setup/broker/save', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ type: 'icici', api_key: keyEl ? keyEl.value : '', api_secret: secEl ? secEl.value : '', session_token: sessEl ? sessEl.value : '' })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setStatus(st, stT, '', 'Saved &amp; connecting…');
+        b.status = 'connected'; b.statusText = 'Saved &amp; connected';
+        renderBrokerSelector();
+      } else {
+        setStatus(st, stT, 'err', esc(d.detail || 'Save failed'));
+      }
+    } catch(e) { setStatus(st, stT, 'err', 'Network error'); }
+  }
+
+  async function apiTestDb() {
+    const host = (document.getElementById('pg-host') || {}).value || '';
+    const port = (document.getElementById('pg-port') || {}).value || '5432';
+    const db   = (document.getElementById('pg-db')   || {}).value || '';
+    const user = (document.getElementById('pg-user') || {}).value || '';
+    const pass = (document.getElementById('pg-pass') || {}).value || '';
+    const st   = document.getElementById('db-status');
+    const stT  = document.getElementById('db-status-text');
+    setStatus(st, stT, 'warn', 'Testing…');
+    try {
+      const r = await fetch('/api/setup/db/test', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ host, port: parseInt(port) || 5432, db, user, password: pass })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setStatus(st, stT, '', 'Healthy · ' + esc(d.version || '') + ' · ' + (d.candles || 0) + ' candles stored');
+        const dot = document.getElementById('chip-db-dot');
+        if (dot) dot.className = 'status-dot';
+      } else {
+        setStatus(st, stT, 'err', 'Failed: ' + esc(d.error || 'check credentials'));
+      }
+    } catch(e) { setStatus(st, stT, 'err', 'Network error'); }
+  }
+
+  async function apiSaveDb() {
+    const host = (document.getElementById('pg-host') || {}).value || '';
+    const port = (document.getElementById('pg-port') || {}).value || '5432';
+    const db   = (document.getElementById('pg-db')   || {}).value || '';
+    const user = (document.getElementById('pg-user') || {}).value || '';
+    const pass = (document.getElementById('pg-pass') || {}).value || '';
+    const url  = 'postgresql://' + encodeURIComponent(user) + ':' + encodeURIComponent(pass) + '@' + host + ':' + (port || '5432') + '/' + db;
+    const st   = document.getElementById('db-status');
+    const stT  = document.getElementById('db-status-text');
+    setStatus(st, stT, 'warn', 'Saving…');
+    try {
+      const r = await fetch('/api/setup/db/save', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ mode: 'postgres', url })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setStatus(st, stT, '', 'Saved &amp; connected');
+        const dot = document.getElementById('chip-db-dot');
+        if (dot) dot.className = 'status-dot';
+      } else {
+        setStatus(st, stT, 'err', esc(d.detail || 'Save failed'));
+      }
+    } catch(e) { setStatus(st, stT, 'err', 'Network error'); }
+  }
+
+  // ── Wire action buttons ──────────────────────────────────────────────────────
+  document.getElementById('broker-test-btn').addEventListener('click', apiTestBroker);
+  document.getElementById('broker-save-btn').addEventListener('click', apiSaveBroker);
+  document.getElementById('db-test-btn').addEventListener('click', apiTestDb);
+  document.getElementById('db-save-btn').addEventListener('click', apiSaveDb);
+
+  // ── Boot: load saved config from API ────────────────────────────────────────
+  function fmtIN(n) {
+    return Number(n).toFixed(0).replace(/\B(?=(\d{2})+(\d{3})(?!\d))/g, ',');
+  }
+
+  async function bootFromApi() {
+    try {
+      const r = await fetch('/api/setup/status');
+      const d = await r.json();
+
+      // Pre-populate ICICI broker cred values from saved config / .env
+      const icici = BROKERS.find(b => b.id === 'icici');
+      if (icici && d.broker) {
+        const credMap = { apiKey: 'api_key', apiSec: 'api_secret', session: 'session_token' };
+        icici.cred.forEach(c => {
+          const envVal = d.broker[credMap[c.key]];
+          if (envVal) c.value = envVal;
+        });
+        if (d.broker_ok) {
+          icici.status = 'connected';
+          icici.statusText = 'Connected · Breeze session active';
+        } else if (d.broker.api_key) {
+          icici.status = 'warn';
+          icici.statusText = 'Credentials loaded — click Test to verify';
+        }
+      }
+
+
+      // DB chip + pane status
+      const dbDot = document.getElementById('chip-db-dot');
+      if (dbDot) dbDot.className = 'status-dot' + (d.db_ok ? '' : (d.db_url ? ' warn' : ' off'));
+
+      const dbSt  = document.getElementById('db-status');
+      const dbStT = document.getElementById('db-status-text');
+      if (dbSt && dbStT) {
+        if (d.db_ok)       setStatus(dbSt, dbStT, '', 'Connected · ' + (d.db_mode || 'postgres'));
+        else if (d.db_url) setStatus(dbSt, dbStT, 'warn', 'Credentials loaded — click Test to verify');
+        else               setStatus(dbSt, dbStT, 'warn', 'Not connected — enter credentials below');
+      }
+
+      // Pre-fill DB form from db_url (saved config or .env DB_URL)
+      if (d.db_url) {
+        try {
+          const url  = new URL(d.db_url.replace(/^postgresql(\+\w+)?:\/\//, 'http://'));
+          const set  = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+          set('pg-host', url.hostname);
+          set('pg-port', url.port || '5432');
+          set('pg-db',   decodeURIComponent(url.pathname.replace(/^\//, '')));
+          set('pg-user', decodeURIComponent(url.username));
+          if (url.password) {
+            const pwEl = document.getElementById('pg-pass');
+            if (pwEl) pwEl.value = decodeURIComponent(url.password);
+          }
+        } catch(e) {}
+      }
+
+      // Fetch paper summary for funds card
+      try {
+        const pr = await fetch('/api/paper/summary');
+        const pd = await pr.json();
+        if (pd && icici) {
+          icici.funds.rows = [
+            { l: 'Total account value', v: '₹' + fmtIN(pd.capital     || 0), tone: '' },
+            { l: 'Available cash',      v: '₹' + fmtIN(pd.cash        || 0), tone: 'pos' },
+            { l: 'Used margin',         v: '₹' + fmtIN(pd.margin      || 0), tone: '' },
+            { l: 'Realized P&L (MTD)',  v: (pd.realized   >= 0 ? '+ ' : '− ') + '₹' + fmtIN(Math.abs(pd.realized   || 0)), tone: (pd.realized   || 0) >= 0 ? 'pos' : 'neg' },
+            { l: 'Unrealized P&L',      v: (pd.unrealized >= 0 ? '+ ' : '− ') + '₹' + fmtIN(Math.abs(pd.unrealized || 0)), tone: (pd.unrealized || 0) >= 0 ? 'pos' : 'neg' },
+          ];
+          icici.funds.suffix = 'paper';
+        }
+      } catch(e) {}
+
+    } catch(e) {}
+
+    // Render after loading API data
+    selectBroker(activeBrokerId);
+  }
+
+  // ── Start ────────────────────────────────────────────────────────────────────
+  bootRoleUI();
+  wireBrokerDropdown();
+  bootFromApi();
+</script>
+</body>
+</html>
