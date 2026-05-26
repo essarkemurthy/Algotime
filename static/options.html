@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Options · techultime algo desk</title>
+<link rel="stylesheet" href="/static/colors_and_type.css" />
+<link rel="stylesheet" href="/static/app-shell.css" />
+<style>
+/* ── Page layout ─────────────────────────────────────────────── */
+.opt-wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 24px 60px;
+}
+
+/* ── Symbol tabs ─────────────────────────────────────────────── */
+.sym-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 24px 0 16px;
+}
+.sym-tab {
+  padding: 7px 18px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: var(--tr-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  color: var(--fg-3);
+  transition: all var(--dur-base) var(--ease-out);
+}
+.sym-tab:hover { color: var(--fg-1); border-color: var(--border-3); }
+.sym-tab.active {
+  background: var(--tu-teal-700);
+  border-color: var(--tu-teal-700);
+  color: #fff;
+}
+
+/* ── Toolbar (expiry + PCR + refresh) ───────────────────────── */
+.opt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.exp-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.exp-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-surface);
+  color: var(--fg-3);
+  cursor: pointer;
+  border: none;
+  border-right: 1px solid var(--border-2);
+  transition: background var(--dur-base) var(--ease-out);
+}
+.exp-btn:last-child { border-right: none; }
+.exp-btn.active { background: var(--bg-raised); color: var(--fg-1); }
+.exp-date {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-3);
+  padding: 6px 12px;
+  background: var(--bg-raised);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-2);
+}
+.pcr-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  font-size: 12px;
+}
+.pcr-label { color: var(--fg-3); font-weight: 500; }
+.pcr-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+}
+.pcr-val.bull { color: var(--tu-success); }
+.pcr-val.bear { color: var(--tu-danger); }
+.spot-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.spot-pill .val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg-1);
+}
+.refresh-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: all var(--dur-base) var(--ease-out);
+}
+.refresh-btn:hover { background: var(--bg-surface); color: var(--fg-1); }
+
+/* ── Status / loading ────────────────────────────────────────── */
+.opt-status {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--fg-3);
+  font-size: 14px;
+}
+.opt-status .icon { font-size: 32px; margin-bottom: 12px; }
+.opt-status .title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin-bottom: 8px;
+}
+.opt-status .sub { font-size: 13px; color: var(--fg-3); max-width: 360px; margin: 0 auto; }
+
+/* ── Chain table ─────────────────────────────────────────────── */
+.chain-outer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+.chain-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+}
+.chain-table thead tr { background: var(--bg-raised); }
+.chain-table thead th {
+  padding: 9px 10px;
+  text-align: right;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: var(--tr-wider);
+  text-transform: uppercase;
+  color: var(--fg-3);
+  border-bottom: 1px solid var(--border-2);
+}
+.chain-table thead th.ce-head { color: var(--tu-success); }
+.chain-table thead th.pe-head { color: var(--tu-danger); }
+.chain-table thead th.strike-head {
+  text-align: center;
+  color: var(--fg-2);
+  background: var(--bg-page);
+}
+
+/* Column alignment */
+.chain-table td { padding: 7px 10px; text-align: right; vertical-align: middle; }
+.chain-table td.strike-col {
+  text-align: center;
+  font-weight: 600;
+  font-size: 13px;
+  background: var(--bg-page);
+  color: var(--fg-1);
+  border-left: 1px solid var(--border-1);
+  border-right: 1px solid var(--border-1);
+  position: relative;
+}
+
+/* CE side: green tint, fades toward strike */
+.chain-table td.ce-col { color: var(--fg-2); }
+.chain-table td.ce-oi { color: var(--tu-success); }
+.chain-table td.pe-col { color: var(--fg-2); }
+.chain-table td.pe-oi { color: var(--tu-danger); }
+
+.chain-table tbody tr {
+  border-bottom: 1px solid var(--border-1);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.chain-table tbody tr:last-child { border-bottom: none; }
+.chain-table tbody tr:hover { background: var(--bg-hover); }
+
+/* ATM row */
+.chain-table tbody tr.atm-row {
+  background: color-mix(in srgb, var(--tu-teal-700) 8%, transparent);
+}
+.chain-table tbody tr.atm-row td.strike-col {
+  background: var(--tu-teal-700);
+  color: #fff;
+}
+.chain-table tbody tr.atm-row td.strike-col .atm-badge {
+  display: inline-block;
+  font-size: 9px;
+  background: rgba(255,255,255,0.2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 5px;
+  vertical-align: middle;
+  letter-spacing: 0.05em;
+}
+
+/* OI bar overlay */
+.oi-cell {
+  position: relative;
+  min-width: 80px;
+}
+.oi-bar {
+  position: absolute;
+  top: 0; bottom: 0;
+  opacity: 0.13;
+  pointer-events: none;
+  border-radius: 2px;
+}
+.oi-bar-ce { right: 0; background: var(--tu-success); }
+.oi-bar-pe { left: 0; background: var(--tu-danger); }
+.oi-text { position: relative; z-index: 1; }
+
+/* ── Header section labels ───────────────────────────────────── */
+.section-label {
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--tr-wider);
+  text-transform: uppercase;
+}
+.section-ce {
+  background: color-mix(in srgb, var(--tu-success) 6%, var(--bg-raised));
+  color: var(--tu-success);
+  text-align: right;
+}
+.section-pe {
+  background: color-mix(in srgb, var(--tu-danger) 6%, var(--bg-raised));
+  color: var(--tu-danger);
+  text-align: left;
+}
+.section-mid {
+  background: var(--bg-page);
+  text-align: center;
+  color: var(--fg-3);
+}
+
+/* ── ATM limiter toggle ──────────────────────────────────────── */
+.show-all-row td {
+  text-align: center;
+  padding: 10px;
+  background: var(--bg-raised);
+}
+.show-all-btn {
+  font-size: 12px;
+  color: var(--tu-teal-600);
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.show-all-btn:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="appbar-inner wrap-wide">
+    <a href="/" class="brand" aria-label="Algotime home">
+      <div class="brand-orb"></div>
+      <span class="brand-wordmark"><span class="light">Algo</span><span class="bold">time</span></span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="/">Live</a>
+      <a href="/charts">Charts</a>
+      <a href="/options" class="active">Options</a>
+      <a href="/paper">Paper trading</a>
+      <a href="/strategies">Strategies</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="session" id="session-badge"></div>
+  </div>
+</header>
+
+<main class="opt-wrap">
+
+  <!-- Symbol tabs -->
+  <div class="sym-tabs">
+    <button class="sym-tab active" data-sym="NIFTY">Nifty 50</button>
+    <button class="sym-tab" data-sym="BANKNIFTY">Bank Nifty</button>
+    <button class="sym-tab" data-sym="SENSEX">Sensex</button>
+    <button class="sym-tab" data-sym="FINNIFTY">Fin Nifty</button>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="opt-toolbar">
+    <div class="exp-toggle">
+      <button class="exp-btn active" data-exp="weekly">Weekly</button>
+      <button class="exp-btn" data-exp="monthly">Monthly</button>
+    </div>
+    <div class="exp-date" id="exp-date">—</div>
+    <div class="spot-pill">Spot <span class="val" id="spot-val">—</span></div>
+    <div class="pcr-pill">
+      <span class="pcr-label">PCR</span>
+      <span class="pcr-val" id="pcr-val">—</span>
+    </div>
+    <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <!-- Content area -->
+  <div id="chain-content">
+    <div class="opt-status" id="loading-state">
+      <div class="icon">⏳</div>
+      <div class="title">Loading…</div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const S = {
+  sym:    'NIFTY',
+  exp:    'weekly',
+  rows:   [],
+  atm:    null,
+  pcr:    null,
+  spot:   null,
+  expiry: null,
+  showAll: false,
+  loading: false,
+};
+
+const ATM_WINDOW = 20; // strikes either side of ATM to show by default
+
+// ── Fetch ─────────────────────────────────────────────────────
+async function loadChain() {
+  if (S.loading) return;
+  S.loading = true;
+  renderStatus('loading');
+  try {
+    const r = await fetch(`/api/chain/live?symbol=${S.sym}&expiry_type=${S.exp}`);
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    if (!d.session) {
+      renderStatus('no-session');
+      return;
+    }
+    S.rows   = d.rows   || [];
+    S.atm    = d.atm;
+    S.pcr    = d.pcr;
+    S.spot   = d.spot;
+    S.expiry = d.expiry;
+    S.showAll = false;
+    render();
+  } catch(e) {
+    renderStatus('error', e.message);
+  } finally {
+    S.loading = false;
+  }
+}
+
+// ── Status screens ────────────────────────────────────────────
+function renderStatus(type, msg) {
+  const el = document.getElementById('chain-content');
+  document.getElementById('exp-date').textContent = '—';
+  document.getElementById('pcr-val').textContent  = '—';
+  document.getElementById('spot-val').textContent = '—';
+  document.getElementById('pcr-val').className    = 'pcr-val';
+
+  if (type === 'loading') {
+    el.innerHTML = `<div class="opt-status"><div class="icon">⏳</div><div class="title">Fetching chain…</div></div>`;
+  } else if (type === 'no-session') {
+    el.innerHTML = `
+      <div class="opt-status">
+        <div class="icon">🔌</div>
+        <div class="title">Broker not connected</div>
+        <div class="sub">Connect your Breeze session from the Live page to view live option chain data.</div>
+      </div>`;
+  } else if (type === 'empty') {
+    el.innerHTML = `<div class="opt-status"><div class="icon">📭</div><div class="title">No data returned</div><div class="sub">Breeze returned an empty chain for this symbol and expiry.</div></div>`;
+  } else {
+    el.innerHTML = `<div class="opt-status"><div class="icon">⚠️</div><div class="title">Error</div><div class="sub">${escHtml(msg||'Unknown error')}</div></div>`;
+  }
+}
+
+// ── Render chain table ────────────────────────────────────────
+function render() {
+  // Toolbar values
+  document.getElementById('exp-date').textContent = fmtDate(S.expiry);
+  document.getElementById('spot-val').textContent = S.spot ? fmtNum(S.spot, 2) : '—';
+  if (S.pcr !== null) {
+    const el = document.getElementById('pcr-val');
+    el.textContent = S.pcr.toFixed(2);
+    el.className   = `pcr-val ${S.pcr >= 1 ? 'bull' : 'bear'}`;
+  } else {
+    document.getElementById('pcr-val').textContent = '—';
+    document.getElementById('pcr-val').className   = 'pcr-val';
+  }
+
+  if (!S.rows.length) { renderStatus('empty'); return; }
+
+  // Compute max OI for bar scaling
+  let maxCeOi = 1, maxPeOi = 1;
+  for (const r of S.rows) {
+    if (r.ce) maxCeOi = Math.max(maxCeOi, r.ce.oi);
+    if (r.pe) maxPeOi = Math.max(maxPeOi, r.pe.oi);
+  }
+
+  // Determine visible rows
+  let visible = S.rows;
+  if (!S.showAll && S.atm !== null) {
+    const atmIdx = S.rows.findIndex(r => r.strike === S.atm);
+    if (atmIdx >= 0) {
+      const lo = Math.max(0, atmIdx - ATM_WINDOW);
+      const hi = Math.min(S.rows.length, atmIdx + ATM_WINDOW + 1);
+      visible = S.rows.slice(lo, hi);
+    }
+  }
+
+  const tbody = visible.map(r => rowHtml(r, maxCeOi, maxPeOi)).join('');
+  const showAllRow = (!S.showAll && S.rows.length > visible.length)
+    ? `<tr class="show-all-row"><td colspan="9"><button class="show-all-btn" id="show-all-btn">Show all ${S.rows.length} strikes ↓</button></td></tr>`
+    : '';
+
+  document.getElementById('chain-content').innerHTML = `
+  <div class="chain-outer">
+    <table class="chain-table">
+      <colgroup>
+        <col style="width:12%"><col style="width:10%"><col style="width:10%">
+        <col style="width:12%">
+        <col style="width:10%"><col style="width:10%"><col style="width:12%">
+      </colgroup>
+      <thead>
+        <tr>
+          <th colspan="3" class="section-label section-ce">CALLS (CE)</th>
+          <th class="section-label section-mid">STRIKE</th>
+          <th colspan="3" class="section-label section-pe">PUTS (PE)</th>
+        </tr>
+        <tr>
+          <th class="ce-head">OI</th>
+          <th class="ce-head">Vol</th>
+          <th class="ce-head">LTP</th>
+          <th class="strike-head">Price</th>
+          <th class="pe-head">LTP</th>
+          <th class="pe-head">Vol</th>
+          <th class="pe-head">OI</th>
+        </tr>
+      </thead>
+      <tbody>${tbody}${showAllRow}</tbody>
+    </table>
+  </div>`;
+
+  const btn = document.getElementById('show-all-btn');
+  if (btn) btn.addEventListener('click', () => { S.showAll = true; render(); });
+}
+
+function rowHtml(r, maxCeOi, maxPeOi) {
+  const isAtm = r.strike === S.atm;
+  const cls   = isAtm ? ' class="atm-row"' : '';
+
+  const ce = r.ce || {};
+  const pe = r.pe || {};
+
+  const cePct = ce.oi ? Math.round((ce.oi / maxCeOi) * 100) : 0;
+  const pePct = pe.oi ? Math.round((pe.oi / maxPeOi) * 100) : 0;
+
+  const ceOiCell  = oiCell(ce.oi, cePct, 'ce');
+  const peOiCell  = oiCell(pe.oi, pePct, 'pe');
+  const strikeAtm = isAtm ? `${r.strike}<span class="atm-badge">ATM</span>` : r.strike;
+
+  return `<tr${cls}>
+    ${ceOiCell}
+    <td class="ce-col">${fmtOi(ce.vol)}</td>
+    <td class="ce-col">${fmtNum(ce.ltp, 2)}</td>
+    <td class="strike-col">${strikeAtm}</td>
+    <td class="pe-col">${fmtNum(pe.ltp, 2)}</td>
+    <td class="pe-col">${fmtOi(pe.vol)}</td>
+    ${peOiCell}
+  </tr>`;
+}
+
+function oiCell(oi, pct, side) {
+  const cls   = side === 'ce' ? 'ce-oi' : 'pe-oi';
+  const barCls= side === 'ce' ? 'oi-bar-ce' : 'oi-bar-pe';
+  const w     = pct ? `style="width:${pct}%"` : '';
+  return `<td class="oi-cell ${cls}">
+    <div class="oi-bar ${barCls}" ${w}></div>
+    <span class="oi-text">${fmtOi(oi)}</span>
+  </td>`;
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function fmtNum(v, dp = 0) {
+  if (v === undefined || v === null || v === 0) return '—';
+  return Number(v).toFixed(dp);
+}
+function fmtOi(v) {
+  if (!v) return '—';
+  if (v >= 1e7)  return (v / 1e7).toFixed(2) + 'Cr';
+  if (v >= 1e5)  return (v / 1e5).toFixed(1) + 'L';
+  if (v >= 1000) return (v / 1000).toFixed(1) + 'K';
+  return String(v);
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Session badge (reuse from other pages) ────────────────────
+async function checkSession() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const el = document.getElementById('session-badge');
+    if (d.connected) {
+      el.innerHTML = `<span style="font-size:11px;color:var(--tu-success);font-weight:600;">● Connected</span>`;
+    } else {
+      el.innerHTML = `<a href="/" style="font-size:11px;color:var(--fg-3);">Connect broker</a>`;
+    }
+  } catch {}
+}
+
+// ── Event wiring ──────────────────────────────────────────────
+document.querySelectorAll('.sym-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sym-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    S.sym = btn.dataset.sym;
+    loadChain();
+  });
+});
+
+document.querySelectorAll('.exp-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.exp-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    S.exp = btn.dataset.exp;
+    loadChain();
+  });
+});
+
+document.getElementById('refresh-btn').addEventListener('click', loadChain);
+
+// ── Init ──────────────────────────────────────────────────────
+checkSession();
+loadChain();
+</script>
+</body>
+</html>

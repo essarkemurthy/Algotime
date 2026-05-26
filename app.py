@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -92,12 +92,19 @@ class BreezeRateLimiter:
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     handlers=[
-        logging.FileHandler("logs/dashboard.log"),
-        logging.StreamHandler(),
+        logging.FileHandler("logs/dashboard.log", encoding="utf-8"),
+        logging.StreamHandler(stream=__import__("sys").stdout),
     ],
 )
+# Ensure stdout uses UTF-8 on Windows so log messages with Unicode don't crash
+import sys as _sys
+if hasattr(_sys.stdout, "reconfigure"):
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 log = logging.getLogger("dashboard")
 log.setLevel(logging.DEBUG)   # see subscribe/tick diagnostics in logs/dashboard.log
 
@@ -145,6 +152,33 @@ def _init_db_store() -> None:
         log.warning("DB store unavailable (PostgreSQL not running?): %s", exc)
         _db_store = None
 
+# ── Setup configuration ───────────────────────────────────────────────────────
+_CONFIG_FILE = Path("data/setup.json")
+_setup_config: dict = {
+    "db":     {"mode": "none", "url": ""},
+    "broker": {"type": "icici", "api_key": "", "api_secret": "", "session_token": ""},
+    "setup_complete": False,
+}
+
+
+def _load_setup_config() -> None:
+    global _setup_config
+    if not _CONFIG_FILE.exists():
+        return
+    try:
+        with open(_CONFIG_FILE, encoding="utf-8") as f:
+            _setup_config.update(json.load(f))
+        log.info("Setup config loaded from %s", _CONFIG_FILE)
+    except Exception as exc:
+        log.warning("Could not load setup config: %s", exc)
+
+
+def _save_setup_config() -> None:
+    _CONFIG_FILE.parent.mkdir(exist_ok=True)
+    with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(_setup_config, f, indent=2)
+
+
 # ── Spot tick buffer — flushed to DB every 5 s by _tick_writer_thread ─────────
 _tick_buffer: List[dict] = []
 _tick_buffer_lock = threading.Lock()
@@ -191,10 +225,14 @@ class _DownloadLogHandler(logging.Handler):
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
-    {"stock": "NIFTY",     "exchange": "NSE", "label": "NIFTY"},
-    {"stock": "INFY",      "exchange": "NSE", "label": "INFY"},
-    {"stock": "ONGC",      "exchange": "NSE", "label": "ONGC"},
-    {"stock": "MAXHEALTH", "exchange": "NSE", "label": "MAXHEALTH"},
+    {"stock": "NIFTY",       "exchange": "NSE", "label": "NIFTY"},
+    {"stock": "BANKNIFTY",   "exchange": "NSE", "label": "BANKNIFTY"},
+    {"stock": "SENSEX",      "exchange": "BSE", "label": "SENSEX"},
+    {"stock": "CNXIT",       "exchange": "NSE", "label": "CNXIT"},
+    {"stock": "FINNIFTY",    "exchange": "NSE", "label": "NIFTYFINSERVICE"},
+    {"stock": "INFY",        "exchange": "NSE", "label": "INFY"},
+    {"stock": "ONGC",        "exchange": "NSE", "label": "ONGC"},
+    {"stock": "MAXHEALTH",   "exchange": "NSE", "label": "MAXHEALTH"},
 ]
 
 _ws_clients: Set[WebSocket] = set()
@@ -295,16 +333,34 @@ def _on_tick(tick: dict) -> None:
     Runs in the SDK's socketio background thread — dict writes are GIL-safe."""
     token = tick.get("symbol", "")
     ltp   = tick.get("last")
-    if not token:
-        return
-    if token not in _token_to_symbol:
-        log.debug("Tick for unknown token %s (ltp=%s) — not in token map. Map: %s",
-                  token, ltp, list(_token_to_symbol.keys())[:10])
-        return
-    if ltp is None:
+    if not token or ltp is None:
         return
 
-    cache_key = _token_to_symbol[token]
+    cache_key = _token_to_symbol.get(token)
+
+    if cache_key is None:
+        # Token not pre-mapped — try to learn it from tick's stock_code field
+        tick_stock    = tick.get("stock_code", "")
+        tick_exchange = tick.get("exchange_code", "")
+        if tick_stock:
+            # First try exact match (stock + exchange), then stock-only
+            for w in WATCHLIST:
+                if w["stock"] == tick_stock and w["exchange"] == tick_exchange:
+                    cache_key = w["label"]
+                    break
+            if cache_key is None:
+                for w in WATCHLIST:
+                    if w["stock"] == tick_stock:
+                        cache_key = w["label"]
+                        break
+            if cache_key is not None:
+                _token_to_symbol[token] = cache_key
+                log.info("Auto-learned token mapping: %s → %s (stock_code=%s exchange=%s)",
+                         token, cache_key, tick_stock, tick_exchange)
+        if cache_key is None:
+            log.info("Unknown tick: token=%s stock_code=%s exchange=%s ltp=%s — full tick: %s",
+                     token, tick_stock, tick_exchange, ltp, tick)
+            return
     ltp_f     = float(ltp)
     _ltp_cache[cache_key] = ltp_f
 
@@ -334,6 +390,15 @@ def _on_tick(tick: dict) -> None:
         _tick_log[cache_key] = deque(maxlen=200)
     _tick_log[cache_key].appendleft(entry)
 
+    # Broadcast live price to all UI clients immediately (ticker strip / watchlist)
+    if _main_loop:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": "price", "symbol": cache_key, "ltp": ltp_f,
+                       "change": entry["change"]}),
+            _main_loop,
+        )
+
+    # Detailed tick data for the tick pane (only when that symbol is being watched)
     if cache_key == _tick_watch and _main_loop:
         asyncio.run_coroutine_threadsafe(
             broadcast({"type": "tick", "symbol": cache_key, "data": entry}),
@@ -390,14 +455,17 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
             get_exchange_quotes=True,
             get_market_depth=False,
         )
+        eq_token = None
         if isinstance(token_result, Exception):
-            log.error("Token lookup failed for %s/%s: %s", stock, exchange, token_result)
-            return False
-        eq_token, _ = token_result
-        if not eq_token or not isinstance(eq_token, str) or "False" in eq_token:
-            log.error("No valid token for %s/%s (token=%r) — symbol may not exist in Breeze master",
-                      stock, exchange, eq_token)
-            return False
+            log.warning("Token lookup failed for %s/%s: %s — will subscribe anyway and learn token from first tick",
+                        stock, exchange, token_result)
+        else:
+            raw_token, _ = token_result
+            if raw_token and isinstance(raw_token, str) and "False" not in raw_token:
+                eq_token = raw_token
+            else:
+                log.warning("No valid token for %s/%s (got %r) — subscribing anyway, will learn from first tick",
+                            stock, exchange, raw_token)
 
         # Subscribe via WebSocket
         resp = _session.api.subscribe_feeds(
@@ -410,12 +478,16 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
             get_exchange_quotes=True,
             get_market_depth=False,
         )
-        log.debug("subscribe_feeds response for %s: %s", stock, resp)
+        log.info("subscribe_feeds %s/%s → %s", stock, exchange, resp)
 
-        # Store token → cache_key mapping so _on_tick can route ticks correctly
-        _token_to_symbol[eq_token] = cache_key or stock
+        if eq_token:
+            _token_to_symbol[eq_token] = cache_key or stock
+            log.info("WS subscribed: %s → token %s", cache_key or stock, eq_token)
+        else:
+            # Token will be auto-learned from the first tick (_on_tick handles this)
+            log.info("WS subscribed: %s (token pending — will learn from first tick)", cache_key or stock)
+
         _ws_subscriptions.add(sub_key)
-        log.info("WS subscribed: %s → token %s", cache_key or stock, eq_token)
         return True
     except Exception as exc:
         log.error("WS subscribe failed for %s/%s: %s", stock, exchange, exc)
@@ -449,7 +521,7 @@ def _setup_ws_feeds() -> None:
     _session.api.on_ticks = _on_tick
     _session.api.ws_connect()
     for w in WATCHLIST:
-        _ws_subscribe(w["stock"], w["exchange"], cache_key=w["stock"])
+        _ws_subscribe(w["stock"], w["exchange"], cache_key=w["label"])
     for pos in _positions:
         if pos.get("is_open") and pos.get("right"):
             expiry_str = SymbolBuilder.breeze_dt(date.fromisoformat(pos["expiry"]))
@@ -610,7 +682,12 @@ async def lifespan(app: FastAPI):
     _broadcast_task = asyncio.create_task(_broadcast_loop())
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
     _load_symbol_index()
-    _init_db_store()   # connect to PostgreSQL if DB_URL is set
+    _load_setup_config()
+    # Restore saved DB URL to env so API endpoints can use it, but do NOT
+    # connect to the database automatically — user must click "Test connection".
+    saved_db = _setup_config.get("db", {})
+    if saved_db.get("mode") == "postgres" and saved_db.get("url"):
+        os.environ.setdefault("DB_URL", saved_db["url"])
     # Start background tick writer thread (no-op if DB unavailable)
     threading.Thread(target=_tick_writer_thread, daemon=True, name="tick-writer").start()
     log.info("Dashboard running → http://localhost:8000")
@@ -745,6 +822,130 @@ async def get_status():
         "connected":    bool(_session and _session._api),
         "algo_running": bool(_algo_task and not _algo_task.done()),
     }
+
+
+@app.get("/api/debug/feed")
+async def debug_feed():
+    """Diagnostic: subscription state, token map, and current LTP cache."""
+    return {
+        "subscriptions":   list(_ws_subscriptions),
+        "token_to_symbol": _token_to_symbol,
+        "ltp_cache":       _ltp_cache,
+        "connected":       bool(_session and _session._api),
+        "ws_clients":      len(_ws_clients),
+    }
+
+
+# ── Setup endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/api/setup/status")
+async def setup_status():
+    db_ok     = _setup_config["db"]["mode"] == "postgres" and _db_store is not None
+    broker_ok = bool(_session and _session._api)
+    db_mode   = _setup_config["db"]["mode"]
+    mode      = "live" if broker_ok else ("db_only" if db_ok else "none")
+
+    # Credentials: saved config takes priority, fall back to .env vars
+    db_url        = _setup_config["db"].get("url")            or os.getenv("DB_URL",                "")
+    broker_cfg    = _setup_config.get("broker", {})
+    api_key       = broker_cfg.get("api_key")       or os.getenv("BREEZE_API_KEY",       "")
+    api_secret    = broker_cfg.get("api_secret")    or os.getenv("BREEZE_API_SECRET",    "")
+    session_token = broker_cfg.get("session_token") or os.getenv("BREEZE_SESSION_TOKEN", "")
+
+    return {
+        "setup_complete": _setup_config.get("setup_complete", False),
+        "db_mode":        db_mode,
+        "db_ok":          db_ok,
+        "db_url":         db_url,
+        "broker_type":    broker_cfg.get("type", "icici"),
+        "broker_ok":      broker_ok,
+        "mode":           mode,
+        "broker": {
+            "api_key":       api_key,
+            "api_secret":    api_secret,
+            "session_token": session_token,
+        },
+    }
+
+
+@app.post("/api/setup/db/test")
+async def setup_test_db(body: dict):
+    host     = (body.get("host") or "localhost").strip()
+    port     = int(body.get("port") or 5432)
+    db       = (body.get("db") or "market_data").strip()
+    user     = (body.get("user") or "postgres").strip()
+    password = (body.get("password") or "").strip()
+    url      = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+    try:
+        import psycopg2
+        conn = psycopg2.connect(url, connect_timeout=6)
+        cur  = conn.cursor()
+        cur.execute("SELECT version()")
+        version = cur.fetchone()[0].split(",")[0]
+        try:
+            cur.execute("SELECT COUNT(*) FROM candles")
+            candles = cur.fetchone()[0]
+        except Exception:
+            candles = 0
+        conn.close()
+        return {"ok": True, "version": version, "candles": candles, "url": url}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/setup/db/save")
+async def setup_save_db(body: dict):
+    mode = body.get("mode", "none")
+    url  = body.get("url", "")
+    _setup_config["db"] = {"mode": mode, "url": url}
+    if mode == "postgres" and url:
+        os.environ["DB_URL"] = url
+        _init_db_store()
+        _setup_config["setup_complete"] = True
+    _save_setup_config()
+    return {"ok": True}
+
+
+@app.post("/api/setup/broker/test")
+async def setup_test_broker(body: dict):
+    api_key       = (body.get("api_key")       or "").strip()
+    api_secret    = (body.get("api_secret")     or "").strip()
+    session_token = (body.get("session_token")  or "").strip()
+    if not all([api_key, api_secret, session_token]):
+        raise HTTPException(400, "api_key, api_secret and session_token are required")
+    try:
+        from breeze_connect import BreezeConnect
+        api = BreezeConnect(api_key=api_key)
+        api.generate_session(api_secret=api_secret, session_token=session_token)
+        resp = api.get_customer_details(api_session=session_token)
+        if resp and resp.get("Status") == 200:
+            name = (resp.get("Success") or {}).get("idirect_user_name", "Verified")
+            return {"ok": True, "name": name}
+        msg = (resp or {}).get("Error") or "Authentication failed"
+        return {"ok": False, "error": str(msg)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/setup/broker/save")
+async def setup_save_broker(body: dict):
+    _setup_config["broker"] = {
+        "type":          body.get("type",          "icici"),
+        "api_key":       body.get("api_key",       ""),
+        "api_secret":    body.get("api_secret",    ""),
+        "session_token": body.get("session_token", ""),
+    }
+    _setup_config["setup_complete"] = True
+    _save_setup_config()
+    return {"ok": True}
+
+
+@app.post("/api/setup/reset")
+async def setup_reset():
+    """Clear setup state — app will redirect to wizard on next visit."""
+    _setup_config["setup_complete"] = False
+    _save_setup_config()
+    return {"ok": True}
 
 
 @app.get("/api/db/status")
@@ -1451,6 +1652,124 @@ async def paper_page():
     return FileResponse("static/paper.html")
 
 
+@app.get("/strategies")
+async def strategies_page():
+    return FileResponse("static/strategies.html")
+
+
+@app.get("/profile")
+async def profile_page():
+    return FileResponse("static/profile.html")
+
+
+@app.get("/options")
+async def options_page():
+    return FileResponse("static/options.html")
+
+
+# Symbol metadata for option chain
+_CHAIN_META = {
+    "NIFTY":     {"exchange": "NFO", "step": 50,  "expiry": "thursday"},
+    "BANKNIFTY": {"exchange": "NFO", "step": 100, "expiry": "thursday"},
+    "SENSEX":    {"exchange": "BFO", "step": 100, "expiry": "friday"},
+    "FINNIFTY":  {"exchange": "NFO", "step": 50,  "expiry": "thursday"},
+    "MIDCPNIFTY":{"exchange": "NFO", "step": 25,  "expiry": "thursday"},
+}
+
+
+def _nearest_expiry_for(symbol: str, expiry_type: str) -> date:
+    """Return nearest weekly or monthly expiry for the given symbol."""
+    from datetime import time as dtime_t
+    meta = _CHAIN_META.get(symbol.upper(), {"expiry": "thursday"})
+    if expiry_type != "weekly":
+        return nearest_monthly_expiry()
+    today = date.today()
+    now   = datetime.now()
+    if meta["expiry"] == "friday":
+        days = (4 - today.weekday()) % 7
+        if days == 0 and now.hour >= 15 and now.minute >= 30:
+            days = 7
+        return today + timedelta(days=days)
+    return nearest_weekly_expiry()
+
+
+@app.get("/api/chain/live")
+async def get_chain_live(symbol: str = "NIFTY", expiry_type: str = "weekly"):
+    """Fetch live option chain from Breeze. Returns pivoted strike rows."""
+    if not (_session and _session._api):
+        return {"session": False, "rows": [], "expiry": None, "atm": None, "pcr": None}
+
+    sym    = symbol.upper()
+    meta   = _CHAIN_META.get(sym, {"exchange": "NFO", "step": 50, "expiry": "thursday"})
+    expiry = _nearest_expiry_for(sym, expiry_type)
+
+    try:
+        await asyncio.to_thread(_limiter.acquire, f"chain_{sym}")
+        resp = await asyncio.to_thread(
+            _session.api.get_option_chain_quotes,
+            stock_code=sym,
+            exchange_code=meta["exchange"],
+            product_type="options",
+            expiry_date=SymbolBuilder.breeze_dt(expiry),
+            right="others",
+            strike_price="0",
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+    if resp.get("Status") != 200:
+        raise HTTPException(502, f"Breeze: {resp.get('Error', resp)}")
+
+    strikes: dict = {}
+    for r in resp.get("Success") or []:
+        try:
+            strike = int(float(r.get("strike_price") or 0))
+            side   = str(r.get("right", "")).lower().strip()
+            side   = "ce" if "call" in side else ("pe" if "put" in side else None)
+            if not side or strike <= 0:
+                continue
+            if strike not in strikes:
+                strikes[strike] = {"strike": strike, "ce": None, "pe": None}
+            strikes[strike][side] = {
+                "ltp": float(r.get("ltp") or 0),
+                "oi":  int(float(r.get("open_interest") or 0)),
+                "vol": int(float(r.get("volume") or 0)),
+                "iv":  float(r.get("implied_volatility") or 0) if r.get("implied_volatility") else 0.0,
+            }
+        except (ValueError, TypeError):
+            continue
+
+    rows = sorted(strikes.values(), key=lambda x: x["strike"])
+
+    # ATM estimate — use spot from LTP cache, else midpoint of chain
+    spot = None
+    if _ltp_cache:
+        ltp_entry = _ltp_cache.get(sym) or _ltp_cache.get(sym.lower())
+        if ltp_entry:
+            spot = float(ltp_entry.get("ltp") or ltp_entry.get("close") or 0) or None
+    atm = None
+    if spot and rows:
+        step = meta["step"]
+        rounded = round(spot / step) * step
+        atm = min((r["strike"] for r in rows), key=lambda s: abs(s - rounded))
+    elif rows:
+        atm = rows[len(rows) // 2]["strike"]
+
+    # PCR = total PE OI / total CE OI
+    ce_oi = sum(r["ce"]["oi"] for r in rows if r["ce"])
+    pe_oi = sum(r["pe"]["oi"] for r in rows if r["pe"])
+    pcr   = round(pe_oi / ce_oi, 2) if ce_oi else None
+
+    return {
+        "session": True,
+        "expiry":  expiry.isoformat(),
+        "atm":     atm,
+        "pcr":     pcr,
+        "spot":    spot,
+        "rows":    rows,
+    }
+
+
 class PaperOrderReq(BaseModel):
     stock_code:    str
     exchange_code: str           = "NSE"
@@ -1731,6 +2050,281 @@ async def get_ohlc_db(
         for r in rows
     ]
     return {"candles": candles, "count": len(candles), "source": "db"}
+
+
+# ── DB-backed last-known LTP (DB-only mode) ───────────────────────────────────
+
+# Frontend may use different names than the Breeze stock_code stored in the DB.
+_SYMBOL_ALIASES: dict = {"NIFTYFINSERVICE": "FINNIFTY"}
+
+@app.get("/api/ltp/db")
+async def get_ltp_db(symbols: str = "NIFTY,BANKNIFTY,RELIANCE,TCS,HDFCBANK,INFY,SBIN,VIX"):
+    """Return last recorded LTP per symbol.
+    - spot_ticks: only queried when broker is connected (_session active).
+    - candles:    only queried when DB is connected (_db_store initialised).
+    """
+    broker_connected = _session is not None and _session._api is not None
+    db_connected     = _db_store is not None
+
+    if not broker_connected and not db_connected:
+        return {"ltp": {}, "source": {}}
+
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        return {"ltp": {}, "source": {}}
+
+    try:
+        import psycopg2
+        syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor()
+        result: dict = {}
+        source: dict = {}
+        for sym in syms:
+            db_sym = _SYMBOL_ALIASES.get(sym, sym)
+            if broker_connected:
+                cur.execute(
+                    "SELECT ltp FROM spot_ticks WHERE symbol=%s ORDER BY ts DESC LIMIT 1", (db_sym,)
+                )
+                row = cur.fetchone()
+                if row:
+                    result[sym] = float(row[0])
+                    source[sym] = "tick"
+                    continue
+            if db_connected:
+                cur.execute(
+                    "SELECT close FROM candles WHERE symbol=%s AND close IS NOT NULL ORDER BY ts DESC LIMIT 1",
+                    (db_sym,)
+                )
+                row = cur.fetchone()
+                if row:
+                    result[sym] = float(row[0])
+                    source[sym] = "candle"
+        conn.close()
+        return {"ltp": result, "source": source}
+    except Exception as exc:
+        return {"ltp": {}, "source": {}, "error": str(exc)}
+
+
+@app.post("/api/backtest/math")
+async def backtest_math(body: dict):
+    """Run a math-series backtest on real candle data from PostgreSQL.
+    Queries candles table, applies numpy transforms, simulates trades, returns metrics.
+    """
+    import psycopg2
+    import numpy as np
+    from statistics import mean, stdev
+
+    db_url = os.getenv("DB_URL", "")
+    if not db_url or _db_store is None:
+        return {"error": "DB not connected"}
+
+    symbol     = str(body.get("symbol", "NIFTY")).upper()
+    db_sym     = _SYMBOL_ALIASES.get(symbol, symbol)
+    tf_raw     = body.get("tf", "5 minute")
+    tf_map     = {"1 minute": "1minute", "5 minute": "5minute", "15 minute": "15minute",
+                  "60 minute": "60minute", "Daily": "1day"}
+    tf         = tf_map.get(tf_raw, "5minute")
+    base       = str(body.get("base", "Close")).lower()
+    transforms = body.get("transforms", [])
+    conditions = body.get("conditions", [])
+    logics     = body.get("logics",     [])
+    period     = body.get("period",     "Last 6 months")
+    capital    = float(body.get("capital",    1_000_000))
+    stop_pct   = float(body.get("stop_pct",   0.5)) / 100
+    target_pct = float(body.get("target_pct", 1.0)) / 100
+    hold_bars  = int(body.get("hold_bars",    10))
+    side       = str(body.get("side",         "Long only"))
+
+    period_days = {"Last 1 month": 30, "Last 3 months": 90,
+                   "Last 6 months": 180, "Last 1 year": 365}.get(period, 180)
+    since = (datetime.utcnow() - timedelta(days=period_days)).date()
+
+    try:
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor()
+        col_map = {"close": "close", "open": "open", "high": "high",
+                   "low": "low", "volume": "volume"}
+        computed_bases = {"log(close)", "hl2", "hlc3"}
+
+        if base in computed_bases:
+            cur.execute(
+                "SELECT high, low, close FROM candles WHERE symbol=%s AND interval=%s AND ts>=%s ORDER BY ts",
+                (db_sym, tf, since)
+            )
+            raw = cur.fetchall()
+            conn.close()
+            if not raw:
+                return {"error": f"No candles found for {db_sym} / {tf}"}
+            if base == "log(close)":
+                series = np.log(np.array([r[2] for r in raw], dtype=float))
+            elif base == "hl2":
+                series = np.array([(r[0] + r[1]) / 2.0 for r in raw], dtype=float)
+            else:
+                series = np.array([(r[0] + r[1] + r[2]) / 3.0 for r in raw], dtype=float)
+            closes = np.array([r[2] for r in raw], dtype=float)
+        else:
+            col = col_map.get(base, "close")
+            cur.execute(
+                f"SELECT {col}, close FROM candles WHERE symbol=%s AND interval=%s AND ts>=%s ORDER BY ts",
+                (db_sym, tf, since)
+            )
+            raw = cur.fetchall()
+            conn.close()
+            if not raw:
+                return {"error": f"No candles found for {db_sym} / {tf}"}
+            series = np.array([r[0] for r in raw], dtype=float)
+            closes = np.array([r[1] for r in raw], dtype=float)
+
+        for t in transforms:
+            ttype = t.get("type", "none")
+            w = max(2, int(t.get("param") or 20))
+            if ttype == "diff1":
+                series = np.concatenate(([np.nan], np.diff(series)))
+            elif ttype == "diff2":
+                d1 = np.diff(series)
+                series = np.concatenate(([np.nan, np.nan], np.diff(d1)))
+            elif ttype == "log_return":
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    lr = np.log(series[1:] / series[:-1])
+                series = np.concatenate(([np.nan], lr))
+            elif ttype == "pct_change":
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    pc = (series[1:] - series[:-1]) / np.abs(series[:-1])
+                series = np.concatenate(([np.nan], pc))
+            elif ttype == "rolling_mean":
+                out = np.full_like(series, np.nan)
+                for i in range(w - 1, len(series)):
+                    out[i] = np.nanmean(series[i - w + 1:i + 1])
+                series = out
+            elif ttype == "rolling_std":
+                out = np.full_like(series, np.nan)
+                for i in range(w - 1, len(series)):
+                    out[i] = np.nanstd(series[i - w + 1:i + 1])
+                series = out
+            elif ttype == "z_score":
+                out = np.full_like(series, np.nan)
+                for i in range(w - 1, len(series)):
+                    sl = series[i - w + 1:i + 1]
+                    s_std, s_mean = np.nanstd(sl), np.nanmean(sl)
+                    out[i] = (series[i] - s_mean) / s_std if s_std > 0 else 0.0
+                series = out
+            elif ttype == "normalize":
+                out = np.full_like(series, np.nan)
+                for i in range(w - 1, len(series)):
+                    sl = series[i - w + 1:i + 1]
+                    mn, mx = np.nanmin(sl), np.nanmax(sl)
+                    out[i] = (series[i] - mn) / (mx - mn) if mx > mn else 0.0
+                series = out
+            elif ttype == "cumsum":
+                series = np.nancumsum(series)
+            elif ttype == "abs":
+                series = np.abs(series)
+            elif ttype == "sign":
+                series = np.sign(series)
+
+        def eval_cond(c, i, ser):
+            if i < 1:
+                return False
+            op  = c.get("op", ">")
+            thr = float(c.get("threshold") or 0)
+            n   = int(c.get("n") or 1)
+            v   = ser[i]
+            if np.isnan(v):
+                return False
+            if op == ">":                return float(v) > thr
+            if op == "<":                return float(v) < thr
+            if op == ">=":               return float(v) >= thr
+            if op == "<=":               return float(v) <= thr
+            if op == "==":               return abs(float(v) - thr) < 1e-9
+            if op == "crosses_above":    return ser[i - 1] <= thr and float(v) > thr
+            if op == "crosses_below":    return ser[i - 1] >= thr and float(v) < thr
+            if op == "sign_flip_pos":    return np.sign(ser[i - 1]) < 0 and np.sign(v) > 0
+            if op == "sign_flip_neg":    return np.sign(ser[i - 1]) > 0 and np.sign(v) < 0
+            if op == "n_consecutive_pos":
+                return i >= n and all(ser[i - n + 1 + j] > 0 for j in range(n))
+            if op == "n_consecutive_neg":
+                return i >= n and all(ser[i - n + 1 + j] < 0 for j in range(n))
+            if op == "is_peak":
+                return i < len(ser) - 1 and v > ser[i - 1] and v > ser[i + 1]
+            if op == "is_trough":
+                return i < len(ser) - 1 and v < ser[i - 1] and v < ser[i + 1]
+            return False
+
+        n_bars      = len(series)
+        equity      = capital
+        trades      = 0
+        wins        = 0
+        peak_eq     = capital
+        max_dd_abs  = 0.0
+        in_trade    = False
+        entry_price = 0.0
+        entry_bar   = 0
+        pnl_list    = []
+        equity_curve = [capital]
+
+        for i in range(1, n_bars):
+            if in_trade:
+                cp = closes[i]
+                pnl_pct = ((cp - entry_price) / entry_price
+                           if side != "Short only"
+                           else (entry_price - cp) / entry_price)
+                if pnl_pct <= -stop_pct or pnl_pct >= target_pct or (i - entry_bar) >= hold_bars:
+                    pnl = equity * pnl_pct
+                    equity += pnl
+                    pnl_list.append(pnl)
+                    if pnl > 0:
+                        wins += 1
+                    trades += 1
+                    in_trade = False
+                    peak_eq = max(peak_eq, equity)
+                    max_dd_abs = max(max_dd_abs, (peak_eq - equity) / peak_eq)
+            else:
+                if conditions:
+                    results = [eval_cond(c, i, series) for c in conditions]
+                    fire = results[0]
+                    for j in range(1, len(results)):
+                        lg = logics[j] if j < len(logics) else "AND"
+                        fire = (fire and results[j]) if lg == "AND" else (fire or results[j])
+                else:
+                    fire = False
+                if fire and not np.isnan(closes[i]):
+                    in_trade    = True
+                    entry_price = closes[i]
+                    entry_bar   = i
+            equity_curve.append(equity)
+
+        if len(equity_curve) > 1:
+            mn, mx = min(equity_curve), max(equity_curve)
+            rng  = mx - mn if mx > mn else 1.0
+            step = max(1, len(equity_curve) // 30)
+            xs   = list(range(0, len(equity_curve), step))
+            pts  = [f"{xi * 240 / max(len(xs) - 1, 1):.1f},{54 - (equity_curve[idx2] - mn) / rng * 48:.1f}"
+                    for xi, idx2 in enumerate(xs)]
+            curve = " ".join(pts)
+        else:
+            curve = "0,48 240,48"
+
+        total_return = (equity / capital - 1) * 100
+        win_rate     = (wins / trades * 100) if trades > 0 else 0.0
+        sharpe       = 0.0
+        if len(pnl_list) > 2:
+            avg_pnl = mean(pnl_list)
+            std_pnl = stdev(pnl_list)
+            if std_pnl > 0:
+                sharpe = avg_pnl / std_pnl * (252 ** 0.5)
+
+        return {
+            "total_return": round(total_return, 3),
+            "win_rate":     round(win_rate, 2),
+            "max_dd":       round(max_dd_abs * 100, 3),
+            "sharpe":       round(sharpe, 3),
+            "trades":       trades,
+            "candles":      n_bars,
+            "curve":        curve,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 # ── Historical data download ──────────────────────────────────────────────────

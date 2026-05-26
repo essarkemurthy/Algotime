@@ -151,6 +151,21 @@ CREATE TABLE IF NOT EXISTS iv_daily (
     PRIMARY KEY (date, symbol, expiry)
 );
 CREATE INDEX IF NOT EXISTS idx_iv_daily_sym ON iv_daily (symbol, date DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Download audit log — tracks every bulk_download.py run per symbol×interval
+-- status: 'ok' | 'error' | 'daily_limit'
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS download_log (
+    id             BIGSERIAL     PRIMARY KEY,
+    ts             TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    symbol         TEXT          NOT NULL,
+    "interval"     TEXT          NOT NULL,
+    rows_inserted  INTEGER       NOT NULL DEFAULT 0,
+    status         TEXT          NOT NULL,
+    note           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dllog_sym_iv ON download_log (symbol, "interval", ts DESC);
 """
 
 
@@ -158,7 +173,7 @@ def main() -> None:
     db_url = os.environ.get("DB_URL")
     if not db_url:
         print("ERROR: DB_URL environment variable is not set.")
-        print("       Add it to your .env:  DB_URL=postgresql://user:pass@localhost:5432/trading_data")
+        print("       Add it to your .env:  DB_URL=postgresql://user:pass@localhost:5432/market_data")
         sys.exit(1)
 
     print(f"Connecting to: {db_url.split('@')[-1]}")
