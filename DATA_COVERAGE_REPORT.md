@@ -1,5 +1,5 @@
 # Algotime — Data Coverage Report
-**Generated:** 27-May-2026 · **Database:** PostgreSQL `market_data`
+**Generated:** 27-May-2026 · **Last updated:** 27-May-2026 02:02 IST · **Database:** PostgreSQL `market_data`
 
 ---
 
@@ -7,12 +7,12 @@
 
 | Metric | Value |
 |--------|-------|
-| Total candles in DB | **4,525,250** |
-| Total symbols in DB | **164** |
+| Total candles in DB | **4,594,012** |
+| Total symbols in DB | **166** |
 | DB history from | 13-Sep-2012 |
-| DB history to | 26-May-2026 (~14 years) |
+| DB history to | 27-May-2026 (~14 years) |
 | Nifty 50 coverage | **50 / 51** symbols (LTIM unavailable in Breeze) |
-| Bank Nifty coverage | **10 / 12** symbols (AUBANK, PNB missing) |
+| Bank Nifty coverage | **12 / 12** symbols (complete) |
 | Intervals available | 1-minute · 5-minute · 30-minute · 1-day |
 
 ---
@@ -70,7 +70,7 @@
 | 41 | SBILIFE ² | ⚠️ Partial | 28-May-2025 | 26-May-2026 | 17,318 | 5m 30m 1d | 247 | 3,071 | 14,000 | — |
 | 42 | SHRIRAMFIN | ✅ Full | 17-Sep-2012 | 22-May-2026 | 34,740 | 1m 5m 30m 1d | 3,375 | 3,071 | 14,294 | 14,000 |
 | 43 | SUNPHARMA | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d | 3,377 | 3,071 | 14,000 | 15,000 |
-| 44 | TATAMOTORS | ⚠️ Partial | 12-Nov-2025 | 22-May-2026 | 18,341 | 1m 5m 30m 1d | 129 | 1,612 | 7,600 | 9,000 |
+| 44 | TATAMOTORS ⁵ | ✅ Since Mar-2018 | 12-Mar-2018 | 26-May-2026 | 30,066 | 1m 5m 30m 1d | 2,027 | 3,367 | 15,672 | 9,000 |
 | 45 | TATASTEEL | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d | 3,377 | 3,071 | 14,000 | 15,000 |
 | 46 | TCS | ✅ Full | 13-Sep-2012 | 26-May-2026 | 39,746 | 1m 5m 30m 1d | 3,389 | 3,227 | 15,130 | 18,000 |
 | 47 | TECHM | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d | 3,377 | 3,071 | 14,000 | 15,000 |
@@ -86,7 +86,7 @@
 2. **HDFCLIFE / SBILIFE** — Listed via IPO. HDFCLIFE (Nov-2017), SBILIFE (May-2025 in DB — deeper backfill possible via older Breeze sessions).
 3. **JIOFIN** — Listed Aug-2023 as a demerger from Reliance Industries. Full history available from listing date.
 4. **LTIM** — LTIMindtree Ltd (NSE: LTIM) — the post-merger entity formed from L&T Infotech + Mindtree (Nov-2022) is **not present in Breeze's symbol master**. Historical data unavailable from this source.
-5. **TATAMOTORS** — Only 6 months of data (Nov-2025 to May-2026). Needs backfill for full history.
+5. **TATAMOTORS** — Backfilled to Mar-2018 (Breeze code: `TATMOT`). 1m data limited to ~400 days (recent); 5m/30m/1d from Mar-2018. Pre-2018 data not available in Breeze's feed for this symbol.
 
 ### Nifty 50 Summary
 
@@ -94,7 +94,8 @@
 |----------|-------|
 | ✅ Full history (13+ years) | 43 |
 | ✅ Since IPO / listing | 3 (HDFCLIFE, JIOFIN, ZOMATO/ETERNAL) |
-| ⚠️ Partial data | 3 (ETERNAL, SBILIFE, TATAMOTORS) |
+| ✅ Since Mar-2018 (Breeze limit) | 1 (TATAMOTORS) |
+| ⚠️ Partial data | 2 (ETERNAL, SBILIFE — 1 year, no 1m) |
 | ❌ Not available in Breeze | 1 (LTIM) |
 | **Total** | **51** |
 
@@ -102,7 +103,7 @@
 
 ## Bank Nifty — Coverage Analysis
 
-**Index composition:** 12 stocks · **10 available in DB** · 2 missing
+**Index composition:** 12 stocks · **12 available in DB** · complete coverage
 
 > Bank Nifty (Nifty Bank Index) is composed of the 12 most liquid and large-cap banking stocks listed on NSE.
 
@@ -110,9 +111,9 @@
 
 | # | Symbol | Company | Status | Data From | Data To | Total Candles | Intervals |
 |---|--------|---------|--------|-----------|---------|---------------|-----------|
-| 1 | AUBANK | AU Small Finance Bank | ❌ Missing | — | — | — | — |
+| 1 | AUBANK | AU Small Finance Bank | ✅ Since Mar-2018 | 12-Mar-2018 | 26-May-2026 | 19,098 | 5m 30m 1d |
 | 2 | AXISBANK | Axis Bank Ltd | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
-| 3 | BANDHANBNK | Bandhan Bank Ltd | ⚠️ 1d only | 28-May-2025 | 26-May-2026 | 247 | 1d only |
+| 3 | BANDHANBNK | Bandhan Bank Ltd | ✅ Since Mar-2018 | 27-Mar-2018 | 26-May-2026 | 19,088 | 5m 30m 1d |
 | 4 | BANKBARODA | Bank of Baroda | ✅ Full | 17-Sep-2012 | 22-May-2026 | 35,743 | 1m 5m 30m 1d |
 | 5 | FEDERALBNK | Federal Bank Ltd | ✅ Full | 17-Sep-2012 | 22-May-2026 | 34,739 | 1m 5m 30m 1d |
 | 6 | HDFCBANK | HDFC Bank Ltd | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
@@ -120,7 +121,7 @@
 | 8 | IDFCFIRSTB | IDFC First Bank Ltd | ✅ Since listing | 06-Nov-2015 | 22-May-2026 | 33,957 | 1m 5m 30m 1d |
 | 9 | INDUSINDBK | IndusInd Bank Ltd | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
 | 10 | KOTAKBANK | Kotak Mahindra Bank | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
-| 11 | PNB | Punjab National Bank | ❌ Missing | — | — | — | — |
+| 11 | PNB | Punjab National Bank | ✅ Since Mar-2018 | 12-Mar-2018 | 26-May-2026 | 19,098 | 5m 30m 1d |
 | 12 | SBIN | State Bank of India | ✅ Full | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
 
 ### Bank Nifty Summary
@@ -128,15 +129,11 @@
 | Category | Count |
 |----------|-------|
 | ✅ Full history | 8 |
-| ✅ Since listing (IDFC merger Nov-2015) | 1 |
-| ⚠️ Partial / daily only | 1 (BANDHANBNK) |
-| ❌ Not in DB | 2 (AUBANK, PNB) |
+| ✅ Since listing (IDFC merger Nov-2015) | 1 (IDFCFIRSTB) |
+| ✅ Since Mar-2018 (Breeze limit) | 3 (AUBANK, PNB, BANDHANBNK) |
 | **Total** | **12** |
 
-**Action required:**
-- **AUBANK** (AU Small Finance Bank) — download needed. Breeze code: `AUBANK` (NSE)
-- **PNB** (Punjab National Bank) — download needed. Breeze code: likely `PNBLIM` or `PNB` (NSE)
-- **BANDHANBNK** — has only 1 year of 1d data. Upgrade to include 5m/30m/1m intraday
+> All 12 Bank Nifty constituents now have data. AUBANK (Breeze: `AUSMA`), PNB (Breeze: `PUNBAN`), and BANDHANBNK (Breeze: `BANBAN`) were downloaded 27-May-2026 with 5m/30m/1d intervals from Mar-2018.
 
 ---
 
@@ -164,7 +161,7 @@ All major tradeable indices with full intraday history:
 
 ---
 
-## Full DB Catalog — All 164 Symbols
+## Full DB Catalog — All 166 Symbols
 
 ### Indices (13)
 | Symbol | Description | From | To | Candles |
@@ -228,7 +225,7 @@ All major tradeable indices with full intraday history:
 | SBILIFE | 28-May-2025 | 26-May-2026 | 17,318 | 5m 30m 1d |
 | SHRIRAMFIN | 17-Sep-2012 | 22-May-2026 | 34,740 | 1m 5m 30m 1d |
 | SUNPHARMA | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
-| TATAMOTORS ⁵ | 12-Nov-2025 | 22-May-2026 | 18,341 | 1m 5m 30m 1d |
+| TATAMOTORS | 12-Mar-2018 | 26-May-2026 | 30,066 | 1m 5m 30m 1d |
 | TATASTEEL | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
 | TCS | 13-Sep-2012 | 26-May-2026 | 39,746 | 1m 5m 30m 1d |
 | TECHM | 14-Sep-2012 | 22-May-2026 | 35,448 | 1m 5m 30m 1d |
@@ -255,7 +252,8 @@ All major tradeable indices with full intraday history:
 | AUROPHARMA | 28-May-2025 | 26-May-2026 | 3,318 | Next50 |
 | BAJAJHFL | 16-Sep-2024 | 22-May-2026 | 32,780 | Financial |
 | BALKRISIND | 28-May-2025 | 26-May-2026 | 247 | Additional |
-| BANDHANBNK | 28-May-2025 | 26-May-2026 | 247 | Bank Nifty |
+| AUBANK | 12-Mar-2018 | 26-May-2026 | 19,098 | Bank Nifty |
+| BANDHANBNK | 27-Mar-2018 | 26-May-2026 | 19,088 | Bank Nifty |
 | BANKBARODA | 17-Sep-2012 | 22-May-2026 | 35,743 | Bank Nifty |
 | BATAINDIA | 28-May-2025 | 26-May-2026 | 247 | Additional |
 | BERGEPAINT | 17-Sep-2012 | 22-May-2026 | 34,742 | Next50 |
@@ -321,6 +319,7 @@ All major tradeable indices with full intraday history:
 | PAGEIND | 28-May-2025 | 26-May-2026 | 3,318 | FMCG |
 | PERSISTENT | 17-Sep-2012 | 22-May-2026 | 34,742 | IT |
 | PFC | 28-May-2025 | 26-May-2026 | 247 | PSU Finance |
+| PNB | 12-Mar-2018 | 26-May-2026 | 19,098 | Bank Nifty |
 | PIDILITIND | 17-Sep-2012 | 22-May-2026 | 34,742 | Chemicals |
 | PIIND | 13-Sep-2012 | 26-May-2026 | 6,616 | Agri (partial) |
 | POLICYBZR | 28-May-2025 | 26-May-2026 | 247 | Insurtech |
@@ -353,12 +352,12 @@ All major tradeable indices with full intraday history:
 
 | Priority | Symbol | Issue | Action |
 |----------|--------|-------|--------|
-| 🔴 High | **TATAMOTORS** | Only 6 months of data (Nifty 50 stock) | Re-download with `--days 3000` |
-| 🔴 High | **AUBANK** | Bank Nifty constituent — not in DB at all | Run: `download_mapped.py --symbols AUBANK` |
-| 🔴 High | **PNB** | Bank Nifty constituent — not in DB at all | Find Breeze code, then download |
-| 🟡 Medium | **BANDHANBNK** | Only 1d data, 1 year — needs intraday | Re-download as nifty50 tier (5m/30m/1m) |
+| ✅ Done | **TATAMOTORS** | ~~Only 6 months~~ → backfilled to Mar-2018 | Completed 27-May-2026 (`TATMOT` Breeze code) |
+| ✅ Done | **AUBANK** | ~~Not in DB~~ → Mar-2018 present, 5m/30m/1d | Completed 27-May-2026 (`AUSMA` Breeze code) |
+| ✅ Done | **PNB** | ~~Not in DB~~ → Mar-2018 present, 5m/30m/1d | Completed 27-May-2026 (`PUNBAN` Breeze code) |
+| ✅ Done | **BANDHANBNK** | ~~1d only~~ → upgraded to 5m/30m/1d | Completed 27-May-2026 (`BANBAN` Breeze code) |
 | 🟡 Medium | **SBILIFE** | Only 1 year, no 1m — Nifty 50 stock | Re-download with deeper history |
-| 🟡 Medium | **ETERNAL** | Only 1 year, no 1m — use ZOMATO pre-Feb-2025 | Run `download_chains.py` during market hours |
+| 🟡 Medium | **ETERNAL** | Only 1 year, no 1m — use ZOMATO pre-Feb-2025 | Acceptable; pre-rename data under ZOMATO ticker |
 | 🟢 Low | **LTIM** | Not in Breeze master file at all | Check alternate data source (NSE data API) |
 | 🟢 Low | **FINNIFTY/SENSEX/MIDCPNIFTY** | Only 1 year of history | Breeze historical limit for these indices |
 
