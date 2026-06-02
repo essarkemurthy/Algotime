@@ -1,5 +1,5 @@
 # Algotime — Data Coverage Report
-**Generated:** 27-May-2026 · **Last updated:** 27-May-2026 02:02 IST · **Database:** PostgreSQL `market_data`
+**Generated:** 27-May-2026 · **Last updated:** 29-May-2026 23:50 IST · **Database:** PostgreSQL `market_data`
 
 ---
 
@@ -7,10 +7,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Total candles in DB | **4,594,012** |
+| Total candles in DB | **4,603,551** |
 | Total symbols in DB | **166** |
 | DB history from | 13-Sep-2012 |
-| DB history to | 27-May-2026 (~14 years) |
+| DB history to | 29-May-2026 (~14 years) |
 | Nifty 50 coverage | **50 / 51** symbols (LTIM unavailable in Breeze) |
 | Bank Nifty coverage | **12 / 12** symbols (complete) |
 | Intervals available | 1-minute · 5-minute · 30-minute · 1-day |
