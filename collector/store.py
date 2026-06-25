@@ -262,6 +262,49 @@ class DataStore:
         )
         return {"atm_strike": row[0], "atm_iv": row[1]} if row else None
 
+    # ── intraday signals (VWAP Reversal / ORB alerts) ─────────────────────────
+
+    def insert_signal(self, row: Dict) -> None:
+        """Log a detected signal. ON CONFLICT DO NOTHING enforces one signal per
+        (trade_date, symbol, strategy, direction) — the dedup guarantee."""
+        self._exec(
+            """INSERT INTO signals
+                   (ts, trade_date, symbol, strategy, direction,
+                    trigger_price, vwap, rsi, vol_ratio, atr, notified)
+               VALUES
+                   (%(ts)s, %(trade_date)s, %(symbol)s, %(strategy)s, %(direction)s,
+                    %(trigger_price)s, %(vwap)s, %(rsi)s, %(vol_ratio)s, %(atr)s,
+                    %(notified)s)
+               ON CONFLICT (trade_date, symbol, strategy, direction) DO NOTHING""",
+            row,
+        )
+
+    def get_signals(self, trade_date: date) -> List[Dict]:
+        rows = self._queryall(
+            """SELECT ts, symbol, strategy, direction, trigger_price, vwap,
+                      rsi, vol_ratio, atr, notified
+               FROM signals WHERE trade_date = %s
+               ORDER BY ts DESC""",
+            (trade_date,),
+        )
+        cols = ["ts", "symbol", "strategy", "direction", "trigger_price", "vwap",
+                "rsi", "vol_ratio", "atr", "notified"]
+        return [dict(zip(cols, r)) for r in rows]
+
+    def get_intraday_bars(self, symbol: str, interval: str,
+                          trade_date: date) -> List[Dict]:
+        """Fetch a day's candles for a symbol+interval, oldest first — used to
+        seed a SymbolSession when the dashboard starts mid-session."""
+        rows = self._queryall(
+            """SELECT ts, open, high, low, close, volume
+               FROM candles
+               WHERE symbol = %s AND "interval" = %s AND ts::date = %s
+               ORDER BY ts ASC""",
+            (symbol, interval, trade_date),
+        )
+        cols = ["ts", "open", "high", "low", "close", "volume"]
+        return [dict(zip(cols, r)) for r in rows]
+
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self) -> None:

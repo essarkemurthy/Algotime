@@ -166,6 +166,29 @@ CREATE TABLE IF NOT EXISTS download_log (
     note           TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dllog_sym_iv ON download_log (symbol, "interval", ts DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Intraday signals — VWAP Reversal + ORB alerts (read-only; never places orders)
+-- strategy: 'VWAP_REV' | 'ORB'  |  direction: 'LONG' | 'SHORT'
+-- The UNIQUE constraint enforces "first valid signal per symbol/strategy/side/day"
+-- (deduplication) at the database layer, mirroring the engine's in-memory guard.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS signals (
+    id             BIGSERIAL     PRIMARY KEY,
+    ts             TIMESTAMPTZ   NOT NULL,
+    trade_date     DATE          NOT NULL,
+    symbol         TEXT          NOT NULL,
+    strategy       TEXT          NOT NULL,
+    direction      TEXT          NOT NULL,
+    trigger_price  NUMERIC(12,2),
+    vwap           NUMERIC(12,2),
+    rsi            NUMERIC(6,2),
+    vol_ratio      NUMERIC(8,3),
+    atr            NUMERIC(12,2),
+    notified       BOOLEAN       NOT NULL DEFAULT FALSE,
+    UNIQUE (trade_date, symbol, strategy, direction)
+);
+CREATE INDEX IF NOT EXISTS idx_signals_date ON signals (trade_date DESC, ts DESC);
 """
 
 
