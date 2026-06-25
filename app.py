@@ -39,6 +39,8 @@ from trade_engine.symbols import SymbolBuilder, nearest_monthly_expiry, nearest_
 from suggestions import SuggestionEngine
 from paper_engine import PaperTrader
 
+from signals import SignalConfig, SignalEngine, BarAggregator
+
 Path("logs").mkdir(exist_ok=True)
 Path("static").mkdir(exist_ok=True)
 
@@ -152,6 +154,58 @@ def _init_db_store() -> None:
         log.warning("DB store unavailable (PostgreSQL not running?): %s", exc)
         _db_store = None
 
+# ── Signal engine (VWAP Reversal + ORB alerts — read-only, never places orders) ─
+_signal_cfg: Optional[SignalConfig]    = None
+_signal_engine: Optional[SignalEngine] = None
+_signal_agg: Optional[BarAggregator]   = None
+
+
+def _signal_broadcast(payload: dict) -> None:
+    """Channel callback handed to the SignalEngine. Invoked from the Breeze SDK
+    tick thread, so it hops the payload onto the asyncio loop for broadcast()."""
+    if _main_loop:
+        asyncio.run_coroutine_threadsafe(broadcast(payload), _main_loop)
+
+
+def _init_signal_engine() -> None:
+    """Build the signal engine from env config. Safe to call once at startup."""
+    global _signal_cfg, _signal_engine, _signal_agg
+    try:
+        _signal_cfg = SignalConfig()
+        _signal_agg = BarAggregator(_signal_cfg.interval_minutes, _signal_cfg.session_start)
+        _signal_engine = SignalEngine(_signal_cfg, store=_db_store,
+                                      broadcast_fn=_signal_broadcast)
+        log.info(
+            "Signal engine ready — interval=%s stretch_atr=%.2f ORB=%dmin vol_mult=%.2f "
+            "notifications=%s dry_run=%s",
+            _signal_cfg.bar_interval, _signal_cfg.stretch_atr, _signal_cfg.orb_minutes,
+            _signal_cfg.vol_mult, _signal_cfg.enabled, _signal_cfg.dry_run,
+        )
+    except Exception as exc:
+        log.warning("Signal engine init failed: %s", exc)
+        _signal_engine = None
+
+
+def _seed_signal_sessions() -> None:
+    """Best-effort: pre-fill today's bars from the candles table so indicators
+    are warm if the dashboard starts mid-session. No-op without a DB / bars."""
+    if not (_signal_engine and _db_store and _signal_cfg):
+        return
+    today = date.today()
+    for w in WATCHLIST:
+        try:
+            bars = _db_store.get_intraday_bars(w["label"], _signal_cfg.bar_interval, today)
+            bars = [
+                {"ts": b["ts"], "open": float(b["open"]), "high": float(b["high"]),
+                 "low": float(b["low"]), "close": float(b["close"]),
+                 "volume": float(b["volume"] or 0)}
+                for b in bars if b["open"] is not None
+            ]
+            if bars:
+                _signal_engine.seed_session(w["label"], bars, today)
+        except Exception as exc:
+            log.debug("Seed skipped for %s: %s", w["label"], exc)
+
 # ── Setup configuration ───────────────────────────────────────────────────────
 _CONFIG_FILE = Path("data/setup.json")
 _setup_config: dict = {
@@ -225,14 +279,28 @@ class _DownloadLogHandler(logging.Handler):
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
 WATCHLIST = [
-    {"stock": "NIFTY",       "exchange": "NSE", "label": "NIFTY"},
-    {"stock": "BANKNIFTY",   "exchange": "NSE", "label": "BANKNIFTY"},
-    {"stock": "SENSEX",      "exchange": "BSE", "label": "SENSEX"},
-    {"stock": "CNXIT",       "exchange": "NSE", "label": "CNXIT"},
-    {"stock": "FINNIFTY",    "exchange": "NSE", "label": "NIFTYFINSERVICE"},
-    {"stock": "INFY",        "exchange": "NSE", "label": "INFY"},
-    {"stock": "ONGC",        "exchange": "NSE", "label": "ONGC"},
-    {"stock": "MAXHEALTH",   "exchange": "NSE", "label": "MAXHEALTH"},
+    # Indices — Breeze uses its own internal codes, not common NSE tickers
+    {"stock": "NIFTY",   "exchange": "NSE", "label": "NIFTY"},           # NIFTY 50
+    {"stock": "CNXBAN",  "exchange": "NSE", "label": "BANKNIFTY"},       # Nifty Bank
+    {"stock": "BSESEN",  "exchange": "BSE", "label": "SENSEX"},          # BSE Sensex
+    {"stock": "CNXIT",   "exchange": "NSE", "label": "CNXIT"},           # Nifty IT
+    {"stock": "NIFFIN",  "exchange": "NSE", "label": "NIFTYFINSERVICE"}, # Nifty Fin Service
+    {"stock": "NIFSEL",  "exchange": "NSE", "label": "MIDCPNIFTY"},      # Nifty Midcap Select
+    # Equities — Breeze stock codes differ from NSE/BSE tickers in several cases
+    {"stock": "RELIND",  "exchange": "NSE", "label": "RELIANCE"},
+    {"stock": "HDFBAN",  "exchange": "NSE", "label": "HDFCBANK"},
+    {"stock": "ICIBAN",  "exchange": "NSE", "label": "ICICIBANK"},
+    {"stock": "TCS",     "exchange": "NSE", "label": "TCS"},
+    {"stock": "INFTEC",  "exchange": "NSE", "label": "INFY"},
+    {"stock": "TATMOT",  "exchange": "NSE", "label": "TATAMOTORS"},
+    {"stock": "STABAN",  "exchange": "NSE", "label": "SBIN"},
+    {"stock": "AXIBAN",  "exchange": "NSE", "label": "AXISBANK"},
+    {"stock": "BAJFI",   "exchange": "NSE", "label": "BAJFINANCE"},
+    {"stock": "ITC",     "exchange": "NSE", "label": "ITC"},
+    {"stock": "ONGC",    "exchange": "NSE", "label": "ONGC"},
+    {"stock": "MAXHEA",  "exchange": "NSE", "label": "MAXHEALTH"},
+    {"stock": "NIFNEX",  "exchange": "NSE", "label": "NIFTYNEXT50"},  # Nifty Next 50
+    {"stock": "BSE100",  "exchange": "BSE", "label": "BSE100"},       # BSE 100
 ]
 
 _ws_clients: Set[WebSocket] = set()
@@ -328,6 +396,72 @@ def _compute_pnl() -> dict:
 
 # ── Breeze WebSocket feed ─────────────────────────────────────────────────────
 
+# Breeze sends stock_code="" for indices; stock_name is always populated.
+# This map covers index names Breeze uses in the stock_name field.
+_BREEZE_NAME_TO_LABEL: dict = {
+    "NIFTY 50":           "NIFTY",
+    "NIFTY BANK":         "BANKNIFTY",
+    "BANK NIFTY":         "BANKNIFTY",
+    "NIFTY IT":           "CNXIT",
+    "NIFTY FIN SERVICE":  "NIFTYFINSERVICE",
+    "NIFTY FIN SVC":      "NIFTYFINSERVICE",
+    "NIFTY FINANCIAL":    "NIFTYFINSERVICE",
+    "FINNIFTY":           "NIFTYFINSERVICE",
+    "NIFTY MIDCAP SELECT":"MIDCPNIFTY",
+    "MIDCAP NIFTY":       "MIDCPNIFTY",
+    "NIFTY MIDCAP 50":    "MIDCPNIFTY",
+    "NIFTY MID SELECT":   "MIDCPNIFTY",
+    "NIFTY MIDCAP SELECT":"MIDCPNIFTY",
+    "MIDCPNIFTY":         "MIDCPNIFTY",
+    "SENSEX":             "SENSEX",
+    "S&P BSE SENSEX":     "SENSEX",
+    "NIFTY NEXT 50":      "NIFTYNEXT50",
+    "CNX NIFTY JUNIOR":   "NIFTYNEXT50",
+    "BSE100 INDEX":       "BSE100",
+}
+
+
+def _auto_learn_token(token: str, tick: dict) -> Optional[str]:
+    """Return the cache_key for an unmapped token, or None if unknown.
+    Breeze sends stock_code="" for indices; fall back to stock_name matching."""
+    tick_stock    = tick.get("stock_code", "")
+    tick_exchange = tick.get("exchange_code", "")
+    tick_name     = tick.get("stock_name", "")
+
+    # 1. stock_code exact match (works for equities when Breeze populates it)
+    if tick_stock:
+        for w in WATCHLIST:
+            if w["stock"] == tick_stock and w["exchange"] == tick_exchange:
+                return w["label"]
+        for w in WATCHLIST:
+            if w["stock"] == tick_stock:
+                return w["label"]
+
+    # 2. stock_name match against watchlist stock/label fields (covers equities
+    #    when stock_code is empty but stock_name equals the subscription code)
+    if tick_name:
+        for w in WATCHLIST:
+            if w["stock"] == tick_name or w["label"] == tick_name:
+                return w["label"]
+        # 3. Static index name map (Breeze uses long names for indices)
+        label = _BREEZE_NAME_TO_LABEL.get(tick_name)
+        if label:
+            return label
+
+    # 4. Token suffix: for indices Breeze uses "4.1!NIFTY 50" style tokens;
+    #    the suffix after "!" matches stock_name for indices.
+    suffix = token.split("!", 1)[-1] if "!" in token else ""
+    if suffix and not suffix.isdigit():
+        for w in WATCHLIST:
+            if w["stock"] == suffix or w["label"] == suffix:
+                return w["label"]
+        label = _BREEZE_NAME_TO_LABEL.get(suffix)
+        if label:
+            return label
+
+    return None
+
+
 def _on_tick(tick: dict) -> None:
     """Synchronous callback invoked by the Breeze SDK on every market tick.
     Runs in the SDK's socketio background thread — dict writes are GIL-safe."""
@@ -339,27 +473,14 @@ def _on_tick(tick: dict) -> None:
     cache_key = _token_to_symbol.get(token)
 
     if cache_key is None:
-        # Token not pre-mapped — try to learn it from tick's stock_code field
-        tick_stock    = tick.get("stock_code", "")
-        tick_exchange = tick.get("exchange_code", "")
-        if tick_stock:
-            # First try exact match (stock + exchange), then stock-only
-            for w in WATCHLIST:
-                if w["stock"] == tick_stock and w["exchange"] == tick_exchange:
-                    cache_key = w["label"]
-                    break
-            if cache_key is None:
-                for w in WATCHLIST:
-                    if w["stock"] == tick_stock:
-                        cache_key = w["label"]
-                        break
-            if cache_key is not None:
-                _token_to_symbol[token] = cache_key
-                log.info("Auto-learned token mapping: %s → %s (stock_code=%s exchange=%s)",
-                         token, cache_key, tick_stock, tick_exchange)
-        if cache_key is None:
-            log.info("Unknown tick: token=%s stock_code=%s exchange=%s ltp=%s — full tick: %s",
-                     token, tick_stock, tick_exchange, ltp, tick)
+        cache_key = _auto_learn_token(token, tick)
+        if cache_key is not None:
+            _token_to_symbol[token] = cache_key
+            log.info("Auto-learned token: %s → %s (stock_code=%r stock_name=%r)",
+                     token, cache_key, tick.get("stock_code", ""), tick.get("stock_name", ""))
+        else:
+            log.info("Unknown tick: token=%s stock_name=%r ltp=%s",
+                     token, tick.get("stock_name", ""), ltp)
             return
     ltp_f     = float(ltp)
     _ltp_cache[cache_key] = ltp_f
@@ -375,6 +496,21 @@ def _on_tick(tick: dict) -> None:
                 "ltp":    ltp_f,
                 "volume": int(tick.get("ltq", 0) or 0),
             })
+
+    # ── Feed the signal engine: aggregate to interval bars, detect on bar close ─
+    # Read-only alerting path — runs in this SDK thread; never touches order APIs.
+    if _signal_engine is not None and _signal_agg is not None:
+        cum_vol = tick.get("ttq", tick.get("total_traded_volume"))
+        try:
+            cum_vol = float(cum_vol) if cum_vol is not None else None
+        except (TypeError, ValueError):
+            cum_vol = None
+        try:
+            bar = _signal_agg.update(cache_key, now, ltp_f, cum_vol)
+            if bar is not None:
+                _signal_engine.on_bar_close(cache_key, bar)
+        except Exception as exc:
+            log.error("Signal engine error for %s: %s", cache_key, exc)
 
     # ── Build tick entry for the live tick pane ───────────────────────────────
     entry = {
@@ -673,6 +809,33 @@ async def _chain_snapshot_loop() -> None:
         await asyncio.sleep(_CHAIN_SNAP_INTERVAL_SEC)
 
 
+# ── Auto-connect broker on startup ────────────────────────────────────────────
+
+async def _auto_connect_broker() -> None:
+    """Connect to Breeze on startup using saved credentials. Runs as a background task."""
+    global _session, _suggestion_engine
+    broker = _setup_config.get("broker", {})
+    if not (broker.get("api_key") and broker.get("session_token")):
+        return
+    await asyncio.sleep(1)   # let the server finish binding before doing network I/O
+    try:
+        cfg = EngineConfig(
+            api_key=broker["api_key"],
+            api_secret=broker.get("api_secret", ""),
+            session_token=broker["session_token"],
+        )
+        _session = BreezeSession(cfg)
+        await asyncio.to_thread(_session.connect)
+        await asyncio.to_thread(_setup_ws_feeds)
+        await asyncio.to_thread(_build_symbol_index)
+        _suggestion_engine = SuggestionEngine(_ltp_cache)
+        await broadcast({"type": "status", "connected": True})
+        log.info("Auto-connected to Breeze on startup.")
+    except Exception as exc:
+        _session = None
+        log.warning("Auto-connect to Breeze failed (token may be stale): %s", exc)
+
+
 # ── App lifespan ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -683,13 +846,23 @@ async def lifespan(app: FastAPI):
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
     _load_symbol_index()
     _load_setup_config()
-    # Restore saved DB URL to env so API endpoints can use it, but do NOT
-    # connect to the database automatically — user must click "Test connection".
+    # Restore saved DB URL to env so API endpoints can use it
     saved_db = _setup_config.get("db", {})
     if saved_db.get("mode") == "postgres" and saved_db.get("url"):
         os.environ.setdefault("DB_URL", saved_db["url"])
+    # Initialise the DB store at boot so tick persistence + signal logging work
+    # without waiting for the setup endpoint to be hit (no-op if DB unavailable).
+    if os.getenv("DB_URL"):
+        _init_db_store()
+    # Build the read-only signal engine (VWAP Reversal + ORB alerts) and warm it
+    # from today's stored bars in a background thread.
+    _init_signal_engine()
+    threading.Thread(target=_seed_signal_sessions, daemon=True, name="signal-seed").start()
     # Start background tick writer thread (no-op if DB unavailable)
     threading.Thread(target=_tick_writer_thread, daemon=True, name="tick-writer").start()
+    # Auto-connect broker if setup is complete and credentials are saved
+    if _setup_config.get("setup_complete"):
+        asyncio.create_task(_auto_connect_broker())
     log.info("Dashboard running → http://localhost:8000")
     yield
     if _broadcast_task:
@@ -901,6 +1074,8 @@ async def setup_save_db(body: dict):
     if mode == "postgres" and url:
         os.environ["DB_URL"] = url
         _init_db_store()
+        if _signal_engine is not None:
+            _signal_engine.store = _db_store   # log signals once DB is configured
         _setup_config["setup_complete"] = True
     _save_setup_config()
     return {"ok": True}
@@ -929,15 +1104,49 @@ async def setup_test_broker(body: dict):
 
 @app.post("/api/setup/broker/save")
 async def setup_save_broker(body: dict):
-    _setup_config["broker"] = {
+    global _session, _suggestion_engine
+    broker = {
         "type":          body.get("type",          "icici"),
         "api_key":       body.get("api_key",       ""),
         "api_secret":    body.get("api_secret",    ""),
         "session_token": body.get("session_token", ""),
     }
+    _setup_config["broker"] = broker
     _setup_config["setup_complete"] = True
     _save_setup_config()
-    return {"ok": True}
+
+    # Tear down any existing session before reconnecting
+    if _session:
+        try:
+            await asyncio.to_thread(_session.api.ws_disconnect)
+        except Exception:
+            pass
+        try:
+            await asyncio.to_thread(_session.disconnect)
+        except Exception:
+            pass
+        _session = None
+        _ws_subscriptions.clear()
+        _token_to_symbol.clear()
+
+    # Connect live session with the freshly saved credentials
+    try:
+        cfg = EngineConfig(
+            api_key=broker["api_key"],
+            api_secret=broker.get("api_secret", ""),
+            session_token=broker["session_token"],
+        )
+        _session = BreezeSession(cfg)
+        await asyncio.to_thread(_session.connect)
+        await asyncio.to_thread(_setup_ws_feeds)
+        await asyncio.to_thread(_build_symbol_index)
+        _suggestion_engine = SuggestionEngine(_ltp_cache)
+        await broadcast({"type": "status", "connected": True})
+        return {"ok": True, "connected": True}
+    except Exception as exc:
+        _session = None
+        log.warning("Broker connect failed after save: %s", exc)
+        return {"ok": True, "connected": False, "error": str(exc)}
 
 
 @app.post("/api/setup/reset")
@@ -1960,6 +2169,52 @@ async def get_quota():
         "subscribed_symbols": sorted(_ws_subscriptions),
         "tick_watch":         _tick_watch,
     }
+
+
+# ── Signals (VWAP Reversal + ORB alerts — read-only) ─────────────────────────
+
+@app.get("/api/signals")
+async def get_signals():
+    """Today's detected signals + the current notification (kill-switch) state."""
+    if _signal_engine is None:
+        return {"enabled": False, "dry_run": False, "config": {}, "signals": []}
+    rows = list(_signal_engine.recent)
+    if not rows and _db_store is not None:
+        try:
+            rows = await asyncio.to_thread(_db_store.get_signals, date.today())
+            for r in rows:                         # make DB rows JSON-friendly
+                r["ts"] = r["ts"].strftime("%Y-%m-%d %H:%M:%S") if r.get("ts") else None
+                for k in ("trigger_price", "vwap", "rsi", "vol_ratio", "atr"):
+                    if r.get(k) is not None:
+                        r[k] = float(r[k])
+        except Exception as exc:
+            log.warning("get_signals DB read failed: %s", exc)
+    cfg = _signal_cfg
+    return {
+        "enabled":  bool(cfg and cfg.enabled),
+        "dry_run":  bool(cfg and cfg.dry_run),
+        "config": {
+            "bar_interval": cfg.bar_interval, "stretch_atr": cfg.stretch_atr,
+            "orb_minutes": cfg.orb_minutes, "vol_mult": cfg.vol_mult,
+            "bull_rsi": [cfg.bull_rsi_low, cfg.bull_rsi_high],
+            "bear_rsi": [cfg.bear_rsi_low, cfg.bear_rsi_high],
+        } if cfg else {},
+        "signals":  rows,
+    }
+
+
+class SignalKillReq(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/signals/killswitch")
+async def set_signal_killswitch(req: SignalKillReq):
+    """Toggle signal notifications at runtime (kill-switch) without a restart.
+    Detections are still logged to the signals table when disabled."""
+    if _signal_engine is None:
+        raise HTTPException(400, "Signal engine not initialised.")
+    _signal_engine.set_enabled(req.enabled)
+    return {"enabled": req.enabled}
 
 
 # ── DB-backed OHLC (no Breeze session needed) ────────────────────────────────
