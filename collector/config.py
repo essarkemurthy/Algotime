@@ -60,13 +60,21 @@ class CollectorConfig:
     ])
     futures_num_expiries: int = 3   # near-month + next-month + far-month
 
-    # ── NSE ticker → Breeze internal code (F&O subscribe + historical) ─────────
-    # Breeze's NFO feed/historical use internal codes, not NSE tickers; symbols
-    # absent here use their ticker unchanged (e.g. NIFTY, TCS).
-    futures_code_map: Dict[str, str] = field(default_factory=lambda: {
+    # ── NSE ticker → Breeze internal code (cash + F&O feeds/historical) ────────
+    # Breeze's WebSocket feeds and historical API use internal codes, not NSE
+    # tickers. Symbols absent here use their ticker unchanged (e.g. NIFTY, TCS,
+    # MARUTI, WIPRO, NTPC, ONGC). Verified live against get_stock_token_value.
+    breeze_code_map: Dict[str, str] = field(default_factory=lambda: {
+        # indices
         "BANKNIFTY": "CNXBAN", "FINNIFTY": "NIFFIN", "MIDCPNIFTY": "NIFSEL",
+        # equities
         "RELIANCE": "RELIND", "HDFCBANK": "HDFBAN", "INFY": "INFTEC",
-        "ICICIBANK": "ICIBAN",
+        "ICICIBANK": "ICIBAN", "HINDUNILVR": "HINLEV", "SBIN": "STABAN",
+        "BHARTIARTL": "BHAAIR", "KOTAKBANK": "KOTMAH", "AXISBANK": "AXIBAN",
+        "LT": "LARTOU", "ASIANPAINT": "ASIPAI", "SUNPHARMA": "SUNPHA",
+        "ULTRACEMCO": "ULTCEM", "NESTLEIND": "NESIND", "POWERGRID": "POWGRI",
+        "COALINDIA": "COALIN", "TATAMOTORS": "TATMOT", "TATASTEEL": "TATSTE",
+        "JSWSTEEL": "JSWSTE", "ADANIENT": "ADAENT",
     })
 
     # ── Per-symbol option chain config ────────────────────────────────────────
@@ -120,8 +128,8 @@ class CollectorConfig:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def breeze_code(self, symbol: str) -> str:
-        """NSE ticker → Breeze internal code for F&O feeds (identity if unmapped)."""
-        return self.futures_code_map.get(symbol, symbol)
+        """NSE ticker → Breeze internal code for live feeds (identity if unmapped)."""
+        return self.breeze_code_map.get(symbol, symbol)
 
     def strike_step(self, symbol: str) -> int:
         if symbol in self.symbol_cfg:

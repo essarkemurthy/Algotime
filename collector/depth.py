@@ -37,7 +37,7 @@ class DepthSnapshotCollector:
 
     def _snapshot(self, symbol: str, ts: datetime) -> None:
         resp = self._api.get_quotes(
-            stock_code=symbol,
+            stock_code=self._cfg.breeze_code(symbol),
             exchange_code=self._cfg.nse_exchange,
             expiry_date="",
             product_type="cash",

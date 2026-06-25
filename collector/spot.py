@@ -29,6 +29,7 @@ class SpotTickCollector:
         self._store   = store
         self._q: queue.Queue = queue.Queue(maxsize=100_000)
         self._candles = CandleBuilder(interval="1m")
+        self._code_to_sym: dict = {}   # Breeze code → NSE ticker
         self._running = False
         self._thread: threading.Thread | None = None
 
@@ -39,15 +40,17 @@ class SpotTickCollector:
         self._running = True
         for symbol in self._cfg.all_spot_symbols:
             exchange = self._cfg.nse_exchange
+            bcode = self._cfg.breeze_code(symbol)
+            self._code_to_sym[bcode] = symbol
             try:
                 self._api.subscribe_feeds(
-                    stock_code=symbol,
+                    stock_code=bcode,
                     exchange_code=exchange,
                     product_type="cash",
                     get_exchange_quotes=True,
                     get_market_depth=False,
                 )
-                log.info("Subscribed to %s spot feed.", symbol)
+                log.info("Subscribed to %s spot feed (code %s).", symbol, bcode)
             except Exception as exc:
                 log.error("Failed to subscribe %s: %s", symbol, exc)
 
@@ -61,7 +64,7 @@ class SpotTickCollector:
         for symbol in self._cfg.all_spot_symbols:
             try:
                 self._api.unsubscribe_feeds(
-                    stock_code=symbol,
+                    stock_code=self._cfg.breeze_code(symbol),
                     exchange_code=self._cfg.nse_exchange,
                     product_type="cash",
                 )
@@ -109,7 +112,10 @@ class SpotTickCollector:
         tick_rows: List[dict] = []
 
         for raw in batch:
-            symbol = raw.get("stock_code", "")
+            # Ticks carry the Breeze code (e.g. RELIND); map back to the NSE
+            # ticker we store under. Fall back to the raw value if already one.
+            raw_code = raw.get("stock_code", "")
+            symbol = self._code_to_sym.get(raw_code, raw_code)
             if symbol not in spot_symbols:
                 continue
             # skip futures/options ticks that arrive on the shared callback

@@ -102,7 +102,7 @@ class ChainSnapshotCollector:
 
     def _get_spot(self, symbol: str, exchange: str) -> float:
         resp = self._api.get_quotes(
-            stock_code=symbol,
+            stock_code=self._cfg.breeze_code(symbol),
             exchange_code=exchange,
             expiry_date="",
             product_type="cash",
@@ -115,7 +115,7 @@ class ChainSnapshotCollector:
 
     def _fetch_chain(self, symbol: str, expiry: date, exchange: str) -> pd.DataFrame:
         resp = self._api.get_option_chain_quotes(
-            stock_code=symbol,
+            stock_code=self._cfg.breeze_code(symbol),
             exchange_code=exchange,
             product_type="options",
             expiry_date=SymbolBuilder.breeze_dt(expiry),
@@ -130,8 +130,9 @@ class ChainSnapshotCollector:
         df = pd.DataFrame(success)
         df["strike_price"]     = df["strike_price"].astype(float).astype(int)
         df["ltp"]              = pd.to_numeric(df["ltp"],              errors="coerce")
-        df["open_interest"]    = pd.to_numeric(df["open_interest"],    errors="coerce")
-        df["volume"]           = pd.to_numeric(df["volume"],           errors="coerce")
+        df["open_interest"]    = pd.to_numeric(df.get("open_interest", 0), errors="coerce")
+        # Breeze returns traded volume as 'total_quantity_traded' (no 'volume' key).
+        df["volume"]           = pd.to_numeric(df.get("total_quantity_traded", 0), errors="coerce")
         df["best_bid_price"]   = pd.to_numeric(df.get("best_bid_price",   0), errors="coerce")
         df["best_offer_price"] = pd.to_numeric(df.get("best_offer_price", 0), errors="coerce")
         df["right"]            = df["right"].str.lower().str.strip()
