@@ -1495,6 +1495,51 @@ async def get_ltp():
     return _ltp_cache
 
 
+# Aliases: UI symbol token → DB symbol where they differ.
+_SEED_ALIAS = {"VIX": "INDIAVIX"}
+
+
+@app.get("/api/quotes/seed")
+async def get_quote_seed(symbols: str = ""):
+    """Seed last-known price + previous-day close for the given UI symbols.
+
+    Prefers the live LTP cache; falls back to the freshest stored candle so the
+    ticker strip + watchlist populate even while the broker is disconnected.
+    `symbols` is a comma-separated list of UI tokens (e.g. NIFTY,VIX,RELIANCE).
+    """
+    tokens = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not tokens:
+        return {}
+
+    db_seed: Dict[str, dict] = {}
+    if _db_store is not None:
+        db_symbols = list({_SEED_ALIAS.get(t, t) for t in tokens})
+        try:
+            db_seed = await asyncio.to_thread(_db_store.get_quote_seed, db_symbols)
+        except Exception as exc:
+            log.warning("quote seed DB read failed: %s", exc)
+
+    out: Dict[str, dict] = {}
+    for tok in tokens:
+        db_sym = _SEED_ALIAS.get(tok, tok)
+        row = db_seed.get(db_sym)
+        live = _ltp_cache.get(tok, _ltp_cache.get(db_sym))
+        last = live if live is not None else (row["last"] if row else None)
+        if last is None:
+            continue
+        prev_close = row["prev_close"] if row else None
+        change_pct = None
+        if prev_close:
+            change_pct = round((last - prev_close) / prev_close * 100, 2)
+        out[tok] = {
+            "ltp":        round(float(last), 2),
+            "prev_close": prev_close,
+            "change_pct": change_pct,
+            "source":     "live" if live is not None else ("db" if row else "none"),
+        }
+    return out
+
+
 @app.get("/api/chain")
 async def get_chain(stock: str = "NIFTY", expiry_type: str = "weekly"):
     _require_session()

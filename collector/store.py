@@ -291,6 +291,57 @@ class DataStore:
                 "rsi", "vol_ratio", "atr", "notified"]
         return [dict(zip(cols, r)) for r in rows]
 
+    def get_quote_seed(self, symbols: List[str]) -> Dict[str, Dict]:
+        """Last-known price + previous-day close per symbol, for seeding the UI
+        when no live broker feed is available.
+
+        last_price = close of the freshest candle (any interval).
+        prev_close = the daily close of the prior trading day → used for %-change.
+        Returns {symbol: {"last": float, "prev_close": float|None}} for symbols
+        that have stored candles; symbols with no data are omitted.
+        """
+        out: Dict[str, Dict] = {}
+        for sym in symbols:
+            last = self._queryone(
+                "SELECT close FROM candles WHERE symbol=%s ORDER BY ts DESC LIMIT 1",
+                (sym,),
+            )
+            if not last or last[0] is None:
+                continue
+            daily = self._queryall(
+                """SELECT close FROM candles
+                   WHERE symbol=%s AND "interval"='1d'
+                   ORDER BY ts DESC LIMIT 2""",
+                (sym,),
+            )
+            prev_close = None
+            if len(daily) >= 2 and daily[1][0] is not None:
+                prev_close = float(daily[1][0])
+            elif daily and daily[0][0] is not None:
+                prev_close = float(daily[0][0])
+            out[sym] = {"last": float(last[0]), "prev_close": prev_close}
+        return out
+
+    def insert_options_candles(self, rows: List[Dict]) -> None:
+        if not rows:
+            return
+        self._execmany(
+            """INSERT INTO options_candles
+                   (ts, symbol, expiry, strike, "right", "interval",
+                    open, high, low, close, volume, oi)
+               VALUES
+                   (%(ts)s, %(symbol)s, %(expiry)s, %(strike)s, %(right)s, %(interval)s,
+                    %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(oi)s)
+               ON CONFLICT (symbol, expiry, strike, "right", "interval", ts) DO UPDATE
+               SET open   = EXCLUDED.open,
+                   high   = GREATEST(options_candles.high, EXCLUDED.high),
+                   low    = LEAST(options_candles.low,     EXCLUDED.low),
+                   close  = EXCLUDED.close,
+                   volume = EXCLUDED.volume,
+                   oi     = EXCLUDED.oi""",
+            rows,
+        )
+
     def get_intraday_bars(self, symbol: str, interval: str,
                           trade_date: date) -> List[Dict]:
         """Fetch a day's candles for a symbol+interval, oldest first — used to

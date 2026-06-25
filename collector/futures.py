@@ -30,6 +30,7 @@ class FuturesCollector:
         self._q: queue.Queue = queue.Queue(maxsize=100_000)
         self._candles: Dict[Tuple, CandleBuilder] = {}
         self._subscriptions: List[Tuple[str, date]] = []  # (symbol, expiry)
+        self._code_to_sym: Dict[str, str] = {}            # Breeze code → NSE ticker
         self._running  = False
         self._thread: threading.Thread | None = None
 
@@ -40,18 +41,20 @@ class FuturesCollector:
         expiries_map = self._build_expiry_map()
 
         for symbol, expiry in expiries_map:
+            bcode = self._cfg.breeze_code(symbol)
+            self._code_to_sym[bcode] = symbol
             self._subscriptions.append((symbol, expiry))
             self._candles[(symbol, expiry)] = CandleBuilder(interval="1m")
             try:
                 self._api.subscribe_feeds(
-                    stock_code=symbol,
+                    stock_code=bcode,
                     exchange_code=self._cfg.nfo_exchange,
                     product_type="futures",
                     expiry_date=SymbolBuilder.breeze_dt(expiry),
                     get_exchange_quotes=True,
                     get_market_depth=False,
                 )
-                log.info("Subscribed to %s futures %s.", symbol, expiry)
+                log.info("Subscribed to %s futures %s (code %s).", symbol, expiry, bcode)
             except Exception as exc:
                 log.error("Failed to subscribe %s futures %s: %s", symbol, expiry, exc)
 
@@ -65,7 +68,7 @@ class FuturesCollector:
         for symbol, expiry in self._subscriptions:
             try:
                 self._api.unsubscribe_feeds(
-                    stock_code=symbol,
+                    stock_code=self._cfg.breeze_code(symbol),
                     exchange_code=self._cfg.nfo_exchange,
                     product_type="futures",
                     expiry_date=SymbolBuilder.breeze_dt(expiry),
@@ -116,7 +119,10 @@ class FuturesCollector:
         tick_rows: List[dict] = []
 
         for raw in batch:
-            symbol = raw.get("stock_code", "")
+            # Ticks carry the Breeze code (e.g. RELIND); map it back to the NSE
+            # ticker we store under. Fall back to the raw value if it already is one.
+            raw_code = raw.get("stock_code", "")
+            symbol = self._code_to_sym.get(raw_code, raw_code)
             if symbol not in valid_symbols:
                 continue
 

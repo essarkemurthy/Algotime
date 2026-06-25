@@ -46,20 +46,25 @@ class SymbolBuilder:
         return datetime(d.year, d.month, d.day, 6).isoformat(timespec="milliseconds") + "Z"
 
 
-def _last_thursday(year: int, month: int) -> date:
-    """Last Thursday of a given month (NSE monthly expiry rule)."""
+# NSE moved index F&O expiry from Thursday to Tuesday in 2025 (weekday 1).
+# Verify against the Breeze security master if NSE revises this again.
+_EXPIRY_DOW = 1   # Tuesday
+
+
+def _last_expiry_dow(year: int, month: int) -> date:
+    """Last expiry-weekday of a given month (NSE monthly expiry rule)."""
     if month == 12:
         first_next = date(year + 1, 1, 1)
     else:
         first_next = date(year, month + 1, 1)
     last_day  = first_next - timedelta(days=1)
-    days_back = (last_day.weekday() - 3) % 7   # Thursday = weekday 3
+    days_back = (last_day.weekday() - _EXPIRY_DOW) % 7
     return last_day - timedelta(days=days_back)
 
 
 def nearest_weekly_expiry(today: Optional[date] = None) -> date:
     today = today or date.today()
-    days  = (3 - today.weekday()) % 7
+    days  = (_EXPIRY_DOW - today.weekday()) % 7
     if days == 0 and datetime.now().time() > time_t(15, 30):
         days = 7
     return today + timedelta(days=days)
@@ -67,12 +72,12 @@ def nearest_weekly_expiry(today: Optional[date] = None) -> date:
 
 def nearest_monthly_expiry(today: Optional[date] = None) -> date:
     today    = today or date.today()
-    this_exp = _last_thursday(today.year, today.month)
+    this_exp = _last_expiry_dow(today.year, today.month)
     if this_exp > today:
         return this_exp
     m = (today.month % 12) + 1
     y = today.year + (1 if today.month == 12 else 0)
-    return _last_thursday(y, m)
+    return _last_expiry_dow(y, m)
 
 
 def weekly_expiries(n: int = 2, today: Optional[date] = None) -> list:
@@ -87,7 +92,7 @@ def monthly_expiries(n: int = 2, today: Optional[date] = None) -> list:
     result: list = []
     y, m = today.year, today.month
     while len(result) < n:
-        exp = _last_thursday(y, m)
+        exp = _last_expiry_dow(y, m)
         if exp >= today:
             result.append(exp)
         m += 1

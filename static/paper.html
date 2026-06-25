@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Techultime / Paper Trading</title>
+<title>Paper Trading · Algotime</title>
 <link rel="stylesheet" href="/static/colors_and_type.css" />
 <style>
   /* ============================================================
@@ -942,6 +942,12 @@
         <span class="live-tag" style="display:none">LIVE</span></div>
       <div class="val" id="idx-banknifty">— <span class="chg">—</span></div>
     </div>
+    <div class="index-tile no-live" id="idx-tile-midcpnifty">
+      <div class="name"><span class="left">Midcap Nifty <span class="seg-tag">NSE</span></span>
+        <span class="nolive-badge" title="Not connected"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>No live</span>
+        <span class="live-tag" style="display:none">LIVE</span></div>
+      <div class="val" id="idx-midcpnifty">— <span class="chg">—</span></div>
+    </div>
     <div class="index-tile no-live" id="idx-tile-niftyit">
       <div class="name"><span class="left">Nifty IT <span class="seg-tag">SEC</span></span>
         <span class="nolive-badge" title="Not connected"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>No live</span>
@@ -955,7 +961,9 @@
       <div class="val" id="idx-finsvc">— <span class="chg">—</span></div>
     </div>
     <div class="index-tile no-live" id="idx-tile-niftynext50">
-      <div class="name"><span class="left">Nifty Next 50 <span class="seg-tag">NSE</span></span><span class="nolive-badge" title="No live"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>No live</span></div>
+      <div class="name"><span class="left">Nifty Next 50 <span class="seg-tag">NSE</span></span>
+        <span class="nolive-badge" title="Not connected"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>No live</span>
+        <span class="live-tag" style="display:none">LIVE</span></div>
       <div class="val" id="idx-niftynext50">— <span class="chg">—</span></div>
     </div>
     <div class="index-tile no-live" id="idx-tile-midcap100">
@@ -971,7 +979,9 @@
       <div class="val" id="idx-nifty500">— <span class="chg">—</span></div>
     </div>
     <div class="index-tile no-live" id="idx-tile-bse100">
-      <div class="name"><span class="left">BSE 100 <span class="seg-tag">BSE</span></span><span class="nolive-badge" title="No live"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>No live</span></div>
+      <div class="name"><span class="left">BSE 100 <span class="seg-tag">BSE</span></span>
+        <span class="nolive-badge" title="Not connected"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>No live</span>
+        <span class="live-tag" style="display:none">LIVE</span></div>
       <div class="val" id="idx-bse100">— <span class="chg">—</span></div>
     </div>
   </section>
@@ -1020,7 +1030,7 @@
         <h2>Intraday · stocks &amp; indices</h2>
       </div>
       <div class="meta">
-        <b>5</b> instruments under watch · <b>5</b> strategies running · auto square-off at <b>15:15 IST</b>
+        <b>12</b> instruments under watch · <b>5</b> strategies running · auto square-off at <b>15:15 IST</b>
       </div>
     </div>
 
@@ -1072,6 +1082,48 @@
             <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
             <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
             <button class="row-del" aria-label="Remove HDFCBANK" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="ICICIBANK">
+            <span class="sym"><span class="ticker">ICIBAN</span><span class="meta"><span class="tag-eq">EQ</span> NSE · ICICI Bank Ltd · Banks</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove ICICIBANK" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="INFY">
+            <span class="sym"><span class="ticker">INFTEC</span><span class="meta"><span class="tag-eq">EQ</span> NSE · Infosys Ltd · IT</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove INFY" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="TATAMOTORS">
+            <span class="sym"><span class="ticker">TATMOT</span><span class="meta"><span class="tag-eq">EQ</span> NSE · Tata Motors Ltd · Auto</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove TATAMOTORS" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="SBIN">
+            <span class="sym"><span class="ticker">STABAN</span><span class="meta"><span class="tag-eq">EQ</span> NSE · State Bank of India · Banks</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove SBIN" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="AXISBANK">
+            <span class="sym"><span class="ticker">AXIBAN</span><span class="meta"><span class="tag-eq">EQ</span> NSE · Axis Bank Ltd · Banks</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove AXISBANK" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="BAJFINANCE">
+            <span class="sym"><span class="ticker">BAJFIN</span><span class="meta"><span class="tag-eq">EQ</span> NSE · Bajaj Finance Ltd · NBFC</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove BAJFINANCE" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="watch-row" data-symbol="ITC">
+            <span class="sym"><span class="ticker">ITCLTD</span><span class="meta"><span class="tag-eq">EQ</span> NSE · ITC Ltd · FMCG</span></span>
+            <span class="chg">—</span><span class="ltp">—</span><span class="prev">—</span>
+            <span class="signal-cell"><span class="signal flat"><span class="blip"></span>No signal</span></span>
+            <button class="row-del" aria-label="Remove ITC" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
           </div>
         </div>
         <div class="card-foot">
@@ -1188,7 +1240,7 @@
         <div class="eyebrow">Section two</div>
         <h2>Options · index &amp; weekly</h2>
       </div>
-      <div class="meta"><b>5</b> contracts under watch · <b>5</b> strategies running · expiry <b>22 May 2026</b></div>
+      <div class="meta"><b>5</b> contracts under watch · <b>9</b> strategies running · next expiry <b>Mon–Thu weekly</b></div>
     </div>
 
     <div class="row">
@@ -1219,7 +1271,7 @@
       <!-- Option strategies -->
       <div class="card">
         <div class="card-head">
-          <div class="card-title">Strategies running <span class="count">5 · 3 in trade</span></div>
+          <div class="card-title">Strategies running <span class="count">9 · 3 in trade</span></div>
           <div class="card-actions"><a href="/strategies" class="filter-link">Manage →</a></div>
         </div>
         <div class="strategy-list">
@@ -1259,6 +1311,38 @@
             <div>
               <div class="name">VIX-filtered long strangle <span class="pill-dot idle">Idle</span></div>
               <div class="desc">Buy OTM CE + PE only when India VIX rises &gt; 18 with positive 1-day Δ. VIX is 12.4 — filtered out.</div>
+              <div class="stats">Signals <b>0</b> · Acted <b>0</b> · M2M <span class="pnl-flat">— flat</span></div>
+            </div>
+            <button class="toggle" aria-label="Strategy off"></button>
+          </div>
+          <div class="strategy">
+            <div>
+              <div class="name">FINNIFTY 0DTE credit spread <span class="pill-dot">Armed</span></div>
+              <div class="desc">Sell ATM bull-put or bear-call spread on Tuesday expiry; fine strike step (50 pts) allows precise placement. Exit at 50% decay or 3:15 PM.</div>
+              <div class="stats">Signals <b>0</b> · Acted <b>0</b> · M2M <span class="pnl-flat">— flat</span></div>
+            </div>
+            <button class="toggle on" aria-label="Strategy on"></button>
+          </div>
+          <div class="strategy">
+            <div>
+              <div class="name">MIDCPNIFTY iron condor <span class="pill-dot">Armed</span></div>
+              <div class="desc">Monday 0DTE iron condor; wait until 10 AM to avoid gap-open risk. Lot 75, strike step 25 pts — sell ±2 strikes from ATM, buy ±4.</div>
+              <div class="stats">Signals <b>0</b> · Acted <b>0</b> · M2M <span class="pnl-flat">— flat</span></div>
+            </div>
+            <button class="toggle on" aria-label="Strategy on"></button>
+          </div>
+          <div class="strategy">
+            <div>
+              <div class="name">BAJFINANCE pre-earnings straddle <span class="pill-dot idle">Idle</span></div>
+              <div class="desc">Buy ATM straddle 2 days before quarterly results; IV typically spikes 40–50% into announcement. Exit on announcement or &gt;30% gain.</div>
+              <div class="stats">Signals <b>0</b> · Acted <b>0</b> · M2M <span class="pnl-flat">— flat</span></div>
+            </div>
+            <button class="toggle" aria-label="Strategy off"></button>
+          </div>
+          <div class="strategy">
+            <div>
+              <div class="name">INFY pre-results long straddle <span class="pill-dot idle">Idle</span></div>
+              <div class="desc">Buy ATM straddle 2 days before quarterly results; INFY moves 8–15% on results day. Sell on announcement, capture IV crush reversal.</div>
               <div class="stats">Signals <b>0</b> · Acted <b>0</b> · M2M <span class="pnl-flat">— flat</span></div>
             </div>
             <button class="toggle" aria-label="Strategy off"></button>
@@ -1453,11 +1537,14 @@ function fmtRs(v) {
 
 // ── Index tile → symbol mapping (for DB and live LTP updates) ─────────────────
 const IDX_SYMBOL_MAP = {
-  'NIFTY':     'idx-nifty50',
-  'BANKNIFTY': 'idx-banknifty',
-  'SENSEX':    'idx-sensex',
-  'CNXIT':     'idx-niftyit',
-  'NIFTYFINSERVICE': 'idx-finsvc',
+  'NIFTY':          'idx-nifty50',
+  'BANKNIFTY':      'idx-banknifty',
+  'MIDCPNIFTY':     'idx-midcpnifty',
+  'SENSEX':         'idx-sensex',
+  'CNXIT':          'idx-niftyit',
+  'NIFTYFINSERVICE':'idx-finsvc',
+  'NIFTYNEXT50':    'idx-niftynext50',
+  'BSE100':         'idx-bse100',
 };
 
 // ── WebSocket + live-tick integration ─────────────────────────────────────────
@@ -1485,9 +1572,9 @@ function setConnected(ok) {
   if (optChip) optChip.textContent = ok ? 'streaming' : 'offline';
 }
 
-function applyLtp(symbol, ltp) {
+function applyLtp(symbol, ltp, change) {
   ltpCache[symbol] = ltp;
-  // Update watchlist rows
+  // Update watchlist rows — CMP
   document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .ltp').forEach(el => {
     const prev = parseFloat(el.textContent.replace(/,/g, '')) || ltp;
     el.classList.remove('flash-up', 'flash-dn');
@@ -1495,6 +1582,21 @@ function applyLtp(symbol, ltp) {
     el.classList.add(ltp >= prev ? 'flash-up' : 'flash-dn');
     el.textContent = fmtIN(ltp, 2);
   });
+  // Update Change % and Prev close when live change data is available
+  if (change != null) {
+    const prevClose = ltp - change;
+    const changePct = prevClose !== 0 ? (change / prevClose * 100) : 0;
+    const chgText = (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%';
+    const chgCls = change >= 0 ? 'pos' : 'neg';
+    document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .chg').forEach(el => {
+      el.classList.remove('pos', 'neg');
+      el.classList.add(chgCls);
+      el.textContent = chgText;
+    });
+    document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .prev').forEach(el => {
+      el.textContent = fmtIN(prevClose, 2);
+    });
+  }
   // Update index tile if this symbol maps to one
   const tileId = IDX_SYMBOL_MAP[symbol];
   if (tileId) {
@@ -1503,7 +1605,14 @@ function applyLtp(symbol, ltp) {
       valEl.classList.remove('flash-up', 'flash-dn');
       void valEl.offsetWidth;
       valEl.classList.add('flash-up');
-      valEl.innerHTML = fmtIN(ltp, 2) + ' <span class="chg">—</span>';
+      let chgSpan = '<span class="chg">—</span>';
+      if (change != null) {
+        const prevClose = ltp - change;
+        const changePct = prevClose !== 0 ? (change / prevClose * 100) : 0;
+        const chgText = (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%';
+        chgSpan = '<span class="chg ' + (change >= 0 ? 'pos' : 'neg') + '">' + chgText + '</span>';
+      }
+      valEl.innerHTML = fmtIN(ltp, 2) + ' ' + chgSpan;
     }
   }
 }
@@ -1528,7 +1637,7 @@ function applyLtp(symbol, ltp) {
         if (!msg.connected) loadDbPrices();
       } else if (msg.type === 'price' && msg.symbol && msg.ltp != null) {
         // per-tick immediate update — backend fires this for every incoming tick
-        applyLtp(msg.symbol, msg.ltp);
+        applyLtp(msg.symbol, msg.ltp, msg.change);
       } else if (msg.type === 'ltp' && msg.data) {
         // 1-second broadcast of full LTP cache
         Object.entries(msg.data).forEach(([k, v]) => applyLtp(k, v));
@@ -1693,7 +1802,7 @@ setInterval(() => {
 }, 5000);
 
 // ── DB last-known prices (shown when broker is offline but DB is connected) ────
-const DB_SYMBOLS = 'NIFTY,BANKNIFTY,RELIANCE,TCS,HDFCBANK,INFY,SBIN,SENSEX,CNXIT,NIFTYFINSERVICE';
+const DB_SYMBOLS = 'NIFTY,BANKNIFTY,RELIANCE,TCS,HDFCBANK,INFY,SBIN,SENSEX,CNXIT,NIFTYFINSERVICE,ICICIBANK,TATAMOTORS,AXISBANK,BAJFINANCE,ITC';
 let _dbPricesLoaded = false;
 
 function applyDbLtp(sym, ltp, src) {
