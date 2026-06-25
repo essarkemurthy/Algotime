@@ -60,6 +60,15 @@ class CollectorConfig:
     ])
     futures_num_expiries: int = 3   # near-month + next-month + far-month
 
+    # ── NSE ticker → Breeze internal code (F&O subscribe + historical) ─────────
+    # Breeze's NFO feed/historical use internal codes, not NSE tickers; symbols
+    # absent here use their ticker unchanged (e.g. NIFTY, TCS).
+    futures_code_map: Dict[str, str] = field(default_factory=lambda: {
+        "BANKNIFTY": "CNXBAN", "FINNIFTY": "NIFFIN", "MIDCPNIFTY": "NIFSEL",
+        "RELIANCE": "RELIND", "HDFCBANK": "HDFBAN", "INFY": "INFTEC",
+        "ICICIBANK": "ICIBAN",
+    })
+
     # ── Per-symbol option chain config ────────────────────────────────────────
     symbol_cfg: Dict[str, dict] = field(default_factory=lambda: {
         "NIFTY":      {"strike_step": 50,  "expiry_type": "weekly"},
@@ -109,6 +118,10 @@ class CollectorConfig:
     shutdown_at:  time_t = field(default_factory=lambda: time_t(15, 35))
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def breeze_code(self, symbol: str) -> str:
+        """NSE ticker → Breeze internal code for F&O feeds (identity if unmapped)."""
+        return self.futures_code_map.get(symbol, symbol)
 
     def strike_step(self, symbol: str) -> int:
         if symbol in self.symbol_cfg:

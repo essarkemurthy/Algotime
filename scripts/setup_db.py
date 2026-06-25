@@ -189,6 +189,29 @@ CREATE TABLE IF NOT EXISTS signals (
     UNIQUE (trade_date, symbol, strategy, direction)
 );
 CREATE INDEX IF NOT EXISTS idx_signals_date ON signals (trade_date DESC, ts DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Options candles: per-strike OHLCV history (Breeze get_historical_data_v2)
+-- right: 'CE' | 'PE'  |  interval: '1m' | '5m' | '30m' | '1d'
+-- oi captured when the feed provides it.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS options_candles (
+    ts       TIMESTAMPTZ   NOT NULL,
+    symbol   TEXT          NOT NULL,
+    expiry   DATE          NOT NULL,
+    strike   INTEGER       NOT NULL,
+    "right"  CHAR(2)       NOT NULL,
+    "interval" TEXT        NOT NULL,
+    open     NUMERIC(12,2),
+    high     NUMERIC(12,2),
+    low      NUMERIC(12,2),
+    close    NUMERIC(12,2),
+    volume   BIGINT,
+    oi       BIGINT,
+    PRIMARY KEY (symbol, expiry, strike, "right", "interval", ts)
+);
+CREATE INDEX IF NOT EXISTS idx_options_candles_lookup
+    ON options_candles (symbol, expiry, strike, "right", "interval", ts DESC);
 """
 
 

@@ -498,66 +498,6 @@
     </div>
   </section>
 
-  <!-- Wizard / setup card -->
-  <section class="wizard" aria-label="Connection wizard">
-    <div class="wizard-head">
-      <div class="left">
-        <h3>Connection &amp; session</h3>
-        <span class="pill-ok">All systems go</span>
-      </div>
-      <div class="card-actions">
-        <button class="btn btn-ghost btn-sm">
-          <svg class="ic" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-          Edit
-        </button>
-        <button class="btn btn-ghost btn-sm">Collapse</button>
-      </div>
-    </div>
-    <div class="wizard-body">
-
-      <!-- Step 1 — Database -->
-      <div class="step">
-        <span class="step-num"><span class="n done">✓</span>Step 1 · Database mode</span>
-        <h4>PostgreSQL connected</h4>
-        <p><code class="tu">postgres@localhost:5432 / market_data</code> · 12 tables · 14.2 GB written this week.</p>
-        <div class="mode-choice">
-          <div class="mode-card"><span class="t">No database</span><span class="s">In-memory only</span></div>
-          <div class="mode-card on"><span class="t">PostgreSQL</span><span class="s">v17 · pool 8/20</span></div>
-        </div>
-      </div>
-
-      <!-- Step 2 — Breeze -->
-      <div class="step">
-        <span class="step-num"><span class="n done">✓</span>Step 2 · Breeze credentials</span>
-        <h4>Session active</h4>
-        <p>Token expires <b style="font-family:var(--font-mono);color:var(--fg-1);font-weight:500;">in 9h 18m</b> · regenerate before midnight.</p>
-        <div class="creds-mini">
-          <div class="cred-row"><span class="k">API key</span><span class="v">3KdNa…7p2X</span></div>
-          <div class="cred-row"><span class="k">API secret</span><span class="v">••••••••••</span></div>
-          <div class="cred-row"><span class="k">Session token</span><span class="v">5184826… <span style="color:var(--tu-success);">✓ live</span></span></div>
-        </div>
-      </div>
-
-      <!-- Step 3 — Subscriptions -->
-      <div class="step">
-        <span class="step-num"><span class="n done">✓</span>Step 3 · Subscriptions</span>
-        <h4>8 symbols streaming</h4>
-        <p>WebSocket up since <b style="font-family:var(--font-mono);color:var(--fg-1);font-weight:500;">09:15:02</b> · <b style="font-family:var(--font-mono);color:var(--fg-1);font-weight:500;">14,827</b> ticks received today.</p>
-        <div class="sub-chips">
-          <span class="sub-chip"><span class="dot"></span>NIFTY</span>
-          <span class="sub-chip"><span class="dot"></span>BANKNIFTY</span>
-          <span class="sub-chip"><span class="dot"></span>VIX</span>
-          <span class="sub-chip"><span class="dot"></span>RELIANCE</span>
-          <span class="sub-chip"><span class="dot"></span>TCS</span>
-          <span class="sub-chip"><span class="dot"></span>HDFCBANK</span>
-          <span class="sub-chip"><span class="dot"></span>INFY</span>
-          <span class="sub-chip"><span class="dot"></span>SBIN</span>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
   <!-- ============================================================
        Main grid — option chain (left) + watchlist (right)
        ============================================================ -->
@@ -1044,11 +984,29 @@
 
   // ── LTP cache (prev values for direction) ────────────────────────────────────
   const prev = {};
+  const prevClose = {};   // previous-day close per symbol → drives %-change
+
+  // ── write a .chg element (percent, optionally "abs · pct%" for the ticker) ───
+  function setChg(el, absChg, pctChg, withAbs) {
+    if (!el || pctChg == null) return;
+    const up = pctChg >= 0;
+    const sign = up ? '+ ' : '− ';
+    const pctStr = sign + Math.abs(pctChg).toFixed(2) + '%';
+    el.textContent = (withAbs && absChg != null)
+      ? sign + Math.abs(absChg).toFixed(2) + ' · ' + pctStr
+      : pctStr;
+    el.classList.remove('pos', 'neg');
+    el.classList.add(up ? 'pos' : 'neg');
+  }
 
   // ── update one symbol ────────────────────────────────────────────────────────
   function applySingle(sym, ltp) {
     const dir = prev[sym] != null ? Math.sign(ltp - prev[sym]) : 0;
     prev[sym] = ltp;
+
+    const pc = prevClose[sym];
+    const absChg = (pc != null) ? (ltp - pc) : null;
+    const pctChg = (pc != null && pc !== 0) ? (absChg / pc * 100) : null;
 
     // ticker strip
     document.querySelectorAll('.ticker-cell').forEach(cell => {
@@ -1060,6 +1018,7 @@
         ltpEl.textContent = fmt(ltp);
         if (dir !== 0) flash(ltpEl, dir);
       }
+      setChg(cell.querySelector('.chg'), absChg, pctChg, true);
       cell.dataset.tick = ltp;
     });
 
@@ -1074,7 +1033,25 @@
         ltpEl.textContent = fmt(ltp);
         if (dir !== 0) flash(ltpEl, dir);
       }
+      setChg(tile.querySelector('.chg'), absChg, pctChg, false);
     });
+  }
+
+  // ── seed last-known price + %-change from the backend (DB fallback) ──────────
+  const SEED_SYMS = Array.from(new Set(
+    [...Object.values(TICKER_SYM), ...Object.values(WATCH_SYM)]));
+
+  async function seedQuotes() {
+    try {
+      const res = await fetch('/api/quotes/seed?symbols=' +
+        encodeURIComponent(SEED_SYMS.join(',')));
+      if (!res.ok) return;
+      const data = await res.json();
+      Object.entries(data).forEach(([sym, q]) => {
+        if (q.prev_close != null) prevClose[sym] = q.prev_close;
+        if (q.ltp != null) applySingle(sym, q.ltp);
+      });
+    } catch (e) { /* offline — keep existing values */ }
   }
 
   // ── apply a full LTP dict (init / 1-second ltp broadcast) ───────────────────
@@ -1142,6 +1119,7 @@
   }
 
   connect();
+  seedQuotes();                       // populate ticker + watchlist from DB / last-known
 
   // ── signal / alert toasts ──────────────────────────────────────────────────
   let _toastHost = null;
