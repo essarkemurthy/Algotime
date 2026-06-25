@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Live · techultime algo desk</title>
+<title>Live · Algotime</title>
 <link rel="stylesheet" href="/static/colors_and_type.css" />
 <link rel="stylesheet" href="/static/app-shell.css" />
 <style>
@@ -1120,6 +1120,16 @@
         applySingle(msg.symbol, msg.ltp);
         bumpTick();
       }
+      // VWAP-Reversal / ORB signal alerts (read-only notifications)
+      if (msg.type === 'signal') {
+        const dir = (msg.direction || '').toUpperCase();
+        showToast(msg.message || (msg.symbol + ' ' + msg.strategy + ' ' + dir),
+                  dir === 'SHORT' ? 'short' : 'long');
+      }
+      // generic backend alerts (daily-loss, algo lifecycle, etc.)
+      if (msg.type === 'alert' && msg.message) {
+        showToast(msg.message, 'alert');
+      }
     };
 
     ws.onclose = function () {
@@ -1132,6 +1142,35 @@
   }
 
   connect();
+
+  // ── signal / alert toasts ──────────────────────────────────────────────────
+  let _toastHost = null;
+  function showToast(text, kind) {
+    if (!_toastHost) {
+      _toastHost = document.createElement('div');
+      _toastHost.style.cssText =
+        'position:fixed;top:64px;right:16px;z-index:9999;display:flex;' +
+        'flex-direction:column;gap:8px;max-width:380px;';
+      document.body.appendChild(_toastHost);
+    }
+    const colors = {
+      long:  '#16a34a', short: '#dc2626',
+      alert: '#d97706', default: '#334155',
+    };
+    const el = document.createElement('div');
+    el.style.cssText =
+      'background:#0f172a;color:#e2e8f0;border-left:4px solid ' +
+      (colors[kind] || colors.default) + ';border-radius:6px;padding:10px 14px;' +
+      'font:13px/1.4 ui-monospace,monospace;box-shadow:0 4px 14px rgba(0,0,0,.35);' +
+      'opacity:0;transition:opacity .2s;';
+    el.textContent = text;
+    _toastHost.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = '1'; });
+    setTimeout(() => {
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 250);
+    }, 15000);
+  }
 
   // keepalive ping every 20 s
   setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 20000);
