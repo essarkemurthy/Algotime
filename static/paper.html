@@ -1552,18 +1552,32 @@ const connDot   = document.getElementById('conn-dot');
 const connLabel = document.getElementById('conn-label');
 const ltpCache  = {};
 
+// Per-index liveness: a tile is "live" (green flasher) only while real ticks
+// arrive for it; otherwise it shows the red "No live" badge. Broker-connected
+// with the market closed (no ticks) ⇒ tiles stay red.
+const idxLastTick = {};          // tileId → last live-tick timestamp (ms)
+const IDX_LIVE_TTL = 10000;      // mark stale after 10s without a tick
+
+function setTileLive(tile, isLive) {
+  if (!tile) return;
+  tile.classList.toggle('no-live', !isLive);
+  const nolive = tile.querySelector('.nolive-badge');
+  const live   = tile.querySelector('.live-tag');
+  if (nolive) nolive.style.display = isLive ? 'none' : '';
+  if (live)   live.style.display   = isLive ? '' : 'none';
+}
+
 function setConnected(ok) {
   if (connDot) { connDot.classList.toggle('off', !ok); }
   if (connLabel) connLabel.textContent = ok ? 'Breeze live · NSE' : 'Broker offline';
 
-  // Toggle live/no-live state on the index tiles (top row only)
-  document.querySelectorAll('#live-indices-section .index-tile').forEach(tile => {
-    tile.classList.toggle('no-live', !ok);
-    const nolive = tile.querySelector('.nolive-badge');
-    const live   = tile.querySelector('.live-tag');
-    if (nolive) nolive.style.display = ok ? 'none' : '';
-    if (live)   live.style.display   = ok ? '' : 'none';
-  });
+  // Tiles are driven live by actual ticks (applyLtp), not by connection alone.
+  // On disconnect, force every tile back to the red "No live" state.
+  if (!ok) {
+    for (const k in idxLastTick) delete idxLastTick[k];
+    document.querySelectorAll('#live-indices-section .index-tile')
+      .forEach(tile => setTileLive(tile, false));
+  }
 
   // Update signal feed status chips
   const eqChip  = document.getElementById('sig-status-eq');
@@ -1572,7 +1586,19 @@ function setConnected(ok) {
   if (optChip) optChip.textContent = ok ? 'streaming' : 'offline';
 }
 
-function applyLtp(symbol, ltp, change) {
+// Watchdog: downgrade tiles to "No live" once their ticks stop (e.g. market close).
+setInterval(() => {
+  const now = Date.now();
+  Object.entries(idxLastTick).forEach(([tileId, ts]) => {
+    if (now - ts > IDX_LIVE_TTL) {
+      delete idxLastTick[tileId];
+      const valEl = document.getElementById(tileId);
+      if (valEl) setTileLive(valEl.closest('.index-tile'), false);
+    }
+  });
+}, 3000);
+
+function applyLtp(symbol, ltp, change, live) {
   ltpCache[symbol] = ltp;
   // Update watchlist rows — CMP
   document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .ltp').forEach(el => {
@@ -1613,6 +1639,11 @@ function applyLtp(symbol, ltp, change) {
         chgSpan = '<span class="chg ' + (change >= 0 ? 'pos' : 'neg') + '">' + chgText + '</span>';
       }
       valEl.innerHTML = fmtIN(ltp, 2) + ' ' + chgSpan;
+      // Only a genuine live tick lights the green flasher on this tile.
+      if (live) {
+        idxLastTick[tileId] = Date.now();
+        setTileLive(valEl.closest('.index-tile'), true);
+      }
     }
   }
 }
@@ -1637,7 +1668,7 @@ function applyLtp(symbol, ltp, change) {
         if (!msg.connected) loadDbPrices();
       } else if (msg.type === 'price' && msg.symbol && msg.ltp != null) {
         // per-tick immediate update — backend fires this for every incoming tick
-        applyLtp(msg.symbol, msg.ltp, msg.change);
+        applyLtp(msg.symbol, msg.ltp, msg.change, true);
       } else if (msg.type === 'ltp' && msg.data) {
         // 1-second broadcast of full LTP cache
         Object.entries(msg.data).forEach(([k, v]) => applyLtp(k, v));
