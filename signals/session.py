@@ -76,6 +76,37 @@ class SymbolSession:
                 self.high, self.low, self.close, self.cfg.atr_period)
         return self._cache["atr"]
 
+    def ema(self, period: int) -> np.ndarray:
+        key = f"ema{period}"
+        if key not in self._cache:
+            self._cache[key] = indicators.ema(self.close, period)
+        return self._cache[key]
+
+    def rsi_n(self, period: int) -> np.ndarray:
+        key = f"rsi{period}"
+        if key not in self._cache:
+            self._cache[key] = indicators.rsi_wilder(self.close, period)
+        return self._cache[key]
+
+    def bollinger(self, period: int, k: float):
+        key = f"bb{period}_{k}"
+        if key not in self._cache:
+            self._cache[key] = indicators.bollinger_bands(self.close, period, k)
+        return self._cache[key]
+
+    def supertrend(self, period: int, mult: float):
+        key = f"st{period}_{mult}"
+        if key not in self._cache:
+            self._cache[key] = indicators.supertrend(
+                self.high, self.low, self.close, period, mult)
+        return self._cache[key]
+
+    def donchian(self, period: int):
+        key = f"dc{period}"
+        if key not in self._cache:
+            self._cache[key] = indicators.donchian(self.high, self.low, period)
+        return self._cache[key]
+
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def trailing_avg_volume(self, i: int) -> Optional[float]:

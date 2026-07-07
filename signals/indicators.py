@@ -121,3 +121,106 @@ def rolling_mean(values: Sequence[float], period: int) -> np.ndarray:
     csum = np.cumsum(np.insert(v, 0, 0.0))
     out[period - 1:] = (csum[period:] - csum[:-period]) / period
     return out
+
+
+def rolling_std(values: Sequence[float], period: int) -> np.ndarray:
+    """Population standard deviation over a rolling window. NaN in warm-up."""
+    v = np.asarray(values, dtype=float)
+    n = v.size
+    out = np.full(n, np.nan, dtype=float)
+    if n < period or period <= 0:
+        return out
+    csum  = np.cumsum(np.insert(v, 0, 0.0))
+    csum2 = np.cumsum(np.insert(v * v, 0, 0.0))
+    s  = csum[period:]  - csum[:-period]
+    s2 = csum2[period:] - csum2[:-period]
+    mean = s / period
+    var  = np.maximum(s2 / period - mean * mean, 0.0)   # clamp fp noise ≥ 0
+    out[period - 1:] = np.sqrt(var)
+    return out
+
+
+def ema(values: Sequence[float], period: int) -> np.ndarray:
+    """Exponential moving average, seeded with the SMA of the first `period`
+    values. NaN before the seed is available."""
+    v = np.asarray(values, dtype=float)
+    n = v.size
+    out = np.full(n, np.nan, dtype=float)
+    if n < period or period <= 0:
+        return out
+    k = 2.0 / (period + 1.0)
+    out[period - 1] = v[:period].mean()
+    for i in range(period, n):
+        out[i] = v[i] * k + out[i - 1] * (1.0 - k)
+    return out
+
+
+def bollinger_bands(close: Sequence[float], period: int = 20,
+                    k: float = 2.0) -> tuple:
+    """(middle, upper, lower) Bollinger bands. Middle = SMA(period); bands =
+    middle ± k · rolling_std(period). Arrays are NaN in the warm-up region."""
+    c = np.asarray(close, dtype=float)
+    mid = rolling_mean(c, period)
+    sd  = rolling_std(c, period)
+    upper = mid + k * sd
+    lower = mid - k * sd
+    return mid, upper, lower
+
+
+def supertrend(high: Sequence[float], low: Sequence[float],
+               close: Sequence[float], period: int = 10,
+               mult: float = 3.0) -> tuple:
+    """Supertrend (line, direction). direction is +1 in an uptrend (price above
+    the line) and -1 in a downtrend. NaN/0 until ATR is available.
+
+    Standard formulation: bands = hl2 ± mult·ATR with the carry-forward rule so
+    the final bands only tighten in the trend direction; a close beyond the
+    active band flips the trend."""
+    h = np.asarray(high, dtype=float)
+    l = np.asarray(low, dtype=float)
+    c = np.asarray(close, dtype=float)
+    n = c.size
+    atr = atr_wilder(h, l, c, period)
+    hl2 = (h + l) / 2.0
+    basic_upper = hl2 + mult * atr
+    basic_lower = hl2 - mult * atr
+
+    line = np.full(n, np.nan, dtype=float)
+    direction = np.zeros(n, dtype=int)
+    fu = np.full(n, np.nan, dtype=float)
+    fl = np.full(n, np.nan, dtype=float)
+
+    start = int(np.argmax(~np.isnan(atr))) if (~np.isnan(atr)).any() else -1
+    if start < 0:
+        return line, direction
+
+    fu[start] = basic_upper[start]
+    fl[start] = basic_lower[start]
+    direction[start] = 1
+    line[start] = fl[start]
+    for i in range(start + 1, n):
+        fu[i] = (basic_upper[i] if (basic_upper[i] < fu[i - 1] or c[i - 1] > fu[i - 1])
+                 else fu[i - 1])
+        fl[i] = (basic_lower[i] if (basic_lower[i] > fl[i - 1] or c[i - 1] < fl[i - 1])
+                 else fl[i - 1])
+        if direction[i - 1] == 1:
+            direction[i] = -1 if c[i] < fl[i] else 1
+        else:
+            direction[i] = 1 if c[i] > fu[i] else -1
+        line[i] = fl[i] if direction[i] == 1 else fu[i]
+    return line, direction
+
+
+def donchian(high: Sequence[float], low: Sequence[float],
+             period: int = 20) -> tuple:
+    """(upper, lower) Donchian channel using the PRIOR `period` bars (excluding
+    the current bar) so a close beyond it is a genuine N-bar breakout."""
+    h = np.asarray(high, dtype=float)
+    l = np.asarray(low, dtype=float)
+    n = h.size
+    up = np.full(n, np.nan, dtype=float)
+    dn = np.full(n, np.nan, dtype=float)
+    for i in range(period, n):
+        up[i] = h[i - period:i].max()
+        dn[i] = l[i - period:i].min()
+    return up, dn
