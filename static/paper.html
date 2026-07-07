@@ -620,6 +620,13 @@
      ============================================================ */
   .hr { height: 1px; background: var(--border-1); margin: 8px 0; }
   .anchor { scroll-margin-top: 88px; }
+  .algo-launch { gap:20px; flex-wrap:wrap; }
+  .launch-toggle { display:inline-flex; align-items:center; gap:8px; font-size:13px;
+                   color:var(--fg-2); cursor:pointer; user-select:none; white-space:nowrap; }
+  .launch-toggle .launch-label { font-weight:600; color:var(--fg-1); }
+  .launch-toggle .launch-state { font-size:11px; font-weight:600; letter-spacing:.04em;
+                   text-transform:uppercase; color:var(--fg-3); min-width:22px; }
+  .launch-toggle.on .launch-state { color:var(--tu-teal-500, var(--tu-success)); }
   .ic {
     width: 14px; height: 14px; stroke: currentColor;
     stroke-width: 1.6; fill: none; flex: none;
@@ -800,7 +807,7 @@
      ============================================================ */
   .indices {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 1px;
     background: var(--border-1);
     border: 1px solid var(--border-2);
@@ -844,7 +851,7 @@
   /* Account summary row */
   .summary-row {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 1px;
     background: var(--border-1);
     border: 1px solid var(--border-2);
@@ -1017,6 +1024,64 @@
       <span class="l">Net P&amp;L today</span>
       <span class="v flat" id="sum-total-pnl">—</span>
       <span class="s" id="sum-pnl-pct">—</span>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SECTION 0 — ALGO STRATEGIES (auto-trade paper account)
+       ============================================================ -->
+  <style>
+    .algo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .algo-card { background: var(--bg-surface); border: 1px solid var(--border-2); border-radius: var(--r-lg); padding: 14px 16px; box-shadow: var(--shadow-1); }
+    .algo-card.on { border-color: var(--tu-teal-300); }
+    .algo-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .algo-name { font-weight: 600; font-size: 14px; color: var(--fg-1); }
+    .algo-desc { font-size: 10.5px; color: var(--fg-3); margin-top: 2px; }
+    .algo-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 12px; font-size: 12px; color: var(--fg-2); }
+    .algo-stats b { color: var(--fg-1); font-family: var(--font-mono); font-weight: 600; }
+    .algo-stats .pos { color: var(--tu-success); } .algo-stats .neg { color: var(--tu-danger); }
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider { position: absolute; inset: 0; cursor: pointer; background: var(--tu-ink-200); border-radius: 999px; transition: .2s; }
+    .switch .slider::before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; box-shadow: var(--shadow-1); }
+    .switch input:checked + .slider { background: var(--tu-teal-500); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+  </style>
+  <section class="section anchor" id="algo-strategies" aria-label="Algo strategies">
+    <div class="section-head">
+      <div class="left">
+        <div class="eyebrow">Automated · paper</div>
+        <h2>Algo strategies</h2>
+        <p>Two independent engines — launch them with the <b>Intraday algo</b> (cash equity) and <b>Options algo</b> (index ATM CE/PE) switches. Enabled strategies below auto-place paper trades on live signals — ATR stop-loss &amp; target, one position per symbol, force square-off at 15:15. Turning an engine off stops new entries; open positions stay managed. Defaults are the strategies that were net-positive in a 1-year backtest; edges are thin and costs aren't modelled.</p>
+      </div>
+      <div class="right" style="display:flex;gap:10px;align-items:center;">
+        <span class="count" id="algo-realised">P&amp;L —</span>
+        <button class="btn btn-danger btn-sm" id="btn-algo-squareoff">Square off all</button>
+      </div>
+    </div>
+    <div class="algo-grid" id="algo-grid"></div>
+    <div class="card" style="margin-top:16px;">
+      <div class="card-head">
+        <div class="card-title">Open algo positions <span class="count" id="algo-open-ct">0</span></div>
+        <div class="card-actions algo-launch">
+          <label class="launch-toggle" title="Launch cash-equity auto-trading — enabled strategies open paper stock trades on live signals with ATR stop-loss / target.">
+            <span class="launch-label">Intraday algo</span>
+            <span class="switch"><input type="checkbox" id="algo-intraday-toggle"><span class="slider"></span></span>
+            <span class="launch-state" id="algo-intraday-state">Off</span>
+          </label>
+          <label class="launch-toggle" title="Launch options auto-trading — index signals (NIFTY, BANKNIFTY, SENSEX, FINNIFTY, MIDCPNIFTY) buy the ATM CE/PE with premium-based SL/TP.">
+            <span class="launch-label">Options algo</span>
+            <span class="switch"><input type="checkbox" id="algo-opt-toggle"><span class="slider"></span></span>
+            <span class="launch-state" id="algo-opt-state">Off</span>
+          </label>
+        </div>
+      </div>
+      <div style="overflow:auto;">
+        <table class="table" id="algo-pos-table">
+          <thead><tr><th>Strategy</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Entry</th><th class="right">LTP</th><th class="right">SL</th><th class="right">TP</th><th class="right">uP&amp;L</th><th>Since</th></tr></thead>
+          <tbody id="algo-pos-body"><tr><td colspan="10" style="text-align:center;color:var(--fg-3);padding:20px;">No open algo positions.</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1442,6 +1507,64 @@
 
   </section>
 
+  <!-- ============================================================
+       SECTION FOUR — REPORTS
+       ============================================================ -->
+  <section class="section anchor" id="reports" aria-label="Reports">
+    <div class="section-head">
+      <div class="left">
+        <div class="eyebrow">Section four</div>
+        <h2>Reports</h2>
+        <p>Every algo-executed trade (equity &amp; options) with the outcome that closed it — target hit, stop-loss, or square-off — plus the full signal log showing when each signal was generated and when it executed. Session-only: resets when the app restarts.</p>
+      </div>
+      <div class="meta">Live · updates on every fill</div>
+    </div>
+
+    <div class="card">
+      <div class="orderbook-head">
+        <div class="orderbook-stats" id="rep-stats">
+          <div class="item"><div class="l">Trades</div><div class="v" id="rep-total">—</div></div>
+          <div class="item"><div class="l">Win rate</div><div class="v" id="rep-winrate">—</div></div>
+          <div class="item"><div class="l">Gross P&amp;L</div><div class="v" id="rep-gross">—</div></div>
+          <div class="item"><div class="l">Target hits</div><div class="v" id="rep-tp" style="color:var(--tu-success);">—</div></div>
+          <div class="item"><div class="l">Stop-loss hits</div><div class="v" id="rep-sl" style="color:var(--tu-danger);">—</div></div>
+          <div class="item"><div class="l">Square-offs</div><div class="v" id="rep-sq">—</div></div>
+          <div class="item"><div class="l">Cash / Options</div><div class="v" id="rep-split">—</div></div>
+        </div>
+      </div>
+      <div style="overflow:auto;">
+        <table class="table">
+          <thead><tr>
+            <th>Opened</th><th>Closed</th><th>Source</th><th>Strategy</th><th>Instrument</th>
+            <th>Side</th><th class="right">Qty</th><th class="right">Entry</th><th class="right">Exit</th>
+            <th class="right">P&amp;L</th><th>Outcome</th>
+          </tr></thead>
+          <tbody id="rep-trades-body">
+            <tr><td colspan="11" style="text-align:center;color:var(--fg-3);padding:24px;">No trades executed yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-head">
+        <div class="card-title">Signals report <span class="count" id="rep-sig-ct">0</span></div>
+        <div class="card-actions"><span class="meta">Every signal the algo saw · generation → execution timing (lag in seconds)</span></div>
+      </div>
+      <div style="overflow:auto;">
+        <table class="table">
+          <thead><tr>
+            <th>Signal time</th><th>Strategy</th><th>Symbol</th><th>Side</th><th class="right">Trigger</th>
+            <th>Decision</th><th>Instrument</th><th>Exec time</th><th class="right">Lag (s)</th>
+          </tr></thead>
+          <tbody id="rep-sig-body">
+            <tr><td colspan="9" style="text-align:center;color:var(--fg-3);padding:24px;">No signals generated yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <footer>
     <div class="disc">
       Paper trading account · simulation only · orders are matched against live NSE prices but no real capital is at risk. Square-off for intraday equity at 15:15 IST; F&amp;O positions held to expiry unless a strategy rule fires.
@@ -1551,6 +1674,27 @@ const IDX_SYMBOL_MAP = {
 const connDot   = document.getElementById('conn-dot');
 const connLabel = document.getElementById('conn-label');
 const ltpCache  = {};
+// symbol → previous trading day's close, seeded from the DB. Used to compute
+// %-change relative to the prior day's closure for tiles and watchlist rows.
+const prevCloseCache = {};
+
+// Indices + watchlist equities whose DB series matches the live feed. MIDCPNIFTY
+// is deliberately excluded — its live feed is Nifty Midcap Select while the DB
+// symbol holds Nifty Midcap 50, so its prev-close is not comparable.
+const PREVCLOSE_SYMBOLS = 'NIFTY,BANKNIFTY,SENSEX,CNXIT,NIFTYFINSERVICE,NIFTYNEXT50,'
+  + 'RELIANCE,TCS,HDFCBANK,INFY,ICICIBANK,SBIN,TATAMOTORS,AXISBANK,BAJFINANCE,ITC,ONGC,MAXHEALTH';
+
+function loadPrevCloses() {
+  fetch('/api/prevclose?symbols=' + PREVCLOSE_SYMBOLS)
+    .then(r => r.json())
+    .then(d => {
+      if (!d || d.error) return;
+      Object.assign(prevCloseCache, d);
+      // Re-apply the latest known LTPs so tiles/rows pick up the new baseline.
+      Object.entries(ltpCache).forEach(([sym, ltp]) => applyLtp(sym, ltp));
+    })
+    .catch(() => {});
+}
 
 // Per-index liveness: a tile is "live" (green flasher) only while real ticks
 // arrive for it; otherwise it shows the red "No live" badge. Broker-connected
@@ -1580,9 +1724,9 @@ function setConnected(ok) {
   }
 
   // Update signal feed status chips
-  const eqChip  = document.getElementById('sig-status-eq');
+  // Equity chip reflects the signal feed (signals log regardless of broker).
+  if (typeof setSigChip === 'function') setSigChip(ok);
   const optChip = document.getElementById('sig-status-opt');
-  if (eqChip)  eqChip.textContent  = ok ? 'streaming' : 'offline';
   if (optChip) optChip.textContent = ok ? 'streaming' : 'offline';
 }
 
@@ -1600,6 +1744,11 @@ setInterval(() => {
 
 function applyLtp(symbol, ltp, change, live) {
   ltpCache[symbol] = ltp;
+  // Change is always measured against the previous trading day's close when we
+  // have it (seeded from the DB). This overrides the broker tick's own `change`
+  // field, which is unreliable for indices and absent on the 1s LTP broadcast.
+  const prevCloseRef = prevCloseCache[symbol];
+  if (prevCloseRef != null && prevCloseRef !== 0) change = ltp - prevCloseRef;
   // Update watchlist rows — CMP
   document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .ltp').forEach(el => {
     const prev = parseFloat(el.textContent.replace(/,/g, '')) || ltp;
@@ -1672,6 +1821,11 @@ function applyLtp(symbol, ltp, change, live) {
       } else if (msg.type === 'ltp' && msg.data) {
         // 1-second broadcast of full LTP cache
         Object.entries(msg.data).forEach(([k, v]) => applyLtp(k, v));
+      } else if (msg.type === 'signal') {
+        // Live strategy signal (VWAP Reversal / ORB) pushed the moment it fires
+        prependSignal(msg);
+      } else if (msg.type === 'algo_update') {
+        renderAlgo(msg.data);
       } else if (msg.type === 'paper_update') {
         renderSummary(msg.data);
         renderTrades(msg.data);
@@ -1868,6 +2022,267 @@ function loadDbPrices() {
 
 // Load on page start; also retry once the WS init message confirms broker is offline
 loadDbPrices();
+// Seed previous-day closes so %-change is measured against the prior close.
+loadPrevCloses();
+
+// ── Strategy signal feed (VWAP Reversal / ORB) ────────────────────────────────
+// The engine only emits equity/index signals, so they render in #feed-intra.
+// Live signals arrive over the WS ("signal" type); /api/signals seeds history.
+const SIGNAL_CACHE = [];
+
+function signalItemHTML(sig, isNew) {
+  const ts   = sig.ts || '';
+  const time = ts.slice(11, 16) || '—';
+  let dateLabel = '';
+  try { dateLabel = new Date(ts.slice(0, 10) + 'T00:00:00')
+        .toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }); } catch {}
+  const dir    = (sig.direction || '').toUpperCase();
+  const dirCls = dir === 'LONG' ? 'pos' : (dir === 'SHORT' ? 'neg' : '');
+  const rsi    = (sig.rsi == null) ? '—' : sig.rsi;
+  const vol    = (sig.vol_ratio == null) ? '—' : ('x' + sig.vol_ratio);
+  return '<div class="feed-item' + (isNew ? ' new' : '') + '">'
+    + '<div class="feed-time">' + time + '<span class="date">' + dateLabel + '</span></div>'
+    + '<div class="feed-body"><div class="feed-head-row">'
+    + '<span class="ticker">' + (sig.symbol || '') + '</span>'
+    + '<span class="strat">' + (sig.strategy || '') + '</span>'
+    + '<span class="chg ' + dirCls + '" style="font-family:var(--font-mono);font-size:11px;font-weight:600;">' + dir + '</span>'
+    + '</div><div class="feed-msg">trig <b>' + fmtIN(sig.trigger_price, 2) + '</b> · VWAP <b>'
+    + fmtIN(sig.vwap, 2) + '</b> · RSI <b>' + rsi + '</b> · vol <b>' + vol + '</b></div></div></div>';
+}
+
+function setSigChip(enabled) {
+  const chip = document.getElementById('sig-status-eq');
+  if (chip) chip.textContent = SIGNAL_CACHE.length
+    ? (SIGNAL_CACHE.length + ' today') : (enabled ? 'armed' : 'disabled');
+}
+
+function renderSignalFeed(enabled) {
+  const feed = document.getElementById('feed-intra');
+  if (feed && SIGNAL_CACHE.length) {
+    feed.innerHTML = SIGNAL_CACHE.slice(0, 80).map(s => signalItemHTML(s, false)).join('');
+  }
+  setSigChip(enabled);
+}
+
+function prependSignal(sig) {
+  // Dedup against the freshest cached signal (WS + poll can overlap).
+  const top = SIGNAL_CACHE[0];
+  if (top && top.symbol === sig.symbol && top.strategy === sig.strategy
+      && top.direction === sig.direction && top.ts === sig.ts) return;
+  SIGNAL_CACHE.unshift(sig);
+  if (SIGNAL_CACHE.length > 200) SIGNAL_CACHE.pop();
+  const feed = document.getElementById('feed-intra');
+  if (feed) {
+    const empty = document.getElementById('feed-intra-empty');
+    if (empty) empty.remove();
+    feed.insertAdjacentHTML('afterbegin', signalItemHTML(sig, true));
+  }
+  setSigChip(true);
+}
+
+function loadSignals() {
+  fetch('/api/signals')
+    .then(r => r.json())
+    .then(d => {
+      const list = (d && d.signals) || [];   // newest-first from API
+      SIGNAL_CACHE.length = 0;
+      list.forEach(s => SIGNAL_CACHE.push(s));
+      renderSignalFeed(!!(d && d.enabled));
+    })
+    .catch(() => {});
+}
+
+loadSignals();
+setInterval(loadSignals, 20000);   // fallback poll in case a WS push is missed
+
+// ── Algo strategies (auto-trade paper account) ────────────────────────────────
+const STRAT_LABELS = {
+  ORB: 'Opening Range Breakout', VWAP_TREND: 'VWAP trend reclaim',
+  VWAP_REV: 'VWAP mean-reversion', SUPERTREND: 'Supertrend flip',
+  DONCHIAN: 'N-bar breakout', EMA_X: 'EMA 9/21 crossover',
+  BB_REV: 'Bollinger reversion', RSI2: 'RSI(2) reversion',
+};
+const ALGO_ORDER = ['VWAP_TREND', 'ORB', 'VWAP_REV', 'SUPERTREND', 'DONCHIAN', 'EMA_X', 'BB_REV', 'RSI2'];
+
+function fmtSigned(v) {
+  v = v || 0;
+  return (v >= 0 ? '+' : '−') + fmtIN(Math.abs(v), 0);
+}
+
+function renderAlgo(snap) {
+  if (!snap) return;
+  const grid = document.getElementById('algo-grid');
+  if (grid) {
+    const by = {}; (snap.strategies || []).forEach(s => by[s.strategy] = s);
+    grid.innerHTML = ALGO_ORDER.filter(k => by[k]).map(k => {
+      const s = by[k];
+      const win = s.closed ? Math.round(s.wins / s.closed * 100) : 0;
+      const cls = s.pnl > 0 ? 'pos' : (s.pnl < 0 ? 'neg' : '');
+      return '<div class="algo-card ' + (s.enabled ? 'on' : '') + '">'
+        + '<div class="algo-card-head"><div><div class="algo-name">' + k.replace('_', ' ') + '</div>'
+        + '<div class="algo-desc">' + (STRAT_LABELS[k] || '') + '</div></div>'
+        + '<label class="switch"><input type="checkbox" ' + (s.enabled ? 'checked' : '')
+        + ' data-strat="' + k + '"><span class="slider"></span></label></div>'
+        + '<div class="algo-stats"><span>Open <b>' + s.open + '</b></span>'
+        + '<span>Closed <b>' + s.closed + '</b></span><span>Win <b>' + win + '%</b></span>'
+        + '<span>P&L <b class="' + cls + '">' + fmtSigned(s.pnl) + '</b></span></div></div>';
+    }).join('');
+    grid.querySelectorAll('input[type=checkbox]').forEach(cb =>
+      cb.addEventListener('change', () => toggleStrategy(cb.dataset.strat, cb.checked)));
+  }
+  const rc = document.getElementById('algo-realised');
+  if (rc) rc.textContent = 'P&L ' + fmtSigned(snap.realised_pnl || 0);
+  const oc = document.getElementById('algo-open-ct');
+  if (oc) oc.textContent = snap.open_count || 0;
+  const body = document.getElementById('algo-pos-body');
+  if (body) {
+    const pos = snap.open_positions || [];
+    body.innerHTML = pos.length ? pos.map(p => {
+      const up = p.upnl > 0 ? 'pnl-pos' : (p.upnl < 0 ? 'pnl-neg' : 'pnl-flat');
+      const side = p.direction === 'LONG' ? 'pos' : 'neg';
+      return '<tr><td>' + p.strategy.replace('_', ' ') + '</td><td>' + p.symbol + '</td>'
+        + '<td><span class="chg ' + side + '">' + p.direction + '</span></td>'
+        + '<td class="right">' + p.qty + '</td><td class="right">' + fmtIN(p.entry, 2) + '</td>'
+        + '<td class="right">' + fmtIN(p.ltp, 2) + '</td><td class="right">' + fmtIN(p.sl, 2) + '</td>'
+        + '<td class="right">' + fmtIN(p.tp, 2) + '</td>'
+        + '<td class="right ' + up + '">' + fmtSigned(p.upnl) + '</td><td>' + p.opened_at + '</td></tr>';
+    }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--fg-3);padding:20px;">No open algo positions.</td></tr>';
+  }
+  // Master launch toggles reflect current config; Reports render off the same snapshot.
+  if (snap.config) {
+    syncLaunch('algo-intraday-toggle', !!snap.config.trade_intraday);
+    syncLaunch('algo-opt-toggle', !!snap.config.trade_options);
+  }
+  renderReports(snap);
+}
+
+// ── Reports section ───────────────────────────────────────────────────────────
+function setTxt(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
+
+function sideChip(side) {
+  const c = side === 'LONG' ? 'pos' : 'neg';
+  return '<span class="chg ' + c + '">' + side + '</span>';
+}
+
+function outcomeBadge(reason) {
+  const map = {
+    TP:         ['Target hit', 'color:var(--tu-success);background:var(--buy-bg,#EAF1EC);'],
+    SL:         ['Stop-loss',  'color:var(--tu-danger);background:var(--sell-bg,#F5E7E3);'],
+    SQUARE_OFF: ['Square-off', 'color:var(--tu-warning);background:#FBEED3;'],
+    EOD:        ['Square-off', 'color:var(--tu-warning);background:#FBEED3;'],
+    MANUAL:     ['Manual',     'color:var(--fg-3);background:#EFEBE2;'],
+  };
+  const [label, style] = map[reason] || [reason || '—', 'color:var(--fg-3);background:#EFEBE2;'];
+  return '<span class="chg" style="' + style + '">' + label + '</span>';
+}
+
+function decisionBadge(dec, reason) {
+  if (dec === 'EXECUTED') return '<span class="chg pos" style="background:var(--buy-bg,#EAF1EC);">Executed</span>';
+  if (dec === 'PENDING')  return '<span class="chg" style="color:var(--tu-warning);background:#FBEED3;">Routing…</span>';
+  const r = reason ? ': ' + reason.replace(/_/g, ' ') : '';
+  return '<span class="chg" style="color:var(--fg-3);background:#EFEBE2;">Skipped' + r + '</span>';
+}
+
+function renderReports(snap) {
+  if (!snap) return;
+  const closed = (snap.closed_trades || []).slice().reverse();   // newest first
+  const total = closed.length;
+  const wins = closed.filter(t => t.pnl > 0).length;
+  const gross = closed.reduce((a, t) => a + (t.pnl || 0), 0);
+  const cash = closed.filter(t => (t.product || 'cash') === 'cash').length;
+  const opts = closed.filter(t => t.product === 'options').length;
+  setTxt('rep-total', total);
+  setTxt('rep-winrate', total ? Math.round(wins / total * 100) + '%' : '—');
+  const g = document.getElementById('rep-gross');
+  if (g) { g.textContent = fmtSigned(gross); g.className = 'v ' + (gross > 0 ? 'pnl-pos' : gross < 0 ? 'pnl-neg' : ''); }
+  setTxt('rep-tp', closed.filter(t => t.reason === 'TP').length);
+  setTxt('rep-sl', closed.filter(t => t.reason === 'SL').length);
+  setTxt('rep-sq', closed.filter(t => t.reason === 'SQUARE_OFF' || t.reason === 'EOD').length);
+  setTxt('rep-split', cash + ' / ' + opts);
+
+  const tb = document.getElementById('rep-trades-body');
+  if (tb) {
+    tb.innerHTML = total ? closed.map(t => {
+      const p = t.pnl > 0 ? 'pnl-pos' : (t.pnl < 0 ? 'pnl-neg' : 'pnl-flat');
+      // For an option, CE ≈ bullish/LONG, PE ≈ bearish/SHORT view.
+      const side = t.right ? (t.right === 'CE' ? 'LONG' : 'SHORT') : t.direction;
+      return '<tr><td>' + (t.opened_at || '—') + '</td><td>' + (t.closed_at || '—') + '</td>'
+        + '<td>' + (t.source || 'Algo') + '</td><td>' + (t.strategy || '—').replace('_', ' ') + '</td>'
+        + '<td>' + (t.instrument || t.symbol) + '</td><td>' + sideChip(side) + '</td>'
+        + '<td class="right">' + t.qty + '</td><td class="right">' + fmtIN(t.entry, 2) + '</td>'
+        + '<td class="right">' + (t.exit != null ? fmtIN(t.exit, 2) : '—') + '</td>'
+        + '<td class="right ' + p + '">' + fmtSigned(t.pnl) + '</td>'
+        + '<td>' + outcomeBadge(t.reason) + '</td></tr>';
+    }).join('') : '<tr><td colspan="11" style="text-align:center;color:var(--fg-3);padding:24px;">No trades executed yet.</td></tr>';
+  }
+
+  const sigs = snap.signals_log || [];
+  setTxt('rep-sig-ct', sigs.length);
+  const sb = document.getElementById('rep-sig-body');
+  if (sb) {
+    sb.innerHTML = sigs.length ? sigs.map(s =>
+      '<tr><td>' + (s.signal_ts || '—') + '</td><td>' + (s.strategy || '').replace('_', ' ') + '</td>'
+      + '<td>' + s.symbol + '</td><td>' + sideChip(s.direction) + '</td>'
+      + '<td class="right">' + (s.trigger_price != null ? fmtIN(s.trigger_price, 2) : '—') + '</td>'
+      + '<td>' + decisionBadge(s.decision, s.reason) + '</td>'
+      + '<td>' + (s.instrument || '—') + '</td>'
+      + '<td>' + (s.entry_time || '—') + '</td>'
+      + '<td class="right">' + (s.exec_lag_sec != null ? s.exec_lag_sec : '—') + '</td></tr>'
+    ).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--fg-3);padding:24px;">No signals generated yet.</td></tr>';
+  }
+}
+
+function toggleStrategy(strat, enabled) {
+  fetch('/api/algo/paper/toggle', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ strategy: strat, enabled }),
+  }).catch(() => {});
+}
+
+function loadAlgo() {
+  fetch('/api/algo/paper').then(r => r.json()).then(renderAlgo).catch(() => {});
+}
+
+document.getElementById('btn-algo-squareoff')?.addEventListener('click', () => {
+  if (!confirm('Square off ALL open algo paper positions?')) return;
+  fetch('/api/algo/paper/squareoff', { method: 'POST' })
+    .then(r => r.json()).then(renderAlgo).catch(() => {});
+});
+
+function syncLaunch(inputId, on) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.checked = on;
+  const wrap = input.closest('.launch-toggle');
+  if (wrap) {
+    wrap.classList.toggle('on', on);
+    const st = wrap.querySelector('.launch-state');
+    if (st) st.textContent = on ? 'On' : 'Off';
+  }
+}
+
+function setAlgoConfig(patch) {
+  fetch('/api/algo/paper/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then(r => r.json()).then(renderAlgo).catch(() => {});
+}
+
+document.getElementById('algo-intraday-toggle')?.addEventListener('change', (e) => {
+  syncLaunch('algo-intraday-toggle', e.target.checked);
+  setAlgoConfig({ trade_intraday: e.target.checked });
+});
+
+document.getElementById('algo-opt-toggle')?.addEventListener('change', (e) => {
+  if (e.target.checked && !confirm('Launch options auto-trading? Index signals will buy the ATM CE/PE on the paper account (premium-based SL/TP).')) {
+    syncLaunch('algo-opt-toggle', false); return;
+  }
+  syncLaunch('algo-opt-toggle', e.target.checked);
+  setAlgoConfig({ trade_options: e.target.checked });
+});
+
+loadAlgo();
+setInterval(loadAlgo, 15000);
 
 // Reset paper account
 document.getElementById('btn-reset-paper')?.addEventListener('click', () => {
