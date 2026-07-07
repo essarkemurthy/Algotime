@@ -68,6 +68,30 @@ class SignalConfig:
     orb_minutes: int  = field(default_factory=lambda: _env_int("SIGNAL_ORB_MINUTES", 30))
     vol_mult: float   = field(default_factory=lambda: _env_float("SIGNAL_VOL_MULT", 1.5))
 
+    # ── EMA crossover (trend) ─────────────────────────────────────────────────
+    ema_fast: int = field(default_factory=lambda: _env_int("SIGNAL_EMA_FAST", 9))
+    ema_slow: int = field(default_factory=lambda: _env_int("SIGNAL_EMA_SLOW", 21))
+
+    # ── Supertrend (ATR trend) ────────────────────────────────────────────────
+    st_period: int  = field(default_factory=lambda: _env_int("SIGNAL_ST_PERIOD", 10))
+    st_mult: float  = field(default_factory=lambda: _env_float("SIGNAL_ST_MULT", 3.0))
+
+    # ── VWAP trend (momentum-confirmed VWAP hold) ─────────────────────────────
+    vwap_trend_rsi: float = field(default_factory=lambda: _env_float("SIGNAL_VWAP_TREND_RSI", 50.0))
+
+    # ── RSI(2) mean-reversion (Connors-style, trend-filtered) ─────────────────
+    rsi2_period: int     = field(default_factory=lambda: _env_int("SIGNAL_RSI2_PERIOD", 2))
+    rsi2_low: float      = field(default_factory=lambda: _env_float("SIGNAL_RSI2_LOW", 10.0))
+    rsi2_high: float     = field(default_factory=lambda: _env_float("SIGNAL_RSI2_HIGH", 90.0))
+    rsi2_trend_ema: int  = field(default_factory=lambda: _env_int("SIGNAL_RSI2_TREND_EMA", 20))
+
+    # ── Bollinger Band reversion ──────────────────────────────────────────────
+    bb_period: int = field(default_factory=lambda: _env_int("SIGNAL_BB_PERIOD", 20))
+    bb_k: float    = field(default_factory=lambda: _env_float("SIGNAL_BB_K", 2.0))
+
+    # ── Donchian breakout ─────────────────────────────────────────────────────
+    dc_period: int = field(default_factory=lambda: _env_int("SIGNAL_DC_PERIOD", 20))
+
     # ── Notification controls ─────────────────────────────────────────────────
     # enabled  — master kill-switch. False ⇒ detections are still logged to the
     #            signals table + logger, but NO notifications are dispatched.
@@ -109,4 +133,6 @@ class SignalConfig:
     @property
     def warmup_bars(self) -> int:
         """Bars needed before any indicator-based signal can be trusted."""
-        return max(self.rsi_period, self.atr_period, self.avg_vol_period) + 1
+        return max(self.rsi_period, self.atr_period, self.avg_vol_period,
+                   self.ema_slow, self.bb_period, self.dc_period,
+                   self.rsi2_trend_ema, self.st_period) + 1

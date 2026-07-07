@@ -212,13 +212,13 @@ class TestEngine(unittest.TestCase):
         cfg = small_cfg()
         sent = []
         eng = SignalEngine(cfg, store=None, broadcast_fn=lambda p: sent.append(p))
-        fired_total = 0
+        orb_fired = 0
         for _, bar in self._orb_bars(cfg):
-            fired_total += len(eng.on_bar_close("TEST", bar))
+            orb_fired += sum(1 for s in eng.on_bar_close("TEST", bar) if s.strategy == ORB)
         # Two consecutive bars close above the range, but only the first fires.
         orb_signals = [p for p in sent if p["strategy"] == ORB]
         self.assertEqual(len(orb_signals), 1)
-        self.assertEqual(fired_total, 1)
+        self.assertEqual(orb_fired, 1)
 
     def test_killswitch_logs_but_does_not_notify(self):
         cfg = small_cfg(enabled=False)
@@ -246,14 +246,90 @@ class TestEngine(unittest.TestCase):
         # Next day, same shape → a fresh signal is allowed again.
         next_day = OPEN_TS + timedelta(days=1)
         closes = [100, 101, 100, 105]; vols = [100, 100, 100, 300]
-        fired = 0
+        orb_fired = 0
         for i, c in enumerate(closes):
-            fired += len(eng.on_bar_close("TEST", {
+            orb_fired += sum(1 for s in eng.on_bar_close("TEST", {
                 "ts": next_day + timedelta(minutes=5 * i),
                 "open": c, "high": c + 0.5, "low": c - 0.5,
                 "close": c, "volume": vols[i],
-            }))
-        self.assertEqual(fired, 1)
+            }) if s.strategy == ORB)
+        self.assertEqual(orb_fired, 1)
+
+
+# ── New indicators ─────────────────────────────────────────────────────────────
+
+class TestNewIndicators(unittest.TestCase):
+    def test_ema_seed_and_recursion(self):
+        from signals.indicators import ema
+        v = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10.0]
+        out = ema(v, 3)
+        self.assertTrue(np.isnan(out[1]))
+        self.assertAlmostEqual(out[2], 2.0)            # seed = mean(1,2,3)
+        k = 2 / (3 + 1)
+        self.assertAlmostEqual(out[3], 4 * k + 2 * (1 - k))
+
+    def test_rolling_std_matches_numpy(self):
+        from signals.indicators import rolling_std
+        v = np.array([2, 4, 4, 4, 5, 5, 7, 9.0])
+        out = rolling_std(v, 4)
+        self.assertAlmostEqual(out[3], v[:4].std())
+        self.assertAlmostEqual(out[-1], v[-4:].std())
+
+    def test_bollinger_bands(self):
+        from signals.indicators import bollinger_bands
+        c = np.arange(1, 30, dtype=float)
+        mid, up, lo = bollinger_bands(c, 20, 2.0)
+        self.assertTrue(np.isnan(mid[18]))
+        self.assertAlmostEqual(mid[19], c[:20].mean())
+        self.assertTrue(up[19] > mid[19] > lo[19])
+
+    def test_supertrend_trend_direction(self):
+        from signals.indicators import supertrend
+        # steady uptrend → direction should settle to +1
+        c = np.arange(1, 40, dtype=float)
+        _line, d = supertrend(c + 0.5, c - 0.5, c, 10, 3.0)
+        self.assertEqual(d[-1], 1)
+
+    def test_donchian_prior_window(self):
+        from signals.indicators import donchian
+        h = np.array([1, 2, 3, 4, 5, 6.0])
+        l = h - 1
+        up, dn = donchian(h, l, 3)
+        self.assertTrue(np.isnan(up[2]))
+        self.assertEqual(up[3], 3.0)   # max high of bars 0..2
+        self.assertEqual(dn[3], 0.0)   # min low of bars 0..2
+
+
+# ── New detectors fire on constructed setups ───────────────────────────────────
+
+class TestNewDetectors(unittest.TestCase):
+    def test_ema_crossover_long(self):
+        from signals.detectors import detect_ema_crossover, LONG
+        cfg = small_cfg(); cfg.ema_fast = 2; cfg.ema_slow = 3
+        # down then sharply up → fast EMA crosses above slow
+        closes = [10, 9, 8, 7, 6, 5, 6, 8, 11, 15.0]
+        sess = make_session(closes, cfg)
+        found = None
+        for i in range(1, len(closes)):
+            s = make_session(closes[:i + 1], cfg)
+            sig = detect_ema_crossover(s)
+            if sig:
+                found = sig
+        self.assertIsNotNone(found)
+        self.assertEqual(found.direction, LONG)
+
+    def test_donchian_breakout_needs_volume(self):
+        from signals.detectors import detect_donchian, LONG
+        cfg = small_cfg(); cfg.dc_period = 3; cfg.vol_mult = 1.5
+        closes = [10, 10, 10, 10, 12.0]          # last bar breaks 3-bar high
+        # low volume on breakout → suppressed
+        lo_vol = make_session(closes, cfg, vols=[100, 100, 100, 100, 100])
+        self.assertIsNone(detect_donchian(lo_vol))
+        # high volume on breakout → fires long
+        hi_vol = make_session(closes, cfg, vols=[100, 100, 100, 100, 500])
+        sig = detect_donchian(hi_vol)
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig.direction, LONG)
 
 
 if __name__ == "__main__":

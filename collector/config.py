@@ -25,13 +25,16 @@ class CollectorConfig:
         "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
     ])
 
-    # ── Equity symbols: spot ticks + candles (Nifty 50 top 25 by liquidity) ──
+    # ── Equity symbols: spot ticks + candles (liquid F&O large-cap universe) ──
     equity_symbols: List[str] = field(default_factory=lambda: [
         "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
         "HINDUNILVR", "SBIN", "BHARTIARTL", "KOTAKBANK", "AXISBANK",
         "LT", "ASIANPAINT", "MARUTI", "SUNPHARMA", "WIPRO",
         "ULTRACEMCO", "NESTLEIND", "POWERGRID", "NTPC", "COALINDIA",
         "ONGC", "TATAMOTORS", "TATASTEEL", "JSWSTEEL", "ADANIENT",
+        # Added — consistently liquid intraday large-caps (all F&O):
+        "HCLTECH", "TECHM", "M&M", "BAJAJ-AUTO", "HINDALCO",
+        "VEDL", "ADANIPORTS", "ITC", "BAJFINANCE",
     ])
 
     # ── Equity symbols that also have active option chains ────────────────────
@@ -75,6 +78,10 @@ class CollectorConfig:
         "ULTRACEMCO": "ULTCEM", "NESTLEIND": "NESIND", "POWERGRID": "POWGRI",
         "COALINDIA": "COALIN", "TATAMOTORS": "TATMOT", "TATASTEEL": "TATSTE",
         "JSWSTEEL": "JSWSTE", "ADANIENT": "ADAENT",
+        # Added liquid large-caps (ITC uses its ticker unchanged, so unmapped).
+        "HCLTECH": "HCLTEC", "TECHM": "TECMAH", "M&M": "MAHMAH",
+        "BAJAJ-AUTO": "BAAUTO", "HINDALCO": "HINDAL", "VEDL": "VEDLIM",
+        "ADANIPORTS": "ADAPOR", "BAJFINANCE": "BAJFI",
     })
 
     # ── Per-symbol option chain config ────────────────────────────────────────

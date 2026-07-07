@@ -23,6 +23,12 @@ from .session import SymbolSession
 
 VWAP_REV = "VWAP_REV"
 ORB = "ORB"
+EMA_X = "EMA_X"
+SUPERTREND = "SUPERTREND"
+VWAP_TREND = "VWAP_TREND"
+RSI2 = "RSI2"
+BB_REV = "BB_REV"
+DONCHIAN = "DONCHIAN"
 LONG = "LONG"
 SHORT = "SHORT"
 
@@ -128,6 +134,16 @@ def detect_orb(s: SymbolSession) -> Optional[Signal]:
     if i < orb_bars:        # still inside (or just completing) the opening range
         return None
 
+    # The opening range is only valid if the session actually observed the bars
+    # from the market open. If the engine came online mid-session (a restart)
+    # without a warm-up seed, bars[0] is a later bucket, so high[:orb_bars] is a
+    # truncated, wrong range — breaking out against it produces spurious ORBs.
+    # Refuse rather than fire on a range that doesn't start at the open.
+    if s.trade_date is not None:
+        session_open = datetime.combine(s.trade_date, cfg.session_start)
+        if s.bars[0]["ts"] > session_open:
+            return None
+
     or_high = float(s.high[:orb_bars].max())
     or_low  = float(s.low[:orb_bars].min())
     close_i = float(s.close[i])
@@ -161,4 +177,165 @@ def detect_orb(s: SymbolSession) -> Optional[Signal]:
     )
 
 
-DETECTORS = (detect_vwap_reversal, detect_orb)
+# ── shared Signal builder ───────────────────────────────────────────────────
+
+def _mk(s: SymbolSession, strategy: str, direction: str, i: int) -> Signal:
+    """Assemble a Signal for bar i with the common context fields filled in."""
+    vwap = s.vwap()
+    rsi  = s.rsi()
+    atr  = s.atr()
+    return Signal(
+        symbol=s.symbol, strategy=strategy, direction=direction,
+        ts=s.bars[i]["ts"], trade_date=s.trade_date,
+        trigger_price=float(s.close[i]),
+        vwap=float(vwap[i]) if _finite(vwap[i]) else float(s.close[i]),
+        rsi=float(rsi[i]) if _finite(rsi[i]) else float("nan"),
+        vol_ratio=_vol_ratio(s, i),
+        atr=float(atr[i]) if _finite(atr[i]) else float("nan"),
+    )
+
+
+# ── trend / momentum ────────────────────────────────────────────────────────
+
+def detect_ema_crossover(s: SymbolSession) -> Optional[Signal]:
+    """Fast EMA crossing the slow EMA — the canonical trend-follow entry."""
+    cfg = s.cfg
+    i = s.n - 1
+    if i < 1:
+        return None
+    fast = s.ema(cfg.ema_fast)
+    slow = s.ema(cfg.ema_slow)
+    if not all(_finite(x) for x in (fast[i], fast[i - 1], slow[i], slow[i - 1])):
+        return None
+    direction = None
+    if fast[i] > slow[i] and fast[i - 1] <= slow[i - 1]:
+        direction = LONG
+    elif fast[i] < slow[i] and fast[i - 1] >= slow[i - 1]:
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, EMA_X, direction, i)
+
+
+def detect_supertrend(s: SymbolSession) -> Optional[Signal]:
+    """Supertrend flip — trend direction change confirmed by the ATR band."""
+    cfg = s.cfg
+    i = s.n - 1
+    if i < 1:
+        return None
+    _line, dirn = s.supertrend(cfg.st_period, cfg.st_mult)
+    if dirn[i] == 0 or dirn[i - 1] == 0:      # warm-up
+        return None
+    direction = None
+    if dirn[i] == 1 and dirn[i - 1] == -1:
+        direction = LONG
+    elif dirn[i] == -1 and dirn[i - 1] == 1:
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, SUPERTREND, direction, i)
+
+
+def detect_vwap_trend(s: SymbolSession) -> Optional[Signal]:
+    """Momentum-confirmed VWAP reclaim: price crosses VWAP with RSI on-side.
+    Distinct from VWAP_REV (which fades a stretch); this trades *with* the move."""
+    cfg = s.cfg
+    i = s.n - 1
+    if i < 1:
+        return None
+    vwap = s.vwap()
+    rsi  = s.rsi()
+    if not all(_finite(x) for x in (vwap[i], vwap[i - 1], rsi[i])):
+        return None
+    close = s.close
+    direction = None
+    if close[i] > vwap[i] and close[i - 1] <= vwap[i - 1] and rsi[i] >= cfg.vwap_trend_rsi:
+        direction = LONG
+    elif close[i] < vwap[i] and close[i - 1] >= vwap[i - 1] and rsi[i] <= (100.0 - cfg.vwap_trend_rsi):
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, VWAP_TREND, direction, i)
+
+
+# ── mean-reversion ──────────────────────────────────────────────────────────
+
+def detect_rsi2(s: SymbolSession) -> Optional[Signal]:
+    """Connors-style RSI(2): buy a pullback into oversold *within an uptrend*
+    (close above the trend EMA), and mirror for shorts."""
+    cfg = s.cfg
+    i = s.n - 1
+    if i < 1:
+        return None
+    r     = s.rsi_n(cfg.rsi2_period)
+    trend = s.ema(cfg.rsi2_trend_ema)
+    if not all(_finite(x) for x in (r[i], r[i - 1], trend[i])):
+        return None
+    close = s.close
+    direction = None
+    if r[i] < cfg.rsi2_low and r[i - 1] >= cfg.rsi2_low and close[i] > trend[i]:
+        direction = LONG
+    elif r[i] > cfg.rsi2_high and r[i - 1] <= cfg.rsi2_high and close[i] < trend[i]:
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, RSI2, direction, i)
+
+
+def detect_bollinger_reversion(s: SymbolSession) -> Optional[Signal]:
+    """Reversion back inside the Bollinger band: close re-crosses the lower band
+    from below (long) or the upper band from above (short)."""
+    cfg = s.cfg
+    i = s.n - 1
+    if i < 1:
+        return None
+    _mid, upper, lower = s.bollinger(cfg.bb_period, cfg.bb_k)
+    if not all(_finite(x) for x in (upper[i], upper[i - 1], lower[i], lower[i - 1])):
+        return None
+    close = s.close
+    direction = None
+    if close[i] > lower[i] and close[i - 1] <= lower[i - 1]:
+        direction = LONG
+    elif close[i] < upper[i] and close[i - 1] >= upper[i - 1]:
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, BB_REV, direction, i)
+
+
+# ── breakout ────────────────────────────────────────────────────────────────
+
+def detect_donchian(s: SymbolSession) -> Optional[Signal]:
+    """N-bar Donchian breakout, confirmed by elevated volume."""
+    cfg = s.cfg
+    i = s.n - 1
+    if i < cfg.dc_period:
+        return None
+    up, dn = s.donchian(cfg.dc_period)
+    if not (_finite(up[i]) and _finite(dn[i])):
+        return None
+    avg_vol = s.trailing_avg_volume(i)
+    vol_ok = avg_vol is not None and s.volume[i] >= cfg.vol_mult * avg_vol
+    if not vol_ok:
+        return None
+    close = s.close
+    direction = None
+    if close[i] > up[i]:
+        direction = LONG
+    elif close[i] < dn[i]:
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, DONCHIAN, direction, i)
+
+
+DETECTORS = (
+    detect_vwap_reversal,
+    detect_orb,
+    detect_ema_crossover,
+    detect_supertrend,
+    detect_vwap_trend,
+    detect_rsi2,
+    detect_bollinger_reversion,
+    detect_donchian,
+)
