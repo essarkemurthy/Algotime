@@ -194,9 +194,17 @@ def main():
     ap.add_argument("--expiries", nargs="+", choices=["weekly", "monthly"],
                     default=["weekly"], help="Expiry types (default weekly)")
     ap.add_argument("--weekly-n", type=int, default=2, help="Weekly expiries per symbol (default 2)")
+    ap.add_argument("--expiry-dates", nargs="+", default=None, metavar="YYYY-MM-DD",
+                    help="Explicit expiry dates (applied to all symbols), overriding "
+                         "the weekly/monthly resolver. Use when the resolver guesses "
+                         "the wrong expiry day (e.g. monthly-only or moved expiries).")
     ap.add_argument("--intervals", nargs="+", default=["5m", "30m", "1d"])
     ap.add_argument("--days", type=int, default=20, help="Look-back window (default 20)")
     args = ap.parse_args()
+
+    override_expiries: Optional[List[date]] = None
+    if args.expiry_dates:
+        override_expiries = sorted(date.fromisoformat(d) for d in args.expiry_dates)
 
     store = Store(os.environ["DB_URL"])
     api = BreezeConnect(api_key=os.environ["BREEZE_API_KEY"])
@@ -224,7 +232,7 @@ def main():
         step = cfg["step"]
         atm = round(spot / step) * step
         strikes = [atm + i * step for i in range(-args.strikes, args.strikes + 1)]
-        expiries = _expiries_for(sym, weekly, monthly, args.weekly_n)
+        expiries = override_expiries or _expiries_for(sym, weekly, monthly, args.weekly_n)
         log.info("=" * 70)
         log.info("%s  spot=%.1f  ATM=%d  %d strikes (%d..%d)  expiries=%s",
                  sym, spot, atm, len(strikes), strikes[0], strikes[-1],
