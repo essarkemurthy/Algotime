@@ -38,6 +38,7 @@ from trade_engine.symbols import SymbolBuilder, nearest_monthly_expiry, nearest_
 
 from suggestions import SuggestionEngine
 from paper_engine import PaperTrader
+from paper_algo import AlgoPaperTrader, ALL_STRATEGIES
 
 from signals import SignalConfig, SignalEngine, BarAggregator
 
@@ -312,6 +313,25 @@ _research_seq = 0
 _paper: PaperTrader = PaperTrader(starting_capital=1_000_000.0)
 
 
+def _algo_broadcast(payload: dict) -> None:
+    """Schedule an algo-update broadcast plus a refreshed paper summary so the
+    paper page P&L reflects auto-executed trades. Called from the tick thread."""
+    if not _main_loop:
+        return
+    asyncio.run_coroutine_threadsafe(broadcast(payload), _main_loop)
+    try:
+        summary = _paper.summary(_ltp_cache)
+    except Exception:
+        summary = None
+    if summary is not None:
+        asyncio.run_coroutine_threadsafe(
+            broadcast({"type": "paper_update", "data": summary}), _main_loop)
+
+
+# Auto-executes enabled intraday signals on the paper account (see paper_algo.py).
+_algo: AlgoPaperTrader = AlgoPaperTrader(_paper, _ltp_cache, broadcast=_algo_broadcast)
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class ConnectReq(BaseModel):
@@ -508,9 +528,24 @@ def _on_tick(tick: dict) -> None:
         try:
             bar = _signal_agg.update(cache_key, now, ltp_f, cum_vol)
             if bar is not None:
-                _signal_engine.on_bar_close(cache_key, bar)
+                fired = _signal_engine.on_bar_close(cache_key, bar)
+                if fired and _algo is not None:      # auto-execute on paper account
+                    for sig in fired:
+                        _algo.on_signal(sig)
+                        # Options are armed: resolve+subscribe+enter off the tick
+                        # thread on the event loop (blocking Breeze calls).
+                        if _main_loop is not None and _algo.wants_option(sig):
+                            asyncio.run_coroutine_threadsafe(
+                                _route_option_signal(sig), _main_loop)
         except Exception as exc:
             log.error("Signal engine error for %s: %s", cache_key, exc)
+
+    # ── Algo exit management: check open paper positions against SL/TP ─────────
+    if _algo is not None:
+        try:
+            _algo.on_tick(cache_key, ltp_f)
+        except Exception as exc:
+            log.error("Algo tick error for %s: %s", cache_key, exc)
 
     # ── Build tick entry for the live tick pane ───────────────────────────────
     entry = {
@@ -682,6 +717,12 @@ async def _broadcast_loop() -> None:
         pnl_data = _compute_pnl()
         await broadcast({"type": "ltp", "data": _ltp_cache.copy()})
         await broadcast({"type": "pnl", "data": pnl_data})
+        # Force square-off of algo paper positions near the close, and stream the
+        # algo snapshot so the strategy panel stays live.
+        if _algo is not None:
+            _algo.check_square_off()
+            if _tick % 2 == 0:
+                await broadcast({"type": "algo_update", "data": _algo.snapshot()})
         if _tick % 10 == 0:
             await broadcast({"type": "quota", "data": _limiter.stats})
         if pnl_data["total_pnl"] < -(_MAX_DAILY_LOSS * 0.80):
@@ -2024,6 +2065,87 @@ async def get_chain_live(symbol: str = "NIFTY", expiry_type: str = "weekly"):
     }
 
 
+def _resolve_atm_option(underlying: str, direction: str) -> Optional[dict]:
+    """Blocking: resolve the ATM CE (LONG) / PE (SHORT) for an index underlying.
+
+    Returns {stock, right, strike, expiry, premium, exchange} or None. Meant to be
+    called via asyncio.to_thread from _route_option_signal — it makes a blocking
+    Breeze get_option_chain_quotes call and must not run on the SDK tick thread."""
+    if not (_session and _session._api):
+        return None
+    sym = underlying.upper()
+    meta = _CHAIN_META.get(sym)
+    if not meta:
+        return None
+    expiry = _nearest_expiry_for(sym, "weekly")
+    try:
+        _limiter.acquire(f"algo_chain_{sym}")
+        resp = _session.api.get_option_chain_quotes(
+            stock_code=sym, exchange_code=meta["exchange"], product_type="options",
+            expiry_date=SymbolBuilder.breeze_dt(expiry), right="others", strike_price="0")
+    except Exception as exc:
+        log.warning("Algo option chain fetch failed for %s: %s", sym, exc)
+        return None
+    if resp.get("Status") != 200:
+        log.warning("Algo option chain non-200 for %s: %s", sym, resp.get("Error"))
+        return None
+
+    want = "ce" if direction == "LONG" else "pe"
+    quotes: Dict[int, float] = {}
+    for r in resp.get("Success") or []:
+        try:
+            strike = int(float(r.get("strike_price") or 0))
+            side = str(r.get("right", "")).lower()
+            side = "ce" if "call" in side else ("pe" if "put" in side else None)
+            if side != want or strike <= 0:
+                continue
+            quotes[strike] = float(r.get("ltp") or 0)
+        except (ValueError, TypeError):
+            continue
+    if not quotes:
+        return None
+
+    spot = _ltp_cache.get(sym)
+    if spot and spot > 0:
+        rounded = round(spot / meta["step"]) * meta["step"]
+        strike = min(quotes.keys(), key=lambda s: abs(s - rounded))
+    else:
+        ordered = sorted(quotes.keys())
+        strike = ordered[len(ordered) // 2]
+    return {"stock": sym, "right": "CE" if want == "ce" else "PE",
+            "strike": strike, "expiry": expiry.isoformat(),
+            "premium": quotes.get(strike, 0.0), "exchange": meta["exchange"]}
+
+
+async def _route_option_signal(sig) -> None:
+    """Resolve the ATM option for an index signal, subscribe to its feed, and open
+    the paper option position. Runs on the event loop (scheduled from _on_tick);
+    all blocking Breeze calls are pushed to threads. Never raises into the caller."""
+    try:
+        contract = await asyncio.to_thread(_resolve_atm_option, sig.symbol, sig.direction)
+        if not contract:
+            _algo._finalize_option_decision(sig, "SKIPPED", "no_option_chain",
+                                             product="options")
+            await broadcast({"type": "algo_update", "data": _algo.snapshot()})
+            return
+        option_symbol = (f"{contract['stock']}_{contract['right']}_"
+                         f"{contract['strike']}_{contract['expiry']}")
+        right_word = "call" if contract["right"] == "CE" else "put"
+        breeze_expiry = SymbolBuilder.breeze_dt(date.fromisoformat(contract["expiry"]))
+        # Subscribe so the option's premium ticks flow into _ltp_cache → SL/TP checks.
+        await asyncio.to_thread(_ws_subscribe, contract["stock"], contract["exchange"],
+                                "options", right_word, str(contract["strike"]),
+                                breeze_expiry, option_symbol)
+        # Seed the resolved premium so mark-to-market is sensible before the first tick.
+        if contract.get("premium") and option_symbol not in _ltp_cache:
+            _ltp_cache[option_symbol] = float(contract["premium"])
+        _algo.open_option_position(sig, contract)
+        await broadcast({"type": "algo_update", "data": _algo.snapshot()})
+        await broadcast({"type": "paper_update", "data": _paper.summary(_ltp_cache)})
+    except Exception as exc:
+        log.error("Option routing failed for %s %s: %s", sig.symbol, sig.strategy, exc)
+
+
 class PaperOrderReq(BaseModel):
     stock_code:    str
     exchange_code: str           = "NSE"
@@ -2095,6 +2217,106 @@ async def paper_set_capital(body: dict):
     _paper.cash = capital
     _paper.reset()
     return {"status": "ok", "starting_capital": capital}
+
+
+# ── Algo paper trading (auto-execute intraday signals) ────────────────────────
+
+@app.get("/api/algo/paper")
+async def algo_paper_snapshot():
+    """Strategy toggles, open algo positions, and per-strategy P&L attribution."""
+    return _algo.snapshot()
+
+
+class AlgoToggleReq(BaseModel):
+    strategy: str
+    enabled: bool
+
+
+@app.post("/api/algo/paper/toggle")
+async def algo_paper_toggle(req: AlgoToggleReq):
+    if req.strategy not in ALL_STRATEGIES:
+        raise HTTPException(400, f"Unknown strategy: {req.strategy}")
+    _algo.set_enabled(req.strategy, req.enabled)
+    snap = _algo.snapshot()
+    await broadcast({"type": "algo_update", "data": snap})
+    return {"status": "ok", "strategy": req.strategy, "enabled": req.enabled}
+
+
+@app.post("/api/algo/paper/squareoff")
+async def algo_paper_squareoff():
+    """Flatten all open algo paper positions immediately."""
+    _algo.square_off_all("MANUAL")
+    return _algo.snapshot()
+
+
+class AlgoConfigReq(BaseModel):
+    trade_intraday: Optional[bool] = None
+    trade_options:  Optional[bool] = None
+
+
+@app.post("/api/algo/paper/config")
+async def algo_paper_config(req: AlgoConfigReq):
+    """Runtime algo config — master launch gates for the intraday (cash) and
+    options auto-trading engines."""
+    if req.trade_intraday is not None:
+        _algo.cfg.trade_intraday = bool(req.trade_intraday)
+        log.info("Algo intraday engine %s",
+                 "LAUNCHED" if _algo.cfg.trade_intraday else "stopped")
+    if req.trade_options is not None:
+        _algo.cfg.trade_options = bool(req.trade_options)
+        log.info("Algo options engine %s",
+                 "LAUNCHED" if _algo.cfg.trade_options else "stopped")
+    snap = _algo.snapshot()
+    await broadcast({"type": "algo_update", "data": snap})
+    return snap
+
+
+def _report_stats(closed: list) -> dict:
+    """Aggregate the algo's closed trades for the report stat cards."""
+    total = len(closed)
+    wins = sum(1 for t in closed if t["pnl"] > 0)
+    losses = sum(1 for t in closed if t["pnl"] < 0)
+    by_strategy: Dict[str, dict] = {}
+    for t in closed:
+        d = by_strategy.setdefault(t["strategy"],
+                                   {"strategy": t["strategy"], "trades": 0, "wins": 0, "pnl": 0.0})
+        d["trades"] += 1
+        d["pnl"] = round(d["pnl"] + t["pnl"], 2)
+        if t["pnl"] > 0:
+            d["wins"] += 1
+    by_product: Dict[str, dict] = {"cash": {"trades": 0, "pnl": 0.0},
+                                   "options": {"trades": 0, "pnl": 0.0}}
+    for t in closed:
+        bp = by_product.setdefault(t.get("product", "cash"), {"trades": 0, "pnl": 0.0})
+        bp["trades"] += 1
+        bp["pnl"] = round(bp["pnl"] + t["pnl"], 2)
+    return {
+        "total": total, "wins": wins, "losses": losses,
+        "win_rate": round(wins / total * 100, 1) if total else 0.0,
+        "gross_pnl": round(sum(t["pnl"] for t in closed), 2),
+        "tp_hits": sum(1 for t in closed if t["reason"] == "TP"),
+        "sl_hits": sum(1 for t in closed if t["reason"] == "SL"),
+        "squareoffs": sum(1 for t in closed if t["reason"] in ("SQUARE_OFF", "EOD")),
+        "by_strategy": list(by_strategy.values()),
+        "by_product": by_product,
+    }
+
+
+@app.get("/api/reports")
+async def get_reports():
+    """Session report: algo-executed trades (cash + options) with their profit/SL
+    outcomes, plus the signal-decision log with generation → execution timing."""
+    snap = _algo.snapshot()
+    closed = snap["closed_trades"]
+    return {
+        "stats":          _report_stats(closed),
+        "outcomes":       snap["outcomes"],
+        "trades":         [{**t, "source": "Algo"} for t in closed],
+        "open_positions": snap["open_positions"],
+        "signals":        snap["signals_log"],
+        "config":         snap["config"],
+        "realised_pnl":   snap["realised_pnl"],
+    }
 
 
 # ── Symbol search ─────────────────────────────────────────────────────────────
@@ -2404,6 +2626,42 @@ async def get_ltp_db(symbols: str = "NIFTY,BANKNIFTY,RELIANCE,TCS,HDFCBANK,INFY,
         return {"ltp": result, "source": source}
     except Exception as exc:
         return {"ltp": {}, "source": {}, "error": str(exc)}
+
+
+@app.get("/api/prevclose")
+async def get_prev_close(symbols: str = ""):
+    """Previous trading day's daily close per symbol — the reference for %-change.
+
+    Returns the most recent 1d candle strictly before today (ts::date <
+    CURRENT_DATE), so it stays correct intraday even before today's own daily
+    candle has been written. Keyed by the requested symbol.
+    """
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        return {}
+    toks = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not toks:
+        return {}
+    out: Dict[str, float] = {}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor()
+        for tok in toks:
+            db_sym = _SYMBOL_ALIASES.get(tok, _SEED_ALIAS.get(tok, tok))
+            cur.execute(
+                'SELECT close FROM candles WHERE symbol=%s AND "interval"=%s '
+                'AND close IS NOT NULL AND ts::date < CURRENT_DATE '
+                'ORDER BY ts DESC LIMIT 1',
+                (db_sym, "1d"),
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                out[tok] = float(row[0])
+        conn.close()
+    except Exception as exc:
+        return {"error": str(exc)}
+    return out
 
 
 @app.post("/api/backtest/math")
