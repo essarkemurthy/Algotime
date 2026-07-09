@@ -10,6 +10,14 @@ gap-fills options_candles (idempotent — ON CONFLICT DO UPDATE via the store).
 ATM is taken from the latest stored spot close in `candles`. Weekly options list
 only ~1–2 weeks out, so history per contract is naturally short.
 
+IMPORTANT — Breeze coverage: get_historical_data_v2 only serves historical option
+data for **NIFTY**. BANKNIFTY / FINNIFTY / MIDCPNIFTY / SENSEX return Status 200
+with 0 rows for valid, currently-listed strikes (verified 2026-07). Their live
+option chain *quotes* work (see download_chains.py → chain_snapshots), but option
+*candles* for them can only be built by collecting live, not backfilled here.
+Also note: post-SEBI only NIFTY has weekly expiries; the others are monthly-only
+(use --expiry-dates with the real last-Tuesday monthly dates).
+
 Usage:
   python scripts/download_options.py                       # defaults below
   python scripts/download_options.py --symbols NIFTY BANKNIFTY FINNIFTY

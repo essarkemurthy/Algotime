@@ -39,6 +39,7 @@ from trade_engine.symbols import SymbolBuilder, nearest_monthly_expiry, nearest_
 from suggestions import SuggestionEngine
 from paper_engine import PaperTrader
 from paper_algo import AlgoPaperTrader, ALL_STRATEGIES
+from report_periods import period_range
 
 from signals import SignalConfig, SignalEngine, BarAggregator
 
@@ -150,7 +151,13 @@ def _init_db_store() -> None:
     try:
         from collector.store import DataStore
         _db_store = DataStore(db_url)
-        log.info("DB store initialised — ticks and chain snapshots will be persisted.")
+        try:
+            _db_store.ensure_paper_tables()      # paper_trades + paper_signal_decisions
+        except Exception as exc:
+            log.warning("ensure_paper_tables failed: %s", exc)
+        if _algo is not None:
+            _algo.store = _db_store               # persist paper trades + decisions
+        log.info("DB store initialised — ticks, chain snapshots and paper trades persist.")
     except Exception as exc:
         log.warning("DB store unavailable (PostgreSQL not running?): %s", exc)
         _db_store = None
@@ -2303,19 +2310,33 @@ def _report_stats(closed: list) -> dict:
 
 
 @app.get("/api/reports")
-async def get_reports():
-    """Session report: algo-executed trades (cash + options) with their profit/SL
-    outcomes, plus the signal-decision log with generation → execution timing."""
+async def get_reports(period: str = "1m", fy: Optional[int] = None,
+                      frm: Optional[str] = None, to: Optional[str] = None):
+    """Period-filtered paper-trading report. When the DB is configured the trades
+    and signal-decisions are read from the persisted tables for the requested
+    window (1m/3m/6m/1y/ytd/fy/all, or explicit frm/to); otherwise it falls back
+    to the in-memory current session."""
+    if _db_store is not None:
+        try:
+            f, t = period_range(period, fy, frm, to)
+            trades = await asyncio.to_thread(_db_store.get_paper_trades, f, t)
+            signals = await asyncio.to_thread(_db_store.get_signal_decisions, f, t)
+            return {
+                "source": "db", "period": period,
+                "from": f.isoformat() if f else None,
+                "to":   t.isoformat() if t else None,
+                "stats": _report_stats(trades), "trades": trades, "signals": signals,
+            }
+        except Exception as exc:
+            log.warning("DB reports failed, falling back to memory: %s", exc)
+    # Fallback — in-memory current session (no DB).
     snap = _algo.snapshot()
-    closed = snap["closed_trades"]
+    closed = list(reversed(snap["closed_trades"]))     # newest first
     return {
-        "stats":          _report_stats(closed),
-        "outcomes":       snap["outcomes"],
-        "trades":         [{**t, "source": "Algo"} for t in closed],
-        "open_positions": snap["open_positions"],
-        "signals":        snap["signals_log"],
-        "config":         snap["config"],
-        "realised_pnl":   snap["realised_pnl"],
+        "source": "memory", "period": "session", "from": None, "to": None,
+        "stats": _report_stats(closed),
+        "trades": [{**t, "source": "Algo"} for t in closed],
+        "signals": snap["signals_log"],
     }
 
 

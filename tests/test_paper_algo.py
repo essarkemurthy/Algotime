@@ -25,13 +25,24 @@ def mk_signal(symbol="TCS", strategy=VWAP_TREND, direction=LONG, *,
     )
 
 
-def make_algo(**cfg_kw):
+class FakeStore:
+    """Captures paper-trade + decision writes for persistence assertions."""
+    def __init__(self):
+        self.trades = []
+        self.decisions = []
+    def insert_paper_trade(self, row):
+        self.trades.append(row)
+    def insert_signal_decision(self, row):
+        self.decisions.append(row)
+
+
+def make_algo(store=None, **cfg_kw):
     cfg_kw.setdefault("regime_filter", False)          # default: skip regime gating
     cfg_kw.setdefault("trade_intraday", True)          # default: intraday engine launched
     cfg = AlgoConfig(**cfg_kw)
     paper = PaperTrader(starting_capital=1_000_000.0)
     ltp = {}
-    algo = AlgoPaperTrader(paper, ltp, cfg=cfg)
+    algo = AlgoPaperTrader(paper, ltp, cfg=cfg, store=store)
     return algo, paper, ltp
 
 
@@ -190,6 +201,61 @@ class OptionRoutingTests(unittest.TestCase):
             self.assertIn(key, snap)
         self.assertIn("trade_options", snap["config"])
         self.assertEqual(snap["open_positions"][0]["product"], "cash")
+
+
+class PersistenceTests(unittest.TestCase):
+    def test_cash_entry_and_exit_persist(self):
+        store = FakeStore()
+        algo, paper, ltp = make_algo(store=store)
+        ltp["TCS"] = 100.0
+        algo.on_signal(mk_signal())                     # EXECUTED cash_entry
+        # a decision row was written (terminal EXECUTED)
+        self.assertEqual(len(store.decisions), 1)
+        d = store.decisions[0]
+        self.assertEqual((d["decision"], d["reason"]), ("EXECUTED", "cash_entry"))
+        self.assertIsNotNone(d["signal_ts"])
+        self.assertIsNotNone(d["trade_date"])
+        # close it → a paper_trades row is written
+        pos = next(iter(algo._open.values()))
+        ltp["TCS"] = pos.tp
+        algo.on_tick("TCS", pos.tp)
+        self.assertEqual(len(store.trades), 1)
+        t = store.trades[0]
+        self.assertEqual(t["source"], "Algo")
+        self.assertEqual(t["product"], "cash")
+        self.assertEqual(t["reason"], "TP")
+        self.assertEqual(t["trade_date"], t["opened_ts"].date())
+        self.assertGreater(t["pnl"], 0)
+
+    def test_skipped_decision_persists_pending_does_not(self):
+        store = FakeStore()
+        algo, _, _ = make_algo(store=store, trade_options=True)
+        # index signal with options armed → PENDING (not persisted)
+        algo.on_signal(mk_signal(symbol="NIFTY"))
+        self.assertEqual(len(store.decisions), 0)        # PENDING is transient
+        # a skipped equity signal → persisted
+        algo.on_signal(mk_signal(symbol="INFY", strategy=EMA_X))   # not_enabled
+        self.assertEqual(len(store.decisions), 1)
+        self.assertEqual(store.decisions[0]["decision"], "SKIPPED")
+
+
+class PeriodRangeTests(unittest.TestCase):
+    def test_period_math(self):
+        from report_periods import period_range
+        from datetime import date
+        today = date(2026, 7, 9)
+        # current FY (Jul → FY starts Apr of same year), capped at today
+        f, t = period_range("fy", None, None, None, today=today)
+        self.assertEqual((f, t), (date(2026, 4, 1), today))
+        # explicit FY year → full Apr–Mar window
+        f, t = period_range("fy", 2025, None, None, today=today)
+        self.assertEqual((f, t), (date(2025, 4, 1), date(2026, 3, 31)))
+        f, t = period_range("all", None, None, None, today=today)
+        self.assertIsNone(f); self.assertIsNone(t)
+        f, t = period_range("6m", None, None, None, today=today)
+        self.assertEqual(f, date(2026, 1, 9))
+        f, t = period_range(None, None, "2026-01-01", "2026-06-30", today=today)
+        self.assertEqual((f, t), (date(2026, 1, 1), date(2026, 6, 30)))
 
 
 if __name__ == "__main__":
