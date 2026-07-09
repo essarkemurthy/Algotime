@@ -101,11 +101,12 @@ class _OpenPos:
 
 class AlgoPaperTrader:
     def __init__(self, paper, ltp_cache: Dict[str, float],
-                 cfg: Optional[AlgoConfig] = None, broadcast=None) -> None:
+                 cfg: Optional[AlgoConfig] = None, broadcast=None, store=None) -> None:
         self._paper = paper
         self._ltp = ltp_cache
         self.cfg = cfg or AlgoConfig()
         self._broadcast = broadcast          # optional callable(dict)
+        self.store = store                   # optional DataStore for persistence
         self._lock = threading.Lock()
         self._siglock = threading.Lock()     # guards the signal-decision deque
         self.enabled: set = set(DEFAULT_ENABLED)
@@ -166,13 +167,14 @@ class AlgoPaperTrader:
             "exec_lag_sec":  None,
         }
 
-    def _log_decision(self, base: dict, decision: str, reason: str, **extra) -> dict:
+    def _log_decision(self, sig, base: dict, decision: str, reason: str, **extra) -> dict:
         rec = dict(base)
         rec["decision"] = decision
         rec["reason"] = reason
         rec.update(extra)
         with self._siglock:
             self._signals.appendleft(rec)
+        self._persist_decision(sig, rec)
         return rec
 
     def _finalize_option_decision(self, sig, decision: str, reason: str, **extra) -> dict:
@@ -186,8 +188,32 @@ class AlgoPaperTrader:
                     rec["decision"] = decision
                     rec["reason"] = reason
                     rec.update(extra)
+                    self._persist_decision(sig, rec)
                     return rec
-        return self._log_decision(self._decision_base(sig), decision, reason, **extra)
+        return self._log_decision(sig, self._decision_base(sig), decision, reason, **extra)
+
+    def _persist_decision(self, sig, rec: dict) -> None:
+        """Write a terminal (EXECUTED/SKIPPED) decision to the DB for the reports.
+        Transient PENDING rows are not persisted. Never raises into the caller."""
+        if self.store is None or rec.get("decision") not in ("EXECUTED", "SKIPPED"):
+            return
+        try:
+            sig_ts = sig.ts if isinstance(sig.ts, datetime) else None
+            td = (getattr(sig, "trade_date", None)
+                  or (sig_ts.date() if sig_ts else datetime.now().date()))
+            now = datetime.now()
+            self.store.insert_signal_decision({
+                "signal_ts": sig_ts, "received_ts": now, "trade_date": td,
+                "strategy": rec["strategy"], "symbol": rec["symbol"],
+                "direction": rec["direction"], "trigger_price": rec["trigger_price"],
+                "vwap": rec["vwap"], "atr": rec["atr"], "product": rec["product"],
+                "decision": rec["decision"], "reason": rec["reason"],
+                "instrument": rec["instrument"], "entry_price": rec["entry_price"],
+                "entry_ts": now if rec["decision"] == "EXECUTED" else None,
+                "exec_lag_sec": rec["exec_lag_sec"],
+            })
+        except Exception as exc:
+            log.debug("paper decision persist failed: %s", exc)
 
     # ── entry: a strategy fired ───────────────────────────────────────────────
 
@@ -212,39 +238,39 @@ class AlgoPaperTrader:
         strat = sig.strategy
         base = self._decision_base(sig)
         if strat not in self.enabled:
-            self._log_decision(base, "SKIPPED", "not_enabled")
+            self._log_decision(sig, base, "SKIPPED", "not_enabled")
             return
         atr = sig.atr
         if not (atr == atr and atr > 0):     # need a finite, positive ATR
-            self._log_decision(base, "SKIPPED", "no_atr")
+            self._log_decision(sig, base, "SKIPPED", "no_atr")
             return
         if self.cfg.regime_filter and not self._passes_filter(sig):
-            self._log_decision(base, "SKIPPED", "filter")
+            self._log_decision(sig, base, "SKIPPED", "filter")
             return
         # Master routing: index underlyings → options engine (never traded as
         # cash — you can't buy the spot index); equities → intraday cash engine.
         if sig.symbol in self.cfg.option_underlyings:
             if self.cfg.trade_options:
                 # app.py finalises the entry (async chain resolve + subscribe).
-                self._log_decision(base, "PENDING", "routed_option", product="options")
+                self._log_decision(sig, base, "PENDING", "routed_option", product="options")
             else:
-                self._log_decision(base, "SKIPPED", "options_algo_off", product="options")
+                self._log_decision(sig, base, "SKIPPED", "options_algo_off", product="options")
             return
         if not self.cfg.trade_intraday:
-            self._log_decision(base, "SKIPPED", "intraday_algo_off")
+            self._log_decision(sig, base, "SKIPPED", "intraday_algo_off")
             return
         key = (sig.symbol, strat)
         with self._lock:
             if key in self._open:
-                self._log_decision(base, "SKIPPED", "duplicate")
+                self._log_decision(sig, base, "SKIPPED", "duplicate")
                 return                        # already in a trade for this pair
             if len(self._open) >= self.cfg.max_positions:
-                self._log_decision(base, "SKIPPED", "max_positions")
+                self._log_decision(sig, base, "SKIPPED", "max_positions")
                 return
             price = self._ltp.get(sig.symbol, sig.trigger_price)
             qty = self._size(price)
             if qty <= 0:
-                self._log_decision(base, "SKIPPED", "zero_qty")
+                self._log_decision(sig, base, "SKIPPED", "zero_qty")
                 return
             action = "buy" if sig.direction == "LONG" else "sell"
             try:
@@ -254,10 +280,10 @@ class AlgoPaperTrader:
                     ltp_cache=self._ltp)
             except Exception as exc:
                 log.warning("Algo entry failed %s %s: %s", sig.symbol, strat, exc)
-                self._log_decision(base, "SKIPPED", "entry_failed")
+                self._log_decision(sig, base, "SKIPPED", "entry_failed")
                 return
             if not order:
-                self._log_decision(base, "SKIPPED", "entry_failed")
+                self._log_decision(sig, base, "SKIPPED", "entry_failed")
                 return
             fill = float(order.fill_price)
             if sig.direction == "LONG":
@@ -272,7 +298,7 @@ class AlgoPaperTrader:
                 stock=sig.symbol, exchange="NSE")
             lag = ((datetime.now() - sig.ts).total_seconds()
                    if isinstance(sig.ts, datetime) else None)
-            self._log_decision(base, "EXECUTED", "cash_entry", instrument=sig.symbol,
+            self._log_decision(sig, base, "EXECUTED", "cash_entry", instrument=sig.symbol,
                                entry_price=round(fill, 2),
                                entry_time=datetime.now().strftime("%H:%M:%S"),
                                exec_lag_sec=round(lag, 1) if lag is not None else None)
@@ -416,7 +442,26 @@ class AlgoPaperTrader:
         log.info("ALGO EXIT  %s %s %s qty=%d @ %.2f  %s  P&L %.2f",
                  pos.strategy, pos.direction, pos.instrument or pos.symbol,
                  pos.qty, exit_price, reason, pnl)
+        self._persist_trade(pos, exit_price, pnl, reason)
         self._emit()
+
+    def _persist_trade(self, pos, exit_price: float, pnl: float, reason: str) -> None:
+        """Persist a closed trade for the DB-backed period reports. Never raises."""
+        if self.store is None:
+            return
+        try:
+            closed = datetime.now()
+            self.store.insert_paper_trade({
+                "opened_ts": pos.opened_at, "closed_ts": closed,
+                "trade_date": pos.opened_at.date(), "source": "Algo",
+                "strategy": pos.strategy, "product": pos.product, "symbol": pos.symbol,
+                "instrument": pos.instrument or pos.symbol, "direction": pos.direction,
+                "right": pos.right, "strike": pos.strike, "expiry": pos.expiry,
+                "qty": pos.qty, "entry": round(pos.entry, 2),
+                "exit": round(exit_price, 2), "pnl": round(pnl, 2), "reason": reason,
+            })
+        except Exception as exc:
+            log.debug("paper trade persist failed: %s", exc)
 
     # ── time-based square-off, called from the app loop ───────────────────────
 

@@ -212,6 +212,57 @@ CREATE TABLE IF NOT EXISTS options_candles (
 );
 CREATE INDEX IF NOT EXISTS idx_options_candles_lookup
     ON options_candles (symbol, expiry, strike, "right", "interval", ts DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Paper trading — persisted for testing & monitoring across restarts.
+-- paper_trades: one row per closed algo/paper trade (with the exit reason).
+-- paper_signal_decisions: one row per terminal signal decision, with the
+-- generation → execution timing that powers the signals report.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id          BIGSERIAL     PRIMARY KEY,
+    opened_ts   TIMESTAMPTZ,
+    closed_ts   TIMESTAMPTZ   NOT NULL,
+    trade_date  DATE          NOT NULL,
+    source      TEXT          NOT NULL DEFAULT 'Algo',
+    strategy    TEXT,
+    product     TEXT          NOT NULL DEFAULT 'cash',
+    symbol      TEXT          NOT NULL,
+    instrument  TEXT,
+    direction   TEXT,
+    "right"     CHAR(2),
+    strike      INTEGER,
+    expiry      DATE,
+    qty         INTEGER,
+    entry       NUMERIC(14,2),
+    exit        NUMERIC(14,2),
+    pnl         NUMERIC(14,2),
+    reason      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_paper_trades_date
+    ON paper_trades (trade_date DESC, closed_ts DESC);
+
+CREATE TABLE IF NOT EXISTS paper_signal_decisions (
+    id            BIGSERIAL     PRIMARY KEY,
+    signal_ts     TIMESTAMPTZ,
+    received_ts   TIMESTAMPTZ   NOT NULL,
+    trade_date    DATE          NOT NULL,
+    strategy      TEXT,
+    symbol        TEXT          NOT NULL,
+    direction     TEXT,
+    trigger_price NUMERIC(12,2),
+    vwap          NUMERIC(12,2),
+    atr           NUMERIC(12,2),
+    product       TEXT,
+    decision      TEXT          NOT NULL,
+    reason        TEXT,
+    instrument    TEXT,
+    entry_price   NUMERIC(14,2),
+    entry_ts      TIMESTAMPTZ,
+    exec_lag_sec  NUMERIC(8,1)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_decisions_date
+    ON paper_signal_decisions (trade_date DESC, signal_ts DESC);
 """
 
 

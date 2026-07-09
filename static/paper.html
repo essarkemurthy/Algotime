@@ -1515,9 +1515,19 @@
       <div class="left">
         <div class="eyebrow">Section four</div>
         <h2>Reports</h2>
-        <p>Every algo-executed trade (equity &amp; options) with the outcome that closed it — target hit, stop-loss, or square-off — plus the full signal log showing when each signal was generated and when it executed. Session-only: resets when the app restarts.</p>
+        <p>Every algo-executed trade (equity &amp; options) with the outcome that closed it — target hit, stop-loss, or square-off — plus the full signal log showing when each signal was generated and when it executed. Persisted to the database and filterable by period.</p>
       </div>
-      <div class="meta">Live · updates on every fill</div>
+      <div class="right" style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <div class="orderbook-filters" id="rep-period">
+          <button class="chip" data-period="1m">1M</button>
+          <button class="chip" data-period="3m">3M</button>
+          <button class="chip" data-period="6m">6M</button>
+          <button class="chip" data-period="1y">1Y</button>
+          <button class="chip on" data-period="fy">FY</button>
+          <button class="chip" data-period="all">All</button>
+        </div>
+        <span class="meta" id="rep-window">—</span>
+      </div>
     </div>
 
     <div class="card">
@@ -2148,15 +2158,47 @@ function renderAlgo(snap) {
         + '<td class="right ' + up + '">' + fmtSigned(p.upnl) + '</td><td>' + p.opened_at + '</td></tr>';
     }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--fg-3);padding:20px;">No open algo positions.</td></tr>';
   }
-  // Master launch toggles reflect current config; Reports render off the same snapshot.
+  // Master launch toggles reflect current config.
   if (snap.config) {
     syncLaunch('algo-intraday-toggle', !!snap.config.trade_intraday);
     syncLaunch('algo-opt-toggle', !!snap.config.trade_options);
   }
-  renderReports(snap);
+  // A fill just happened → refresh the (DB-backed) period report for the window.
+  scheduleReportsRefresh();
 }
 
-// ── Reports section ───────────────────────────────────────────────────────────
+// ── Reports section (DB-backed, period-filtered) ──────────────────────────────
+let REPORT_PERIOD = 'fy';
+let _repTimer = null;
+function scheduleReportsRefresh() {
+  if (_repTimer) return;
+  _repTimer = setTimeout(() => { _repTimer = null; loadReports(REPORT_PERIOD); }, 800);
+}
+
+function loadReports(period) {
+  REPORT_PERIOD = period || REPORT_PERIOD;
+  fetch('/api/reports?period=' + encodeURIComponent(REPORT_PERIOD))
+    .then(r => r.json())
+    .then(data => {
+      renderReports(data);
+      const w = document.getElementById('rep-window');
+      if (w) {
+        if (data.source === 'memory') w.textContent = 'Current session (no DB persistence)';
+        else if (data.from) w.textContent = data.from + '  →  ' + (data.to || 'today');
+        else w.textContent = 'All time';
+      }
+    })
+    .catch(() => {});
+}
+
+document.querySelectorAll('#rep-period .chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('#rep-period .chip').forEach(c => c.classList.remove('on'));
+    chip.classList.add('on');
+    loadReports(chip.dataset.period);
+  });
+});
+
 function setTxt(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
 
 function sideChip(side) {
@@ -2183,9 +2225,9 @@ function decisionBadge(dec, reason) {
   return '<span class="chg" style="color:var(--fg-3);background:#EFEBE2;">Skipped' + r + '</span>';
 }
 
-function renderReports(snap) {
-  if (!snap) return;
-  const closed = (snap.closed_trades || []).slice().reverse();   // newest first
+function renderReports(data) {
+  if (!data) return;
+  const closed = data.trades || [];                              // already newest-first
   const total = closed.length;
   const wins = closed.filter(t => t.pnl > 0).length;
   const gross = closed.reduce((a, t) => a + (t.pnl || 0), 0);
@@ -2216,7 +2258,7 @@ function renderReports(snap) {
     }).join('') : '<tr><td colspan="11" style="text-align:center;color:var(--fg-3);padding:24px;">No trades executed yet.</td></tr>';
   }
 
-  const sigs = snap.signals_log || [];
+  const sigs = data.signals || [];
   setTxt('rep-sig-ct', sigs.length);
   const sb = document.getElementById('rep-sig-body');
   if (sb) {
@@ -2283,6 +2325,8 @@ document.getElementById('algo-opt-toggle')?.addEventListener('change', (e) => {
 
 loadAlgo();
 setInterval(loadAlgo, 15000);
+loadReports(REPORT_PERIOD);
+setInterval(() => loadReports(REPORT_PERIOD), 30000);   // periodic refresh of the active window
 
 // Reset paper account
 document.getElementById('btn-reset-paper')?.addEventListener('click', () => {

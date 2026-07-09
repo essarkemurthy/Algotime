@@ -9,6 +9,53 @@ import psycopg2.pool
 log = logging.getLogger(__name__)
 
 
+# ── paper-report row shaping (DB → UI-friendly dicts) ─────────────────────────
+
+def _f(x):
+    """Decimal/None → float/None (JSON + arithmetic friendly)."""
+    return float(x) if x is not None else None
+
+
+def _fmt_ts(ts) -> Optional[str]:
+    """datetime → 'DD Mon HH:MM' (compact, carries the date for multi-day windows)."""
+    return ts.strftime("%d %b %H:%M") if ts is not None else None
+
+
+def _date_where(col: str, from_date, to_date):
+    if from_date and to_date:
+        return f"WHERE {col} BETWEEN %s AND %s", (from_date, to_date)
+    if from_date:
+        return f"WHERE {col} >= %s", (from_date,)
+    if to_date:
+        return f"WHERE {col} <= %s", (to_date,)
+    return "", None
+
+
+def _paper_trade_dict(d: Dict) -> Dict:
+    return {
+        "opened_at": _fmt_ts(d["opened_ts"]), "closed_at": _fmt_ts(d["closed_ts"]),
+        "trade_date": str(d["trade_date"]), "source": d["source"],
+        "strategy": d["strategy"], "product": d["product"], "symbol": d["symbol"],
+        "instrument": d["instrument"], "direction": d["direction"],
+        "right": (d["right"] or "").strip() or None, "strike": d["strike"],
+        "expiry": str(d["expiry"]) if d["expiry"] else None, "qty": d["qty"],
+        "entry": _f(d["entry"]), "exit": _f(d["exit"]), "pnl": _f(d["pnl"]),
+        "reason": d["reason"],
+    }
+
+
+def _decision_dict(d: Dict) -> Dict:
+    return {
+        "signal_ts": _fmt_ts(d["signal_ts"]), "received_at": _fmt_ts(d["received_ts"]),
+        "strategy": d["strategy"], "symbol": d["symbol"], "direction": d["direction"],
+        "trigger_price": _f(d["trigger_price"]), "vwap": _f(d["vwap"]),
+        "atr": _f(d["atr"]), "product": d["product"], "decision": d["decision"],
+        "reason": d["reason"], "instrument": d["instrument"],
+        "entry_price": _f(d["entry_price"]), "entry_time": _fmt_ts(d["entry_ts"]),
+        "exec_lag_sec": _f(d["exec_lag_sec"]),
+    }
+
+
 class DataStore:
     """
     Thread-safe PostgreSQL store backed by a connection pool.
@@ -290,6 +337,86 @@ class DataStore:
         cols = ["ts", "symbol", "strategy", "direction", "trigger_price", "vwap",
                 "rsi", "vol_ratio", "atr", "notified"]
         return [dict(zip(cols, r)) for r in rows]
+
+    # ── paper trading persistence (testing & monitoring) ──────────────────────
+
+    def ensure_paper_tables(self) -> None:
+        """Create the paper-trading tables if missing (idempotent)."""
+        self._exec("""
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id BIGSERIAL PRIMARY KEY, opened_ts TIMESTAMPTZ,
+                closed_ts TIMESTAMPTZ NOT NULL, trade_date DATE NOT NULL,
+                source TEXT NOT NULL DEFAULT 'Algo', strategy TEXT,
+                product TEXT NOT NULL DEFAULT 'cash', symbol TEXT NOT NULL,
+                instrument TEXT, direction TEXT, "right" CHAR(2), strike INTEGER,
+                expiry DATE, qty INTEGER, entry NUMERIC(14,2), exit NUMERIC(14,2),
+                pnl NUMERIC(14,2), reason TEXT);
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_date
+                ON paper_trades (trade_date DESC, closed_ts DESC);
+            CREATE TABLE IF NOT EXISTS paper_signal_decisions (
+                id BIGSERIAL PRIMARY KEY, signal_ts TIMESTAMPTZ,
+                received_ts TIMESTAMPTZ NOT NULL, trade_date DATE NOT NULL,
+                strategy TEXT, symbol TEXT NOT NULL, direction TEXT,
+                trigger_price NUMERIC(12,2), vwap NUMERIC(12,2), atr NUMERIC(12,2),
+                product TEXT, decision TEXT NOT NULL, reason TEXT, instrument TEXT,
+                entry_price NUMERIC(14,2), entry_ts TIMESTAMPTZ, exec_lag_sec NUMERIC(8,1));
+            CREATE INDEX IF NOT EXISTS idx_paper_decisions_date
+                ON paper_signal_decisions (trade_date DESC, signal_ts DESC);
+        """)
+
+    def insert_paper_trade(self, row: Dict) -> None:
+        self._exec(
+            """INSERT INTO paper_trades
+                   (opened_ts, closed_ts, trade_date, source, strategy, product,
+                    symbol, instrument, direction, "right", strike, expiry,
+                    qty, entry, exit, pnl, reason)
+               VALUES
+                   (%(opened_ts)s, %(closed_ts)s, %(trade_date)s, %(source)s,
+                    %(strategy)s, %(product)s, %(symbol)s, %(instrument)s,
+                    %(direction)s, %(right)s, %(strike)s, %(expiry)s, %(qty)s,
+                    %(entry)s, %(exit)s, %(pnl)s, %(reason)s)""",
+            row,
+        )
+
+    def insert_signal_decision(self, row: Dict) -> None:
+        self._exec(
+            """INSERT INTO paper_signal_decisions
+                   (signal_ts, received_ts, trade_date, strategy, symbol, direction,
+                    trigger_price, vwap, atr, product, decision, reason, instrument,
+                    entry_price, entry_ts, exec_lag_sec)
+               VALUES
+                   (%(signal_ts)s, %(received_ts)s, %(trade_date)s, %(strategy)s,
+                    %(symbol)s, %(direction)s, %(trigger_price)s, %(vwap)s, %(atr)s,
+                    %(product)s, %(decision)s, %(reason)s, %(instrument)s,
+                    %(entry_price)s, %(entry_ts)s, %(exec_lag_sec)s)""",
+            row,
+        )
+
+    def get_paper_trades(self, from_date: Optional[date],
+                         to_date: Optional[date]) -> List[Dict]:
+        where, params = _date_where("trade_date", from_date, to_date)
+        rows = self._queryall(
+            f"""SELECT opened_ts, closed_ts, trade_date, source, strategy, product,
+                       symbol, instrument, direction, "right", strike, expiry,
+                       qty, entry, exit, pnl, reason
+                FROM paper_trades {where} ORDER BY closed_ts DESC""", params)
+        cols = ["opened_ts", "closed_ts", "trade_date", "source", "strategy",
+                "product", "symbol", "instrument", "direction", "right", "strike",
+                "expiry", "qty", "entry", "exit", "pnl", "reason"]
+        return [_paper_trade_dict(dict(zip(cols, r))) for r in rows]
+
+    def get_signal_decisions(self, from_date: Optional[date],
+                             to_date: Optional[date]) -> List[Dict]:
+        where, params = _date_where("trade_date", from_date, to_date)
+        rows = self._queryall(
+            f"""SELECT signal_ts, received_ts, strategy, symbol, direction,
+                       trigger_price, vwap, atr, product, decision, reason,
+                       instrument, entry_price, entry_ts, exec_lag_sec
+                FROM paper_signal_decisions {where} ORDER BY signal_ts DESC""", params)
+        cols = ["signal_ts", "received_ts", "strategy", "symbol", "direction",
+                "trigger_price", "vwap", "atr", "product", "decision", "reason",
+                "instrument", "entry_price", "entry_ts", "exec_lag_sec"]
+        return [_decision_dict(dict(zip(cols, r))) for r in rows]
 
     def get_quote_seed(self, symbols: List[str]) -> Dict[str, Dict]:
         """Last-known price + previous-day close per symbol, for seeding the UI
