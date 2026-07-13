@@ -1688,10 +1688,10 @@ const ltpCache  = {};
 // %-change relative to the prior day's closure for tiles and watchlist rows.
 const prevCloseCache = {};
 
-// Indices + watchlist equities whose DB series matches the live feed. MIDCPNIFTY
-// is deliberately excluded — its live feed is Nifty Midcap Select while the DB
-// symbol holds Nifty Midcap 50, so its prev-close is not comparable.
-const PREVCLOSE_SYMBOLS = 'NIFTY,BANKNIFTY,SENSEX,CNXIT,NIFTYFINSERVICE,NIFTYNEXT50,'
+// Indices + watchlist equities for the %-change baseline. MIDCPNIFTY's DB series
+// (Nifty Midcap 50) doesn't match its live feed (Midcap Select), so the backend
+// serves its prev-close from Breeze's live quote instead of the DB.
+const PREVCLOSE_SYMBOLS = 'NIFTY,BANKNIFTY,SENSEX,CNXIT,NIFTYFINSERVICE,NIFTYNEXT50,MIDCPNIFTY,'
   + 'RELIANCE,TCS,HDFCBANK,INFY,ICICIBANK,SBIN,TATAMOTORS,AXISBANK,BAJFINANCE,ITC,ONGC,MAXHEALTH';
 
 function loadPrevCloses() {
@@ -1754,11 +1754,12 @@ setInterval(() => {
 
 function applyLtp(symbol, ltp, change, live) {
   ltpCache[symbol] = ltp;
-  // Change is always measured against the previous trading day's close when we
-  // have it (seeded from the DB). This overrides the broker tick's own `change`
-  // field, which is unreliable for indices and absent on the 1s LTP broadcast.
+  // Change is measured STRICTLY against the previous trading day's close (seeded
+  // from the DB). We ignore the broker tick's own `change` field so the delta is
+  // never a prev-tick value; if no prev-close is known, show no change ("—").
   const prevCloseRef = prevCloseCache[symbol];
-  if (prevCloseRef != null && prevCloseRef !== 0) change = ltp - prevCloseRef;
+  const havePrev = prevCloseRef != null && prevCloseRef !== 0;
+  change = havePrev ? (ltp - prevCloseRef) : null;
   // Update watchlist rows — CMP
   document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .ltp').forEach(el => {
     const prev = parseFloat(el.textContent.replace(/,/g, '')) || ltp;
@@ -1794,8 +1795,11 @@ function applyLtp(symbol, ltp, change, live) {
       if (change != null) {
         const prevClose = ltp - change;
         const changePct = prevClose !== 0 ? (change / prevClose * 100) : 0;
-        const chgText = (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%';
-        chgSpan = '<span class="chg ' + (change >= 0 ? 'pos' : 'neg') + '">' + chgText + '</span>';
+        const sgn = change >= 0 ? '+' : '−';
+        const ptsText = sgn + fmtIN(Math.abs(change), 2);           // absolute points vs prev close
+        const pctText = sgn + Math.abs(changePct).toFixed(2) + '%';
+        chgSpan = '<span class="chg ' + (change >= 0 ? 'pos' : 'neg') + '">'
+                + ptsText + ' (' + pctText + ')</span>';
       }
       valEl.innerHTML = fmtIN(ltp, 2) + ' ' + chgSpan;
       // Only a genuine live tick lights the green flasher on this tile.
@@ -2108,11 +2112,12 @@ setInterval(loadSignals, 20000);   // fallback poll in case a WS push is missed
 // ── Algo strategies (auto-trade paper account) ────────────────────────────────
 const STRAT_LABELS = {
   ORB: 'Opening Range Breakout', VWAP_TREND: 'VWAP trend reclaim',
-  VWAP_REV: 'VWAP mean-reversion', SUPERTREND: 'Supertrend flip',
+  VWAP_REV: 'VWAP mean-reversion', VWAP_ORB: 'VWAP+ORB confluence',
+  SUPERTREND: 'Supertrend flip',
   DONCHIAN: 'N-bar breakout', EMA_X: 'EMA 9/21 crossover',
   BB_REV: 'Bollinger reversion', RSI2: 'RSI(2) reversion',
 };
-const ALGO_ORDER = ['VWAP_TREND', 'ORB', 'VWAP_REV', 'SUPERTREND', 'DONCHIAN', 'EMA_X', 'BB_REV', 'RSI2'];
+const ALGO_ORDER = ['VWAP_TREND', 'ORB', 'VWAP_REV', 'VWAP_ORB', 'SUPERTREND', 'DONCHIAN', 'EMA_X', 'BB_REV', 'RSI2'];
 
 function fmtSigned(v) {
   v = v || 0;

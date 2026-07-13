@@ -2649,39 +2649,96 @@ async def get_ltp_db(symbols: str = "NIFTY,BANKNIFTY,RELIANCE,TCS,HDFCBANK,INFY,
         return {"ltp": {}, "source": {}, "error": str(exc)}
 
 
+# label → (breeze_stock_code, exchange) for the Breeze prev-close lookup.
+_WATCH_CODE = {w["label"]: (w["stock"], w["exchange"]) for w in WATCHLIST}
+_prev_close_breeze_cache: Dict[str, tuple] = {}   # symbol → (date, prev_close)
+
+
+def _breeze_prev_close(symbol: str) -> Optional[float]:
+    """Previous trading-day close from Breeze — the latest 1d candle strictly
+    before today via get_historical_data_v2. Works uniformly for NSE + BSE indices
+    and equities (get_quotes returns 0 for BSE index quotes, so we use history).
+    Blocking; call via asyncio.to_thread. Cached per trading day."""
+    today = date.today()
+    cached = _prev_close_breeze_cache.get(symbol)
+    if cached and cached[0] == today:
+        return cached[1]
+    code = _WATCH_CODE.get(symbol)
+    if not code or not (_session and _session._api):
+        return None
+    stock, exch = code
+    now = datetime.now()
+    try:
+        _limiter.acquire(f"prevclose_{stock}")
+        resp = _session.api.get_historical_data_v2(
+            interval="1day",
+            from_date=(now - timedelta(days=12)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            to_date=now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            stock_code=stock, exchange_code=exch, product_type="cash",
+            expiry_date="", right="", strike_price="")
+    except Exception as exc:
+        log.debug("Breeze prev-close fetch failed for %s: %s", symbol, exc)
+        return None
+    if resp.get("Status") != 200:
+        return None
+    today_str = today.strftime("%Y-%m-%d")
+    prev = None
+    for c in (resp.get("Success") or []):        # ascending; keep last before today
+        if str(c.get("datetime", ""))[:10] < today_str:
+            try:
+                cl = float(c.get("close"))
+                if cl > 0:
+                    prev = cl
+            except (TypeError, ValueError):
+                pass
+    if prev is not None:
+        _prev_close_breeze_cache[symbol] = (today, prev)
+    return prev
+
+
 @app.get("/api/prevclose")
 async def get_prev_close(symbols: str = ""):
     """Previous trading day's daily close per symbol — the reference for %-change.
 
-    Returns the most recent 1d candle strictly before today (ts::date <
-    CURRENT_DATE), so it stays correct intraday even before today's own daily
-    candle has been written. Keyed by the requested symbol.
+    Prefers Breeze's live-quote `previous_close` (always the true prior trading
+    day, per symbol) because the DB 1d series can lag when daily candles aren't
+    refreshed. Falls back to the most recent DB 1d candle strictly before today
+    (ts::date < CURRENT_DATE) when Breeze is offline or returns no value (e.g. the
+    BSE SENSEX index quote). Keyed by the requested symbol.
     """
-    db_url = os.getenv("DB_URL", "")
-    if not db_url:
-        return {}
     toks = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     if not toks:
         return {}
     out: Dict[str, float] = {}
-    try:
-        import psycopg2
-        conn = psycopg2.connect(db_url)
-        cur  = conn.cursor()
-        for tok in toks:
-            db_sym = _SYMBOL_ALIASES.get(tok, _SEED_ALIAS.get(tok, tok))
-            cur.execute(
-                'SELECT close FROM candles WHERE symbol=%s AND "interval"=%s '
-                'AND close IS NOT NULL AND ts::date < CURRENT_DATE '
-                'ORDER BY ts DESC LIMIT 1',
-                (db_sym, "1d"),
-            )
-            row = cur.fetchone()
-            if row and row[0] is not None:
-                out[tok] = float(row[0])
-        conn.close()
-    except Exception as exc:
-        return {"error": str(exc)}
+    db_needed: List[str] = []
+    live = bool(_session and _session._api)
+    for tok in toks:
+        pc = await asyncio.to_thread(_breeze_prev_close, tok) if live else None
+        if pc is not None:
+            out[tok] = pc
+        else:
+            db_needed.append(tok)
+    # DB fallback for whatever Breeze couldn't supply.
+    db_url = os.getenv("DB_URL", "")
+    if db_needed and db_url:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(db_url)
+            cur  = conn.cursor()
+            for tok in db_needed:
+                db_sym = _SYMBOL_ALIASES.get(tok, _SEED_ALIAS.get(tok, tok))
+                cur.execute(
+                    'SELECT close FROM candles WHERE symbol=%s AND "interval"=%s '
+                    'AND close IS NOT NULL AND ts::date < CURRENT_DATE '
+                    'ORDER BY ts DESC LIMIT 1',
+                    (db_sym, "1d"),
+                )
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    out[tok] = float(row[0])
+            conn.close()
+        except Exception as exc:
+            log.warning("prevclose DB read failed: %s", exc)
     return out
 
 

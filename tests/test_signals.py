@@ -331,6 +331,20 @@ class TestNewDetectors(unittest.TestCase):
         self.assertIsNotNone(sig)
         self.assertEqual(sig.direction, LONG)
 
+    def test_vwap_orb_confluence_long(self):
+        from signals.detectors import detect_vwap_orb, LONG
+        cfg = small_cfg()                         # 3-bar opening range, vol_mult 1.5
+        closes = [10, 10, 10, 11, 13.0]           # breakout above OR-high, trend up
+        # low volume on the breakout bar → suppressed (needs volume confirmation)
+        lo_vol = make_session(closes, cfg, vols=[100, 100, 100, 100, 100])
+        self.assertIsNone(detect_vwap_orb(lo_vol))
+        # high-volume breakout, above VWAP, RSI on-side → fires long
+        hi_vol = make_session(closes, cfg, vols=[100, 100, 100, 100, 500])
+        sig = detect_vwap_orb(hi_vol)
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig.direction, LONG)
+        self.assertEqual(sig.strategy, "VWAP_ORB")
+
 
 if __name__ == "__main__":
     unittest.main()

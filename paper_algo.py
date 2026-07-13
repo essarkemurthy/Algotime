@@ -44,8 +44,8 @@ def _fmt_expiry(expiry: str) -> str:
 # BB_REV, EMA_X, RSI2) backtested ≤ break-even and stay OFF until toggled on.
 # NOTE: edges are thin and transaction costs are NOT modelled — treat as a
 # paper-trading research baseline, not a live edge.
-DEFAULT_ENABLED = ("VWAP_TREND", "ORB", "VWAP_REV")
-ALL_STRATEGIES = ("ORB", "VWAP_REV", "EMA_X", "SUPERTREND", "VWAP_TREND",
+DEFAULT_ENABLED = ("VWAP_TREND", "ORB", "VWAP_REV", "VWAP_ORB")
+ALL_STRATEGIES = ("ORB", "VWAP_REV", "VWAP_ORB", "EMA_X", "SUPERTREND", "VWAP_TREND",
                   "RSI2", "BB_REV", "DONCHIAN")
 
 
