@@ -23,6 +23,7 @@ from .session import SymbolSession
 
 VWAP_REV = "VWAP_REV"
 ORB = "ORB"
+VWAP_ORB = "VWAP_ORB"
 EMA_X = "EMA_X"
 SUPERTREND = "SUPERTREND"
 VWAP_TREND = "VWAP_TREND"
@@ -329,9 +330,45 @@ def detect_donchian(s: SymbolSession) -> Optional[Signal]:
     return _mk(s, DONCHIAN, direction, i)
 
 
+def detect_vwap_orb(s: SymbolSession) -> Optional[Signal]:
+    """Confluence breakout (backtest-validated, PF 1.08 filtered — 2026-07-13):
+    an opening-range breakout that is ALSO VWAP trend-aligned, volume-confirmed and
+    RSI on-side. It requires the two best edges (ORB breakout + VWAP_TREND) to agree,
+    so it fires less often but with higher conviction than either alone."""
+    cfg = s.cfg
+    i = s.n - 1
+    orb_bars = cfg.orb_bars
+    if i < orb_bars:
+        return None
+    # Opening range must start at the market open (same guard as detect_orb).
+    if s.trade_date is not None:
+        session_open = datetime.combine(s.trade_date, cfg.session_start)
+        if s.bars[0]["ts"] > session_open:
+            return None
+    vwap = s.vwap()
+    rsi = s.rsi()
+    if not (_finite(vwap[i]) and _finite(rsi[i])):
+        return None
+    avg_vol = s.trailing_avg_volume(i)
+    if avg_vol is None or s.volume[i] < cfg.vol_mult * avg_vol:
+        return None
+    or_high = float(s.high[:orb_bars].max())
+    or_low  = float(s.low[:orb_bars].min())
+    close_i = float(s.close[i])
+    direction = None
+    if close_i > or_high and close_i > vwap[i] and rsi[i] >= cfg.vwap_trend_rsi:
+        direction = LONG
+    elif close_i < or_low and close_i < vwap[i] and rsi[i] <= (100.0 - cfg.vwap_trend_rsi):
+        direction = SHORT
+    if direction is None:
+        return None
+    return _mk(s, VWAP_ORB, direction, i)
+
+
 DETECTORS = (
     detect_vwap_reversal,
     detect_orb,
+    detect_vwap_orb,
     detect_ema_crossover,
     detect_supertrend,
     detect_vwap_trend,
