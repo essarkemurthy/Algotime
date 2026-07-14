@@ -83,6 +83,10 @@ def main():
         sys.exit(3)
     print("Broker connected + feeds resubscribed.")
 
+    # 2b. fresh day → reset the in-memory paper account so today's summary starts at 0.
+    code, _ = _post(host, "/api/paper/reset", {})
+    print("Paper account reset for the new day." if code == 200 else "Paper reset skipped.")
+
     # 3. arm the algo engine(s)
     cfg = {"trade_intraday": True}
     if args.options:

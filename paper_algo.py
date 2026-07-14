@@ -472,6 +472,18 @@ class AlgoPaperTrader:
                      now.strftime("%H:%M"), len(self._open))
             self.square_off_all("SQUARE_OFF")
 
+    def reset_session(self) -> None:
+        """Start a fresh trading day: flatten any stragglers, then clear the
+        in-memory closed trades + decision log so the cards/Reports 'today' view
+        starts at zero. History stays in the DB (paper_trades / decisions)."""
+        self.square_off_all("EOD")
+        with self._lock:
+            self._closed.clear()
+        with self._siglock:
+            self._signals.clear()
+        log.info("Algo session reset for a new trading day.")
+        self._emit()
+
     # ── state for the UI ──────────────────────────────────────────────────────
 
     def snapshot(self) -> dict:
