@@ -712,13 +712,33 @@ def _setup_ws_feeds() -> None:
     log.info("Breeze WS feeds active — subscribed %d symbols.", len(_ws_subscriptions))
 
 
+_paper_day: Optional[date] = None   # trading date the in-memory paper state belongs to
+
+
 async def _broadcast_loop() -> None:
     """Push LTP + P&L snapshots to all UI clients every second.
     Also broadcasts quota stats every 10 seconds."""
+    global _paper_day
     _tick = 0
     while True:
         await asyncio.sleep(1)
         _tick += 1
+        # New trading day → reset the in-memory paper account + algo session so the
+        # summary row and strategy cards start today at zero. The DB keeps the full
+        # history (paper_trades / paper_signal_decisions) for the period reports.
+        _today = date.today()
+        if _paper_day is None:
+            _paper_day = _today
+        elif _today != _paper_day and datetime.now().hour >= 8:
+            try:
+                _paper.reset()
+                if _algo is not None:
+                    _algo.reset_session()
+                log.info("New trading day %s — paper account + algo session reset.", _today)
+                await broadcast({"type": "paper_update", "data": _paper.summary(_ltp_cache)})
+            except Exception as exc:
+                log.warning("Daily paper reset failed: %s", exc)
+            _paper_day = _today
         if not _ltp_cache:
             continue
         pnl_data = _compute_pnl()
