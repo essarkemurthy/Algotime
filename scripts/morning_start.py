@@ -72,7 +72,7 @@ def main():
     code, res = _post(host, "/api/setup/broker/test", creds)
     if not (code == 200 and res.get("ok")):
         print(f"ERROR: Breeze token invalid/expired: {res.get('error') or res}")
-        print("  → Log in at the Breeze API portal, paste today's session token into .env, and re-run.")
+        print("  -> Log in at the Breeze API portal, paste today's session token into .env, and re-run.")
         sys.exit(2)
     print(f"Token OK — {res.get('name')}")
 
