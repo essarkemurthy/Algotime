@@ -23,6 +23,13 @@ LONG = "LONG"
 
 # Underlyings that have a tradable weekly option chain (mirrors app._CHAIN_META).
 OPTION_UNDERLYINGS = frozenset({"NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"})
+# All index symbols — excluded from cash intraday trading. Optionable ones route to
+# the options engine; the rest are skipped (you can't buy a spot index in cash).
+INDEX_SYMBOLS = frozenset(OPTION_UNDERLYINGS | {
+    "NIFTYFINSERVICE", "CNXIT", "NIFTYNEXT50", "BSE100", "NIFTYJR",
+    "NIFTYMIDCAP50", "NIFTYMIDCAP100", "NIFTYSMALLCAP100", "NIFTY500",
+    "NIFTYINFRA", "NIFTYPSE", "INDIAVIX", "BANKEX",
+})
 # Contract lot sizes — one place to edit if the exchange revises them.
 OPTION_LOT_SIZE = {"NIFTY": 75, "BANKNIFTY": 35, "FINNIFTY": 65,
                    "MIDCPNIFTY": 120, "SENSEX": 20}
@@ -73,6 +80,7 @@ class AlgoConfig:
     # options use plain % of the entry premium.
     trade_options: bool = False
     option_underlyings: frozenset = OPTION_UNDERLYINGS
+    index_symbols: frozenset = INDEX_SYMBOLS      # never traded on the cash engine
     option_sl_pct: float = 0.30            # stop at −30% of entry premium
     option_tp_pct: float = 0.50            # target at +50% of entry premium
     option_lot_size: Dict[str, int] = field(
@@ -247,14 +255,17 @@ class AlgoPaperTrader:
         if self.cfg.regime_filter and not self._passes_filter(sig):
             self._log_decision(sig, base, "SKIPPED", "filter")
             return
-        # Master routing: index underlyings → options engine (never traded as
-        # cash — you can't buy the spot index); equities → intraday cash engine.
-        if sig.symbol in self.cfg.option_underlyings:
-            if self.cfg.trade_options:
+        # Master routing: NO index trades on the cash engine. An optionable index
+        # routes to the options engine (ATM CE/PE); any other index is skipped.
+        # Only equities reach the intraday cash engine below.
+        if sig.symbol in self.cfg.index_symbols:
+            if sig.symbol in self.cfg.option_underlyings and self.cfg.trade_options:
                 # app.py finalises the entry (async chain resolve + subscribe).
                 self._log_decision(sig, base, "PENDING", "routed_option", product="options")
-            else:
+            elif sig.symbol in self.cfg.option_underlyings:
                 self._log_decision(sig, base, "SKIPPED", "options_algo_off", product="options")
+            else:
+                self._log_decision(sig, base, "SKIPPED", "index_no_cash", product="index")
             return
         if not self.cfg.trade_intraday:
             self._log_decision(sig, base, "SKIPPED", "intraday_algo_off")

@@ -97,6 +97,16 @@ class DecisionLogTests(unittest.TestCase):
         self.assertEqual((rec["decision"], rec["reason"]), ("SKIPPED", "intraday_algo_off"))
         self.assertEqual(len(algo._open), 0)
 
+    def test_non_optionable_index_never_trades_cash(self):
+        # An index with no option chain (e.g. Nifty IT) must be skipped, not bought
+        # as cash, even with the intraday engine on.
+        algo, _, ltp = make_algo(trade_intraday=True, trade_options=True)
+        ltp["CNXIT"] = 28000.0
+        algo.on_signal(mk_signal(symbol="CNXIT"))
+        rec = self._last(algo)
+        self.assertEqual((rec["decision"], rec["reason"]), ("SKIPPED", "index_no_cash"))
+        self.assertEqual(len(algo._open), 0)
+
     def test_index_signal_options_off_skips(self):
         algo, _, ltp = make_algo(trade_options=False)   # options engine off
         ltp["NIFTY"] = 24000.0
