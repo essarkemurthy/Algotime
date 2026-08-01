@@ -286,6 +286,30 @@ class _DownloadLogHandler(logging.Handler):
                 _download_status["eta_sec"] = None
             _download_status["current"] = msg.split(" — ")[-1].strip()
 
+# Nifty 50 + Bank Nifty constituents → Breeze internal stock codes. Codes verified
+# via scripts/download_mapped.py (live-API-verified) + DB candle presence; names
+# whose Breeze code equals the NSE ticker use the ticker directly. Labels are the
+# DB/cache-key symbol. (Bank Nifty members already in Nifty 50 aren't repeated;
+# the six extra bank stocks are appended.)
+_NIFTY50_BANKNIFTY = [
+    ("RELIND", "RELIANCE"),  ("HDFBAN", "HDFCBANK"),  ("ICIBAN", "ICICIBANK"), ("INFTEC", "INFY"),
+    ("TCS", "TCS"),          ("HINLEV", "HINDUNILVR"),("STABAN", "SBIN"),      ("BHAAIR", "BHARTIARTL"),
+    ("ITC", "ITC"),          ("KOTMAH", "KOTAKBANK"), ("LARTOU", "LT"),        ("AXIBAN", "AXISBANK"),
+    ("ASIPAI", "ASIANPAINT"),("SUNPHA", "SUNPHARMA"), ("MARUTI", "MARUTI"),    ("ULTCEM", "ULTRACEMCO"),
+    ("TITIND", "TITAN"),     ("NESIND", "NESTLEIND"), ("ONGC", "ONGC"),        ("NTPC", "NTPC"),
+    ("POWGRI", "POWERGRID"), ("TATMOT", "TATAMOTORS"),("TATSTE", "TATASTEEL"), ("JSWSTE", "JSWSTEEL"),
+    ("COALIN", "COALINDIA"), ("HCLTEC", "HCLTECH"),   ("WIPRO", "WIPRO"),      ("TECMAH", "TECHM"),
+    ("BAJFI", "BAJFINANCE"), ("BAFINS", "BAJAJFINSV"),("BAAUTO", "BAJAJ-AUTO"),("HERHON", "HEROMOTOCO"),
+    ("EICMOT", "EICHERMOT"), ("ADAENT", "ADANIENT"),  ("ADAPOR", "ADANIPORTS"),("HINDAL", "HINDALCO"),
+    ("GRASIM", "GRASIM"),    ("CIPLA", "CIPLA"),      ("DRREDD", "DRREDDY"),   ("APOHOS", "APOLLOHOSP"),
+    ("BRIIND", "BRITANNIA"), ("INDBA", "INDUSINDBK"), ("BHAPET", "BPCL"),      ("BHAELE", "BEL"),
+    ("HDFSTA", "HDFCLIFE"),  ("SBILIF", "SBILIFE"),   ("SHRTRA", "SHRIRAMFIN"),("TRENT", "TRENT"),
+    ("ZOMLIM", "ETERNAL"),   ("JIOFIN", "JIOFIN"),    ("MAHMAH", "M&M"),       ("TATGLO", "TATACONSUM"),
+    # Bank Nifty stocks outside the Nifty 50
+    ("AUSMA", "AUBANK"),     ("PUNBAN", "PNB"),       ("BANBAN", "BANDHANBNK"),("FEDBAN", "FEDERALBNK"),
+    ("IDFBAN", "IDFCFIRSTB"),("BANBAR", "BANKBARODA"),
+]
+
 WATCHLIST = [
     # Indices — Breeze uses its own internal codes, not common NSE tickers
     {"stock": "NIFTY",   "exchange": "NSE", "label": "NIFTY"},           # NIFTY 50
@@ -294,21 +318,11 @@ WATCHLIST = [
     {"stock": "CNXIT",   "exchange": "NSE", "label": "CNXIT"},           # Nifty IT
     {"stock": "NIFFIN",  "exchange": "NSE", "label": "NIFTYFINSERVICE"}, # Nifty Fin Service
     {"stock": "NIFSEL",  "exchange": "NSE", "label": "MIDCPNIFTY"},      # Nifty Midcap Select
-    # Equities — Breeze stock codes differ from NSE/BSE tickers in several cases
-    {"stock": "RELIND",  "exchange": "NSE", "label": "RELIANCE"},
-    {"stock": "HDFBAN",  "exchange": "NSE", "label": "HDFCBANK"},
-    {"stock": "ICIBAN",  "exchange": "NSE", "label": "ICICIBANK"},
-    {"stock": "TCS",     "exchange": "NSE", "label": "TCS"},
-    {"stock": "INFTEC",  "exchange": "NSE", "label": "INFY"},
-    {"stock": "TATMOT",  "exchange": "NSE", "label": "TATAMOTORS"},
-    {"stock": "STABAN",  "exchange": "NSE", "label": "SBIN"},
-    {"stock": "AXIBAN",  "exchange": "NSE", "label": "AXISBANK"},
-    {"stock": "BAJFI",   "exchange": "NSE", "label": "BAJFINANCE"},
-    {"stock": "ITC",     "exchange": "NSE", "label": "ITC"},
-    {"stock": "ONGC",    "exchange": "NSE", "label": "ONGC"},
-    {"stock": "MAXHEA",  "exchange": "NSE", "label": "MAXHEALTH"},
-    {"stock": "NIFNEX",  "exchange": "NSE", "label": "NIFTYNEXT50"},  # Nifty Next 50
-    {"stock": "BSE100",  "exchange": "BSE", "label": "BSE100"},       # BSE 100
+    {"stock": "NIFNEX",  "exchange": "NSE", "label": "NIFTYNEXT50"},     # Nifty Next 50
+    {"stock": "BSE100",  "exchange": "BSE", "label": "BSE100"},          # BSE 100
+] + [
+    {"stock": code, "exchange": "NSE", "label": label}
+    for code, label in _NIFTY50_BANKNIFTY
 ]
 
 _ws_clients: Set[WebSocket] = set()
