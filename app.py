@@ -22,6 +22,24 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# ── Resilient breeze_connect import ───────────────────────────────────────────
+# breeze_connect downloads SecurityMaster.zip over HTTPS at import time; that host
+# (directlink.icicidirect.com) intermittently fails the SSL handshake on this
+# machine and would crash startup (uvicorn exit 4). Retry so a transient blip
+# doesn't take the app down — the successful import is cached for
+# trade_engine.session and everything imported after it.
+import sys as _sys
+for _attempt in range(8):
+    try:
+        import breeze_connect  # noqa: F401
+        break
+    except Exception:
+        for _m in [_k for _k in list(_sys.modules) if _k.startswith("breeze_connect")]:
+            del _sys.modules[_m]
+        time.sleep(2)
+else:
+    raise RuntimeError("breeze_connect import failed after retries (SecurityMaster SSL)")
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
