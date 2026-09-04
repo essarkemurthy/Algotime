@@ -19,7 +19,7 @@ Usage:
     python scripts/update_all.py --days 30       # cap look-back window (default 30)
     python scripts/update_all.py --no-futures    # skip futures_candles
 """
-import os, sys, time, logging, argparse
+import os, sys, time, socket, logging, argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -55,9 +55,21 @@ CODE_MAP: Dict[str, Tuple[str, str]] = {}
 for _bcode, _exch, _sym, _tier in MAPPED_SYMBOLS:
     CODE_MAP.setdefault(_sym, (_bcode, _exch))
 
+# Indices the DB stores under a display name that is not the Breeze stock code.
+# Without these the _code() fallback sends the DB name through as the stock code,
+# Breeze rejects it, and the pair silently accumulates almost no rows.
+CODE_MAP.setdefault("NIFTY_IT", ("CNXIT", "NSE"))
+
 _last_call = 0.0
 _call_count = 0
 CALLS_PER_MINUTE = 50
+
+# Breeze sometimes accepts the connection and then never answers. The SDK sets no
+# socket timeout, so such a call blocks the whole run indefinitely — a fill was
+# once wedged ~10h on a single chunk. Bound every socket and retry a few times.
+HTTP_TIMEOUT_SEC = 90
+MAX_ATTEMPTS     = 3
+socket.setdefaulttimeout(HTTP_TIMEOUT_SEC)
 
 
 def _rate_limited(fn, *args, **kwargs):
@@ -154,16 +166,26 @@ def fetch_range(api, bcode, exch, iv_api, iv_db, db_sym, from_dt, to_dt,
     rows, cursor = [], from_dt
     while cursor < to_dt:
         end = min(cursor + timedelta(days=chunk), to_dt)
-        try:
-            resp = _rate_limited(
-                api.get_historical_data_v2,
-                interval=iv_api, from_date=_fmt(cursor), to_date=_fmt(end),
-                stock_code=bcode, exchange_code=exch, product_type=product_type,
-                expiry_date=expiry_date, right="", strike_price="")
-        except Exception as exc:
-            log.error("    fetch error %s[%s] %s-%s: %s", db_sym, iv_db,
-                      cursor.date(), end.date(), exc)
-            cursor = end + timedelta(days=1)
+        resp = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                resp = _rate_limited(
+                    api.get_historical_data_v2,
+                    interval=iv_api, from_date=_fmt(cursor), to_date=_fmt(end),
+                    stock_code=bcode, exchange_code=exch, product_type=product_type,
+                    expiry_date=expiry_date, right="", strike_price="")
+                break
+            except Exception as exc:
+                log.warning("    fetch error %s[%s] %s-%s (attempt %d/%d): %s",
+                            db_sym, iv_db, cursor.date(), end.date(),
+                            attempt, MAX_ATTEMPTS, exc)
+                if attempt < MAX_ATTEMPTS:
+                    time.sleep(2 * attempt)
+        if resp is None:
+            # Chunk is unrecoverable — skip it and keep the run moving.
+            log.error("    giving up on %s[%s] %s-%s", db_sym, iv_db,
+                      cursor.date(), end.date())
+            cursor = end + timedelta(minutes=1)
             continue
         if resp.get("Status") == 200:
             for raw in (resp.get("Success") or []):

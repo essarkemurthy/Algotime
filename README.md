@@ -53,11 +53,40 @@ algo-trade/
 
 ## Quick Start
 
+### Fastest route (Windows)
+
+```powershell
+git clone https://github.com/essarkemurthy/Algotime.git
+cd Algotime
+.\start_app.bat
+```
+
+`start_app.bat` creates the virtualenv, installs dependencies, opens `.env` for
+your credentials on first run, starts the dashboard and opens the browser.
+Double-clicking it from Explorer works too — right-click → *Send to* → *Desktop*
+to get a launcher icon. Everything below is the same thing done by hand.
+
+### Do I need PostgreSQL?
+
+No. The app runs in two modes and picks one automatically from `DB_URL`:
+
+| | `DB_URL` blank | `DB_URL` set |
+|---|---|---|
+| Dashboard, live prices, option chain | yes | yes |
+| Signals, paper trading, algo engines | yes | yes |
+| Charts from stored candles | no | yes |
+| History surviving a restart | no | yes |
+| Reports across past days | current session only | full history |
+
+With no database the app logs `DB store unavailable` and carries on — nothing
+crashes, state just lives in memory for the session. Add PostgreSQL later by
+setting `DB_URL` and running `python scripts/setup_db.py`; no code changes.
+
 ### 1. Clone the repository
 
 ```powershell
-git clone https://github.com/essarkemurthy/algo-trade.git
-cd algo-trade
+git clone https://github.com/essarkemurthy/Algotime.git
+cd Algotime
 ```
 
 ### 2. Create and activate a virtual environment

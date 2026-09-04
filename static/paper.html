@@ -1658,13 +1658,14 @@
 // ── Indian number formatter ────────────────────────────────────────────────────
 const fmtIN = (n, decimals) => {
   const parts = Number(n).toFixed(decimals).split('.');
-  const intP = parts[0].replace(/\B(?=(\d{2})+(\d{3})(?!\d))/g, ',');
+  const intP = parts[0].replace(/\B(?=(\d{2})*(\d{3})(?!\d))/g, ',');
   return decimals ? intP + '.' + parts[1] : intP;
 };
 function fmtRs(v) {
   const abs = Math.abs(v);
   const sign = v >= 0 ? '+ ₹' : '− ₹';
-  if (abs >= 100000) return sign + fmtIN(abs / 100000, 2) + 'L';
+  if (abs >= 10000000) return sign + fmtIN(abs / 10000000, 2) + 'Cr';
+  if (abs >= 100000)   return sign + fmtIN(abs / 100000, 2) + 'L';
   return sign + fmtIN(abs, 0);
 }
 
