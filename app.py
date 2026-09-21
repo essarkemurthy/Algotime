@@ -911,17 +911,35 @@ async def _chain_snapshot_loop() -> None:
 
 # ── Auto-connect broker on startup ────────────────────────────────────────────
 
+def _broker_credentials() -> dict:
+    """Broker creds for startup, with .env taking priority over data/setup.json.
+
+    The session token rotates daily and .env is where it gets pasted, so a stale
+    value saved in setup.json must never win — that mismatch silently leaves the
+    app running but disconnected. Either source alone is enough to connect.
+    """
+    saved = _setup_config.get("broker", {})
+    return {
+        "api_key":       os.getenv("BREEZE_API_KEY")       or saved.get("api_key", ""),
+        "api_secret":    os.getenv("BREEZE_API_SECRET")    or saved.get("api_secret", ""),
+        "session_token": os.getenv("BREEZE_SESSION_TOKEN") or saved.get("session_token", ""),
+    }
+
+
 async def _auto_connect_broker() -> None:
     """Connect to Breeze on startup using saved credentials. Runs as a background task."""
     global _session, _suggestion_engine
-    broker = _setup_config.get("broker", {})
-    if not (broker.get("api_key") and broker.get("session_token")):
+    broker = _broker_credentials()
+    if not (broker["api_key"] and broker["session_token"]):
         return
+    saved_tok = _setup_config.get("broker", {}).get("session_token", "")
+    if saved_tok and saved_tok != broker["session_token"]:
+        log.info("Using BREEZE_SESSION_TOKEN from .env (data/setup.json holds an older token).")
     await asyncio.sleep(1)   # let the server finish binding before doing network I/O
     try:
         cfg = EngineConfig(
             api_key=broker["api_key"],
-            api_secret=broker.get("api_secret", ""),
+            api_secret=broker["api_secret"],
             session_token=broker["session_token"],
         )
         _session = BreezeSession(cfg)
@@ -960,8 +978,10 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_seed_signal_sessions, daemon=True, name="signal-seed").start()
     # Start background tick writer thread (no-op if DB unavailable)
     threading.Thread(target=_tick_writer_thread, daemon=True, name="tick-writer").start()
-    # Auto-connect broker if setup is complete and credentials are saved
-    if _setup_config.get("setup_complete"):
+    # Auto-connect if setup was completed, or if .env alone carries credentials
+    # (a fresh clone that never ran the setup wizard still connects).
+    _creds = _broker_credentials()
+    if _setup_config.get("setup_complete") or (_creds["api_key"] and _creds["session_token"]):
         asyncio.create_task(_auto_connect_broker())
     log.info("Dashboard running → http://localhost:8000")
     yield
