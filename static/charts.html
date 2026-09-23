@@ -413,6 +413,66 @@
   <label class="ind-picker-item"><input type="checkbox" id="chk-macd"   checked><span class="ind-swatch" style="background:#3D6A60;"></span><span class="ind-label">MACD (12, 26, 9)</span></label>
 </div>
 
+<style>
+  .spot-table-card { margin: 18px 0 28px; background: var(--bg-surface);
+    border: 1px solid var(--border-2); border-radius: var(--r-lg); box-shadow: var(--shadow-1); }
+  .spot-table-head { display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:14px 16px; border-bottom:1px solid var(--border-2); flex-wrap:wrap; }
+  .spot-table-head h2 { margin:0; font-size:15px; font-weight:600; color:var(--fg-1); }
+  .spot-table-head .sub { font-size:11.5px; color:var(--fg-3); margin-top:2px; }
+  .spot-filter { display:flex; align-items:center; gap:8px; }
+  .spot-filter input { background:var(--bg-base); border:1px solid var(--border-2);
+    border-radius:var(--r-sm); padding:6px 10px; font-size:12px; color:var(--fg-1); width:170px; }
+  .spot-scroll { overflow-x:auto; max-height:460px; overflow-y:auto; }
+  table.spot-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.spot-table th { position:sticky; top:0; z-index:1; background:var(--bg-surface);
+    text-align:left; font-weight:600; font-size:10.5px; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--fg-3); padding:9px 12px;
+    border-bottom:1px solid var(--border-2); white-space:nowrap; }
+  table.spot-table td { padding:8px 12px; border-bottom:1px solid var(--border-1);
+    white-space:nowrap; font-variant-numeric:tabular-nums; }
+  table.spot-table tbody tr:hover { background:var(--bg-base); }
+  table.spot-table .num { text-align:right; font-family:var(--font-mono); }
+  table.spot-table .sym { font-weight:600; color:var(--fg-1); }
+  .spot-up   { color:var(--tu-success); }
+  .spot-down { color:var(--tu-danger); }
+  .spot-flat { color:var(--fg-3); }
+  .spot-open-btn { display:inline-flex; align-items:center; justify-content:center;
+    width:26px; height:26px; border-radius:var(--r-sm); border:1px solid var(--border-2);
+    background:var(--bg-base); color:var(--fg-2); text-decoration:none; line-height:1; }
+  .spot-open-btn:hover { border-color:var(--tu-teal-500); color:var(--tu-teal-500); }
+  .spot-open-btn[aria-disabled="true"] { opacity:.32; pointer-events:none; }
+</style>
+
+<section class="spot-table-card" aria-label="Live spot detail">
+  <div class="spot-table-head">
+    <div>
+      <h2>Live spot detail</h2>
+      <div class="sub" id="spot-sub">Loading…</div>
+    </div>
+    <div class="spot-filter">
+      <input type="text" id="spot-search" placeholder="Filter symbol…" autocomplete="off" spellcheck="false" />
+    </div>
+  </div>
+  <div class="spot-scroll">
+    <table class="spot-table">
+      <thead><tr>
+        <th>Symbol</th>
+        <th class="num">LTP</th>
+        <th class="num">Chg</th>
+        <th class="num">%</th>
+        <th class="num">Open</th>
+        <th class="num">High</th>
+        <th class="num">Low</th>
+        <th style="text-align:center;">Chart</th>
+      </tr></thead>
+      <tbody id="spot-tbody">
+        <tr><td colspan="8" style="text-align:center;color:var(--fg-3);padding:26px;">Waiting for live prices…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <script>
 (function () {
 'use strict';
@@ -471,8 +531,12 @@ async function loadSymbols() {
     S.grouped  = grouped;
     document.getElementById('sym-count').textContent = S.symbols.length;
     renderWatchlist('');
-    // Pick NIFTY as default, else first symbol
-    const start = S.symbols.includes('NIFTY') ? 'NIFTY' : S.symbols[0];
+    // ?symbol=XYZ deep-link (used by the open-in-new-tab action on the detail
+    // table); fall back to NIFTY, else the first symbol.
+    const want  = new URLSearchParams(location.search).get('symbol');
+    const start = (want && S.symbols.includes(want.toUpperCase()))
+      ? want.toUpperCase()
+      : (S.symbols.includes('NIFTY') ? 'NIFTY' : S.symbols[0]);
     if (start) selectSymbol(start);
   } catch (e) {
     document.getElementById('watch-list').innerHTML =
@@ -1075,6 +1139,77 @@ function renderRightPanel() {
 
   document.getElementById('ind-panel').innerHTML = html;
 }
+
+// ─── Live spot detail table ───────────────────────────────────────────────────
+// Polls /api/spot/table once a second. That endpoint is local and serves from an
+// in-memory tick cache (the coverage lookup behind it is cached 5 min), so this
+// costs no broker API quota — Breeze allows only 75 REST calls/min in total.
+let _spotRows = [];
+let _spotFilter = '';
+
+function fmtNum(v, dp) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return Number(v).toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+
+function renderSpotTable() {
+  const tb = document.getElementById('spot-tbody');
+  if (!tb) return;
+  const q = _spotFilter.toUpperCase().trim();
+  const rows = q ? _spotRows.filter(r => r.symbol.includes(q)) : _spotRows;
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--fg-3);padding:26px;">'
+      + (_spotRows.length ? 'No symbol matches' : 'Waiting for live prices…') + '</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r => {
+    const cls = r.change > 0 ? 'spot-up' : (r.change < 0 ? 'spot-down' : 'spot-flat');
+    const sign = r.change > 0 ? '+' : '';
+    const chg = r.change == null ? '—' : sign + fmtNum(r.change, 2);
+    const pct = r.change_pct == null ? '—' : sign + fmtNum(r.change_pct, 2) + '%';
+    // Symbols with no stored candles have nothing to plot — disable the action
+    // rather than opening an empty chart.
+    const btn = r.chartable
+      ? `<a class="spot-open-btn" href="/charts?symbol=${encodeURIComponent(r.chart_symbol || r.symbol)}"`
+        + ` target="_blank" rel="noopener" title="Open ${r.symbol} chart in a new tab"`
+        + ` aria-label="Open ${r.symbol} chart in a new tab">↗</a>`
+      : `<span class="spot-open-btn" aria-disabled="true" title="No stored candles for ${r.symbol}">↗</span>`;
+    return `<tr>`
+      + `<td class="sym">${r.symbol}</td>`
+      + `<td class="num">${fmtNum(r.ltp, 2)}</td>`
+      + `<td class="num ${cls}">${chg}</td>`
+      + `<td class="num ${cls}">${pct}</td>`
+      + `<td class="num">${fmtNum(r.open, 2)}</td>`
+      + `<td class="num">${fmtNum(r.high, 2)}</td>`
+      + `<td class="num">${fmtNum(r.low, 2)}</td>`
+      + `<td style="text-align:center;">${btn}</td>`
+      + `</tr>`;
+  }).join('');
+}
+
+async function loadSpotTable() {
+  try {
+    const res = await fetch('/api/spot/table');
+    const d = await res.json();
+    _spotRows = d.rows || [];
+    const sub = document.getElementById('spot-sub');
+    if (sub) {
+      const n = _spotRows.filter(r => r.chartable).length;
+      sub.textContent = d.connected
+        ? `${d.count} live symbols · ${n} chartable · updating every second`
+        : 'Broker disconnected — prices are last known';
+    }
+    renderSpotTable();
+  } catch { /* transient: keep the last render */ }
+}
+
+document.getElementById('spot-search')?.addEventListener('input', function () {
+  _spotFilter = this.value;
+  renderSpotTable();
+});
+
+loadSpotTable();
+setInterval(loadSpotTable, 1000);
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 loadSymbols();

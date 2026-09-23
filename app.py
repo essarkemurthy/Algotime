@@ -212,6 +212,58 @@ def _init_signal_engine() -> None:
         _signal_engine = None
 
 
+def _startup_gap_fill() -> None:
+    """Bring the candles table current on startup, in the background.
+
+    The app persists live ticks but never writes aggregated candles, so candle
+    history only advances when scripts/update_all.py runs. Left to manual runs it
+    silently falls weeks behind — which starves the chart and backtest paths.
+
+    Runs as a detached subprocess so startup is never blocked, and at most once
+    per calendar day so repeated restarts do not re-spend the API quota. Futures
+    are skipped: all 432 contract pairs are expired and returned 0 new rows while
+    costing ~70% of the runtime. Set STARTUP_GAP_FILL=false to disable.
+    """
+    if os.getenv("STARTUP_GAP_FILL", "true").strip().lower() not in ("1", "true", "yes", "on"):
+        log.info("Startup gap fill disabled (STARTUP_GAP_FILL).")
+        return
+    if _db_store is None:
+        log.info("Startup gap fill skipped — no database configured.")
+        return
+    marker = Path("data") / f".gapfill_{date.today().isoformat()}"
+    if marker.exists():
+        log.info("Startup gap fill already ran today — skipping.")
+        return
+    days = os.getenv("STARTUP_GAP_FILL_DAYS", "40")
+    script = Path(__file__).parent / "scripts" / "update_all.py"
+    if not script.exists():
+        log.warning("Startup gap fill skipped — %s not found.", script)
+        return
+
+    def _run() -> None:
+        import subprocess
+        time.sleep(20)   # let the broker session + WS feeds settle first
+        cmd = [_sys.executable, str(script), "--days", str(days), "--no-futures"]
+        log.info("Startup gap fill: %s", " ".join(cmd))
+        try:
+            proc = subprocess.run(cmd, cwd=str(Path(__file__).parent),
+                                  capture_output=True, text=True, timeout=3600)
+        except Exception as exc:
+            log.warning("Startup gap fill failed to run: %s", exc)
+            return
+        tail = (proc.stdout or "").strip().splitlines()[-1:] or [""]
+        if proc.returncode == 0:
+            try:
+                marker.parent.mkdir(exist_ok=True)
+                marker.write_text("ok", encoding="utf-8")
+            except Exception:
+                pass
+            log.info("Startup gap fill done. %s", tail[0])
+        else:
+            log.warning("Startup gap fill exited %s. %s", proc.returncode, tail[0])
+
+    threading.Thread(target=_run, daemon=True, name="startup-gap-fill").start()
+
 def _seed_signal_sessions() -> None:
     """Best-effort: pre-fill today's bars from the candles table so indicators
     are warm if the dashboard starts mid-session. No-op without a DB / bars."""
@@ -263,6 +315,13 @@ def _save_setup_config() -> None:
 _tick_buffer: List[dict] = []
 _tick_buffer_lock = threading.Lock()
 _TICK_FLUSH_SEC = 5
+
+# symbol -> {open, high, low, prev_close, change, ltp, ts}. Fed straight from the
+# Breeze quote tick, which already carries the day OHLC (SDK data_type "1":
+# open=data[1], last=data[2], high=data[3], low=data[4]) — the app previously
+# kept only the LTP and threw the rest away. Survives a mid-session restart
+# because the broker sends the full day values on every tick, not just deltas.
+_day_stats: Dict[str, dict] = {}
 
 # ── Historical download state ─────────────────────────────────────────────────
 _download_running: bool      = False
@@ -600,6 +659,36 @@ def _on_tick(tick: dict) -> None:
         _tick_log[cache_key] = deque(maxlen=200)
     _tick_log[cache_key].appendleft(entry)
 
+    def _f(*keys):
+        for k in keys:
+            v = tick.get(k)
+            if v not in (None, "", 0, "0"):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    prior = _day_stats.get(cache_key) or {}
+    o  = _f("open")
+    hi = _f("high")
+    lo = _f("low")
+    pc = _f("previous_close", "prevClose", "close")
+    # Fall back to running extremes if the broker omits them on a given tick.
+    if hi is None:
+        hi = max(ltp_f, prior.get("high") or ltp_f)
+    if lo is None:
+        lo = min(ltp_f, prior.get("low") or ltp_f)
+    _day_stats[cache_key] = {
+        "ltp":        ltp_f,
+        "open":       o if o is not None else prior.get("open"),
+        "high":       hi,
+        "low":        lo,
+        "prev_close": pc if pc is not None else prior.get("prev_close"),
+        "change":     entry["change"],
+        "ts":         now.strftime("%H:%M:%S"),
+    }
+
     # Broadcast live price to all UI clients immediately (ticker strip / watchlist)
     if _main_loop:
         asyncio.run_coroutine_threadsafe(
@@ -776,6 +865,13 @@ async def _broadcast_loop() -> None:
         pnl_data = _compute_pnl()
         await broadcast({"type": "ltp", "data": _ltp_cache.copy()})
         await broadcast({"type": "pnl", "data": pnl_data})
+        # Summary row, open-position rows and the order book are driven by this
+        # snapshot. Without it they only refreshed on the client's 5 s poll, so
+        # position P&L visibly lagged the 1 s ticker beside it.
+        try:
+            await broadcast({"type": "paper_update", "data": _paper.summary(_ltp_cache)})
+        except Exception as exc:
+            log.debug("paper_update broadcast skipped: %s", exc)
         # Force square-off of algo paper positions near the close, and stream the
         # algo snapshot so the strategy panel stays live.
         if _algo is not None:
@@ -976,6 +1072,8 @@ async def lifespan(app: FastAPI):
     # from today's stored bars in a background thread.
     _init_signal_engine()
     threading.Thread(target=_seed_signal_sessions, daemon=True, name="signal-seed").start()
+    # Bring stored candle history current (background, once per day).
+    _startup_gap_fill()
     # Start background tick writer thread (no-op if DB unavailable)
     threading.Thread(target=_tick_writer_thread, daemon=True, name="tick-writer").start()
     # Auto-connect if setup was completed, or if .env alone carries credentials
@@ -2584,6 +2682,74 @@ _BREEZE_TO_DB = {
     "30minute": "30m", "1day": "1d",
 }
 
+
+# (timestamp, symbols) — which symbols have stored candles. Recomputed at most
+# every 5 min: it only changes when a fill runs, but /api/spot/table is polled
+# once a second per charts client.
+_chartable_cache: tuple = (0.0, set())
+
+# Live feed name -> name used in the candles table. The WATCHLIST labels these
+# indices by their NSE index name while the downloaders store them under the
+# Breeze/display name, so without this their chart action is wrongly disabled.
+_DB_SYMBOL_ALIAS = {
+    "CNXIT":           "NIFTY_IT",
+    "NIFTYFINSERVICE": "FINNIFTY",
+}
+
+
+def _chartable_symbols() -> Set[str]:
+    db_url = os.getenv("DB_URL", "")
+    if not db_url:
+        return set()
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT symbol FROM candles")
+            out = {r[0] for r in cur.fetchall()}
+        conn.close()
+        return out
+    except Exception as exc:
+        log.debug("spot table: coverage lookup failed: %s", exc)
+        return set()
+
+
+@app.get("/api/spot/table")
+async def get_spot_table():
+    """One row per live symbol for the charts-page detail table.
+
+    `chartable` says whether stored candles exist for that symbol — the UI greys
+    out the open-chart action for the rest, since there is nothing to plot.
+    """
+    global _chartable_cache
+    cached_at, chartable = _chartable_cache
+    if time.time() - cached_at >= 300:
+        chartable = await asyncio.to_thread(_chartable_symbols)
+        _chartable_cache = (time.time(), chartable)
+
+    rows = []
+    for sym, ltp in list(_ltp_cache.items()):
+        d = _day_stats.get(sym) or {}
+        prev, opn = d.get("prev_close"), d.get("open")
+        # Change is measured against the previous close when the broker sends one,
+        # else against the day open so the column is never blank mid-session.
+        chart_sym = _DB_SYMBOL_ALIAS.get(sym, sym)
+        base = prev or opn
+        chg = pct = None
+        if base:
+            chg = round(ltp - base, 2)
+            pct = round(chg / base * 100, 2)
+        rows.append({
+            "symbol": sym, "ltp": ltp, "open": opn,
+            "high": d.get("high"), "low": d.get("low"),
+            "prev_close": prev, "change": chg, "change_pct": pct,
+            "ts": d.get("ts"),
+            "chart_symbol": chart_sym,
+            "chartable": chart_sym in chartable,
+        })
+    rows.sort(key=lambda r: r["symbol"])
+    return {"rows": rows, "count": len(rows),
+            "connected": bool(_session and _session._api)}
 
 @app.get("/api/ohlc/db/available")
 async def get_db_available():
