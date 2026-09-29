@@ -193,12 +193,91 @@
 
   // ── saved list ─────────────────────────────────────────────────────────────
 
+  // ── native tile row (#tiles-cust) ──────────────────────────────────────────
+  // strategies-app.js owns this row and re-renders it from its own in-memory
+  // array, which knows nothing about saved strategies. Take it over so the row
+  // reflects what is actually persisted and firing, and re-assert if that
+  // script redraws over us.
+
+  function tileHTML(s, idx) {
+    var ix = String(idx).padStart(2, '0');
+    var cls = 'strat-tile' + (s.enabled ? ' running' : '');
+    return '<button class="' + cls + '" data-cs-id="' + esc(s.id) + '" type="button">'
+      + '<div class="tile-head"><span class="num">' + ix + '</span>'
+      + '<span class="status-dot" aria-hidden="true"></span></div>'
+      + '<div class="nm">' + esc(s.name) + '</div>'
+      + '<div class="foot"><span class="lbl">' + esc(s.direction || '') + '</span>'
+      + '<span class="val ' + (s.enabled ? 'up' : 'flat') + '">'
+      + (s.enabled ? 'live' : 'paused') + '</span></div>'
+      + '</button>';
+  }
+
+  function renderTiles(list) {
+    var row = el('tiles-cust');
+    if (!row) return;
+    var add = '<button class="strat-tile add" data-cs-add="1" type="button">'
+      + '<div class="plus-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg></div>'
+      + '<div class="nm">Add new strategy</div></button>';
+    row.innerHTML = list.map(function (s, i) { return tileHTML(s, i + 1); }).join('') + add;
+
+    var cnt = el('cnt-cust');
+    if (cnt) cnt.textContent = String(list.length);
+    var kpi = el('kpi-custom');
+    if (kpi) kpi.textContent = String(list.length);
+
+    row.querySelectorAll('[data-cs-add]').forEach(function (b) {
+      b.addEventListener('click', function () { newStrategy(); });
+    });
+    row.querySelectorAll('[data-cs-id]').forEach(function (b) {
+      b.addEventListener('click', function () { editStrategy(b.dataset.csId); });
+    });
+  }
+
+  function focusBuilder() {
+    var card = el('cs-builder-card');
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(function () { el('cs-name').focus(); }, 380);
+    }
+  }
+
+  function newStrategy() {
+    editingId = null;
+    el('cs-name').value = '';
+    el('cs-direction').value = 'LONG';
+    el('cs-match').value = 'all';
+    el('cs-symbols').value = '';
+    conds = [blankCond()];
+    renderConds();
+    msg('New strategy — define the conditions, test it, then save.', 'busy');
+    focusBuilder();
+  }
+
+  function editStrategy(id) {
+    var s = (lastList || []).find(function (x) { return x.id === id; });
+    if (!s) return;
+    editingId = s.id;
+    el('cs-name').value = s.name || '';
+    el('cs-direction').value = s.direction || 'LONG';
+    el('cs-match').value = s.match || 'all';
+    el('cs-symbols').value = (s.symbols || []).join(', ');
+    conds = JSON.parse(JSON.stringify(s.conditions || [blankCond()]));
+    renderConds();
+    msg('Editing <b>' + esc(s.name) + '</b> — saving overwrites it.', 'busy');
+    focusBuilder();
+  }
+
+  var lastList = [];
+
   function loadList() {
     fetch('/api/strategy/custom').then(function (r) { return r.json(); })
       .then(function (d) {
+        lastList = d.strategies || [];
+        renderTiles(lastList);
         var box = el('cs-list');
         if (!box) return;
-        var list = d.strategies || [];
+        var list = lastList;
         if (!list.length) {
           box.innerHTML = '<div class="cs-empty">No custom strategies yet.</div>';
           return;
@@ -312,6 +391,18 @@
     loadList();
     loadSignals();
     setInterval(loadSignals, 30000);
+
+    // strategies-app.js redraws #tiles-cust from its own array on any state
+    // change, which would wipe the persisted tiles. Re-assert when that happens.
+    var row = el('tiles-cust');
+    if (row && window.MutationObserver) {
+      var obs = new MutationObserver(function () {
+        // innerHTML replacement leaves attributes on the row itself intact,
+        // so detect our own Add tile instead of a flag.
+        if (!row.querySelector('[data-cs-add]')) renderTiles(lastList);
+      });
+      obs.observe(row, { childList: true });
+    }
   }
 
   if (document.readyState === 'loading') {
