@@ -2518,6 +2518,178 @@ def _report_stats(closed: list) -> dict:
     }
 
 
+@app.get("/api/strategy/catalogue")
+async def strategy_catalogue():
+    """Indicators and operators a custom rule may use — drives the UI builder so
+    the form can never offer something the evaluator does not support."""
+    from signals.custom import INDICATORS, OPERATORS
+    return {
+        "indicators": [
+            {"name": k, "label": v["label"], "args": v["args"]}
+            for k, v in sorted(INDICATORS.items(), key=lambda kv: kv[1]["label"])
+        ],
+        "operators": list(OPERATORS),
+        "builtins": sorted(ALL_STRATEGIES) if "ALL_STRATEGIES" in globals() else [],
+    }
+
+
+@app.get("/api/strategy/custom")
+async def strategy_custom_list():
+    from signals.custom import load_definitions, _describe
+    defs = load_definitions()
+    for d in defs:
+        d["summary"] = _describe(d)
+    return {"strategies": defs, "count": len(defs)}
+
+
+@app.post("/api/strategy/custom")
+async def strategy_custom_save(body: dict):
+    """Create or update one definition. Rejects anything the evaluator cannot run,
+    so a broken rule never reaches the bar-close loop."""
+    from signals.custom import load_definitions, save_definitions, validate, _describe
+
+    errs = validate(body)
+    if errs:
+        return {"ok": False, "errors": errs}
+
+    sid = (body.get("id") or body.get("name", "")).strip().upper().replace(" ", "_")
+    if not sid:
+        return {"ok": False, "errors": ["could not derive an id from the name"]}
+    body["id"] = sid
+    body.setdefault("enabled", True)
+    body.setdefault("match", "all")
+    body.setdefault("symbols", [])
+    body["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+    defs = load_definitions()
+    replaced = False
+    for i, d in enumerate(defs):
+        if str(d.get("id", "")).upper() == sid:
+            defs[i] = body
+            replaced = True
+            break
+    if not replaced:
+        defs.append(body)
+    save_definitions(defs)
+    log.info("Custom strategy %s %s", sid, "updated" if replaced else "created")
+    return {"ok": True, "id": sid, "updated": replaced, "summary": _describe(body)}
+
+
+@app.delete("/api/strategy/custom/{sid}")
+async def strategy_custom_delete(sid: str):
+    from signals.custom import load_definitions, save_definitions
+    defs = load_definitions()
+    keep = [d for d in defs if str(d.get("id", "")).upper() != sid.upper()]
+    if len(keep) == len(defs):
+        raise HTTPException(404, f"No custom strategy '{sid}'")
+    save_definitions(keep)
+    log.info("Custom strategy %s deleted", sid.upper())
+    return {"ok": True, "id": sid.upper()}
+
+
+@app.post("/api/strategy/custom/{sid}/toggle")
+async def strategy_custom_toggle(sid: str, body: dict):
+    from signals.custom import load_definitions, save_definitions
+    defs = load_definitions()
+    for d in defs:
+        if str(d.get("id", "")).upper() == sid.upper():
+            d["enabled"] = bool(body.get("enabled", True))
+            save_definitions(defs)
+            return {"ok": True, "id": sid.upper(), "enabled": d["enabled"]}
+    raise HTTPException(404, f"No custom strategy '{sid}'")
+
+
+@app.post("/api/strategy/custom/preview")
+async def strategy_custom_preview(body: dict):
+    """Evaluate a draft rule against recent stored bars before saving it.
+
+    Answers the question the builder cannot: would this actually have fired? A
+    rule that is valid but never true is the most likely thing to get wrong.
+    """
+    from signals.custom import validate, evaluate, make_detector
+    from signals.config import SignalConfig
+    from signals.session import SymbolSession
+
+    errs = validate(body)
+    if errs:
+        return {"ok": False, "errors": errs}
+    if _db_store is None:
+        return {"ok": False, "errors": ["preview needs the database"]}
+
+    symbol = (body.get("preview_symbol") or "NIFTY").upper()
+    interval = body.get("preview_interval") or "5m"
+    days = int(body.get("preview_days") or 5)
+
+    def _run():
+        import psycopg2
+        conn = psycopg2.connect(os.environ["DB_URL"])
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT ts, open, high, low, close, volume FROM candles
+                   WHERE symbol=%s AND "interval"=%s
+                     AND ts >= NOW() - (%s || ' days')::interval
+                   ORDER BY ts""", (symbol, interval, days))
+            rows = cur.fetchall()
+        conn.close()
+        return rows
+
+    rows = await asyncio.to_thread(_run)
+    if not rows:
+        return {"ok": False, "errors": [f"no stored {interval} bars for {symbol}"]}
+
+    cfg = SignalConfig()
+    detect = make_detector(body)
+    hits, by_day = [], {}
+    sess = None
+    cur_day = None
+    for ts, o, h, l, c, v in rows:
+        d = ts.date()
+        if d != cur_day:
+            cur_day, sess = d, SymbolSession(symbol=symbol, cfg=cfg, trade_date=d)
+        sess.add_bar({"ts": ts, "open": float(o), "high": float(h), "low": float(l),
+                      "close": float(c), "volume": float(v or 0)})
+        sig = detect(sess)
+        if sig is not None:
+            by_day[str(d)] = by_day.get(str(d), 0) + 1
+            if len(hits) < 25:
+                hits.append({"ts": ts.isoformat(), "price": sig.trigger_price,
+                             "direction": sig.direction})
+    return {"ok": True, "symbol": symbol, "interval": interval,
+            "bars": len(rows), "fired": sum(by_day.values()),
+            "by_day": by_day, "samples": hits}
+
+
+@app.get("/api/strategy/signals")
+async def strategy_signals(strategy: str = "", days: int = 5, limit: int = 200):
+    """Signal decisions for the strategy pane.
+
+    Reads paper_signal_decisions, which records EVERY signal with the reason it
+    did or did not trade — so the pane shows rules that fired and were skipped,
+    not just the ones that became positions.
+    """
+    if _db_store is None:
+        return {"signals": [], "counts": {}, "error": "database not configured"}
+    frm = date.today() - timedelta(days=max(1, days))
+    try:
+        rows = await asyncio.to_thread(_db_store.get_signal_decisions, frm, date.today())
+    except Exception as exc:
+        return {"signals": [], "counts": {}, "error": str(exc)}
+
+    if strategy:
+        want = strategy.upper()
+        rows = [r for r in rows if str(r.get("strategy", "")).upper() == want]
+
+    counts: Dict[str, int] = {}
+    per_strategy: Dict[str, int] = {}
+    for r in rows:
+        counts[r.get("decision") or "?"] = counts.get(r.get("decision") or "?", 0) + 1
+        s = r.get("strategy") or "?"
+        per_strategy[s] = per_strategy.get(s, 0) + 1
+    return {"signals": rows[:limit], "total": len(rows), "counts": counts,
+            "per_strategy": per_strategy, "from": frm.isoformat(),
+            "strategy": strategy.upper() if strategy else None}
+
+
 @app.get("/api/reports")
 async def get_reports(period: str = "1m", fy: Optional[int] = None,
                       frm: Optional[str] = None, to: Optional[str] = None):

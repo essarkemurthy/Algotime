@@ -65,7 +65,16 @@ class SignalEngine:
         sess.add_bar(bar)
 
         fired: List[Signal] = []
-        for detect in DETECTORS:
+        # Built-ins plus any user-defined strategies. active_detectors() rebuilds
+        # only when data/custom_strategies.json changes, so edits from the UI take
+        # effect on the next bar without a restart.
+        try:
+            from signals.custom import active_detectors
+            detectors = tuple(DETECTORS) + tuple(active_detectors())
+        except Exception as exc:
+            log.warning("custom strategies unavailable: %s", exc)
+            detectors = DETECTORS
+        for detect in detectors:
             try:
                 sig = detect(sess)
             except Exception as exc:

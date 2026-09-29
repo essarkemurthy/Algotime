@@ -892,8 +892,131 @@
   <!-- populated by JS -->
 </aside>
 
+<style>
+  .cs-card { background: var(--bg-surface,#fff); border: 1px solid var(--border-2,#dfe3e6);
+    border-radius: 14px; box-shadow: var(--shadow-1,0 1px 3px rgba(0,0,0,.06)); margin: 18px 0; }
+  .cs-head { padding: 16px 18px; border-bottom: 1px solid var(--border-2,#dfe3e6);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .cs-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .cs-head .sub { font-size: 11.5px; color: var(--fg-3,#68727d); margin-top: 3px; }
+  .cs-body { padding: 16px 18px; }
+  .cs-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 12px; }
+  .cs-f label { display:block; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
+    color: var(--fg-3,#68727d); font-weight:600; margin-bottom:5px; }
+  .cs-in, .cs-f input, .cs-f select { width:100%; box-sizing:border-box; padding:8px 10px;
+    font-size:12.5px; font-family:inherit; border:1px solid var(--border-2,#dfe3e6);
+    border-radius:7px; background:var(--bg-base,#fafafa); color:var(--fg-1,#16191c); }
+  .cs-in:focus { outline:none; border-color:#2f6f62; }
+  .cs-label { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
+    color:var(--fg-3,#68727d); font-weight:600; margin:18px 0 8px; }
+  .cs-cond { display:grid; grid-template-columns:1fr auto 1fr auto; gap:8px; align-items:center;
+    margin-bottom:8px; }
+  .cs-side { display:flex; gap:6px; }
+  .cs-side .cs-kind { max-width:104px; } .cs-side .cs-period, .cs-side .cs-mult { max-width:74px; }
+  .cs-op { max-width:150px; }
+  .cs-del { border:1px solid var(--border-2,#dfe3e6); background:var(--bg-base,#fafafa);
+    color:var(--fg-3,#68727d); border-radius:7px; width:30px; height:32px; cursor:pointer; font-size:16px; }
+  .cs-del:hover { color:#b3392c; border-color:#b3392c; }
+  .cs-actions { display:flex; gap:9px; margin-top:16px; flex-wrap:wrap; align-items:center; }
+  .cs-btn { padding:8px 14px; font-size:12.5px; font-weight:600; border-radius:7px; cursor:pointer;
+    font-family:inherit; border:1px solid var(--border-2,#dfe3e6);
+    background:var(--bg-base,#fafafa); color:var(--fg-1,#16191c); }
+  .cs-btn.primary { background:#2f6f62; border-color:#2f6f62; color:#fff; }
+  .cs-btn.danger:hover { color:#b3392c; border-color:#b3392c; }
+  .cs-msg { margin-top:12px; font-size:12px; line-height:1.6; min-height:18px; }
+  .cs-msg.err { color:#b3392c; } .cs-msg.ok { color:#2f6f62; } .cs-msg.busy { color:var(--fg-3,#68727d); }
+  .cs-dim { color:var(--fg-3,#68727d); }
+  .cs-item { display:flex; justify-content:space-between; gap:12px; padding:11px 0;
+    border-bottom:1px solid var(--border-1,#eef1f3); align-items:flex-start; }
+  .cs-item:last-child { border-bottom:none; }
+  .cs-item-name { font-size:13px; font-weight:600; }
+  .cs-item-sum { font-size:11.5px; color:var(--fg-3,#68727d); margin-top:3px; font-family:var(--font-mono,monospace); }
+  .cs-item-act { display:flex; gap:6px; flex:none; }
+  .cs-tag { font-size:9.5px; letter-spacing:.05em; padding:2px 6px; border-radius:4px;
+    background:var(--bg-base,#f2f4f5); color:var(--fg-3,#68727d); font-weight:600; }
+  .cs-tag.off { color:#b3392c; }
+  .cs-empty { padding:22px; text-align:center; color:var(--fg-3,#68727d); font-size:12px; }
+  .cs-chip { display:inline-block; font-size:10.5px; font-weight:600; padding:3px 8px;
+    border-radius:20px; background:var(--bg-base,#f2f4f5); color:var(--fg-3,#68727d); margin-right:6px; }
+  .cs-chip.ok { background:#e6f1ee; color:#2f6f62; }
+  table.cs-table { width:100%; border-collapse:collapse; font-size:12px; }
+  table.cs-table th { position:sticky; top:0; background:var(--bg-surface,#fff); text-align:left;
+    font-size:10px; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-3,#68727d);
+    font-weight:600; padding:8px 10px; border-bottom:1px solid var(--border-2,#dfe3e6); white-space:nowrap; }
+  table.cs-table td { padding:7px 10px; border-bottom:1px solid var(--border-1,#eef1f3); white-space:nowrap; }
+  table.cs-table .num { text-align:right; font-family:var(--font-mono,monospace); }
+  .cs-long { color:#2f6f62; font-weight:600; } .cs-short { color:#b3392c; font-weight:600; }
+  .cs-scroll { max-height:420px; overflow:auto; }
+</style>
+
+<section class="cs-card" id="cs-builder-card" aria-label="Create a custom strategy">
+  <div class="cs-head">
+    <div>
+      <h2>Create a custom strategy</h2>
+      <div class="sub">Rules are evaluated by the signal engine on every bar close, alongside the
+        built-in detectors &mdash; a saved strategy fires real paper signals.</div>
+    </div>
+  </div>
+  <div class="cs-body">
+    <div class="cs-grid">
+      <div class="cs-f"><label>Name</label>
+        <input id="cs-name" type="text" placeholder="e.g. VWAP pullback"></div>
+      <div class="cs-f"><label>Direction</label>
+        <select id="cs-direction"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select></div>
+      <div class="cs-f"><label>Conditions must</label>
+        <select id="cs-match"><option value="all">ALL match (AND)</option><option value="any">ANY match (OR)</option></select></div>
+      <div class="cs-f"><label>Symbols (blank = all)</label>
+        <input id="cs-symbols" type="text" placeholder="NIFTY, RELIANCE"></div>
+    </div>
+
+    <div class="cs-label">Conditions</div>
+    <div id="cs-conds"></div>
+    <button class="cs-btn" id="cs-add" type="button">+ Add condition</button>
+
+    <div class="cs-label">Test against stored bars before saving</div>
+    <div class="cs-grid">
+      <div class="cs-f"><label>Symbol</label><input id="cs-prev-sym" type="text" value="NIFTY"></div>
+      <div class="cs-f"><label>Interval</label>
+        <select id="cs-prev-iv"><option>5m</option><option>1m</option><option>30m</option><option>1d</option></select></div>
+      <div class="cs-f"><label>Look-back (days)</label><input id="cs-prev-days" type="number" min="1" value="5"></div>
+    </div>
+
+    <div class="cs-actions">
+      <button class="cs-btn" id="cs-preview" type="button">Test rule</button>
+      <button class="cs-btn primary" id="cs-save" type="button">Save &amp; activate</button>
+    </div>
+    <div class="cs-msg" id="cs-msg"></div>
+  </div>
+</section>
+
+<section class="cs-card" aria-label="Saved custom strategies">
+  <div class="cs-head"><div><h2>My strategies</h2>
+    <div class="sub">Paused strategies stay saved but stop firing.</div></div></div>
+  <div class="cs-body"><div id="cs-list"><div class="cs-empty">Loading&hellip;</div></div></div>
+</section>
+
+<section class="cs-card" id="cs-signals-card" aria-label="Strategy signals">
+  <div class="cs-head">
+    <div><h2>Signals</h2><div class="sub" id="cs-sig-sub">Loading&hellip;</div></div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input class="cs-in" id="cs-sig-filter" type="text" placeholder="all strategies" style="width:160px;">
+      <input class="cs-in" id="cs-sig-days" type="number" min="1" value="5" title="days" style="width:70px;">
+      <button class="cs-btn" id="cs-sig-refresh" type="button">Refresh</button>
+    </div>
+  </div>
+  <div class="cs-body" style="padding-bottom:8px;"><div id="cs-sig-counts"></div></div>
+  <div class="cs-scroll">
+    <table class="cs-table">
+      <thead><tr><th>Signal time</th><th>Strategy</th><th>Symbol</th><th>Side</th>
+        <th class="num">Trigger</th><th>Decision</th><th>Reason</th><th class="num">Lag</th></tr></thead>
+      <tbody id="cs-sig-body"><tr><td colspan="8" class="cs-empty">Loading&hellip;</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
 <script src="/static/strategies-data.js"></script>
 <script src="/static/strategies-app.js"></script>
+<script src="/static/custom-strategy.js"></script>
 <div id="theme-picker-mount"></div>
 <script src="/static/theme.js"></script>
 <script src="/static/session-modal.js"></script>
