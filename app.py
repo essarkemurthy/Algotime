@@ -305,6 +305,44 @@ def _load_setup_config() -> None:
         log.warning("Could not load setup config: %s", exc)
 
 
+def _persist_env_credentials(broker: dict) -> None:
+    """Mirror broker credentials into .env, preserving comments and other keys.
+
+    _broker_credentials() lets .env win over data/setup.json, so a token saved
+    from the UI must land in .env too — otherwise the next restart would silently
+    fall back to the older value there and come up disconnected again.
+    """
+    env_path = Path(__file__).parent / ".env"
+    updates = {"BREEZE_API_KEY": broker.get("api_key", ""),
+               "BREEZE_API_SECRET": broker.get("api_secret", ""),
+               "BREEZE_SESSION_TOKEN": broker.get("session_token", "")}
+    updates = {k: v for k, v in updates.items() if v}
+    if not updates:
+        return
+    try:
+        lines = (env_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                 if env_path.exists() else [])
+        seen = set()
+        for i, line in enumerate(lines):
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k = s.split("=", 1)[0].strip()
+            if k in updates:
+                lines[i] = f"{k}={updates[k]}"
+                seen.add(k)
+        for k, v in updates.items():
+            if k not in seen:
+                lines.append(f"{k}={v}")
+        env_path.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+        # Keep this process in sync too, so a later read sees the new value.
+        for k, v in updates.items():
+            os.environ[k] = v
+        log.info("Broker credentials mirrored to .env")
+    except Exception as exc:
+        log.warning("Could not write .env: %s", exc)
+
+
 def _save_setup_config() -> None:
     _CONFIG_FILE.parent.mkdir(exist_ok=True)
     with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -1332,6 +1370,7 @@ async def setup_save_broker(body: dict):
     _setup_config["broker"] = broker
     _setup_config["setup_complete"] = True
     _save_setup_config()
+    _persist_env_credentials(broker)
 
     # Tear down any existing session before reconnecting
     if _session:
