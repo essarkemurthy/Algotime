@@ -69,6 +69,18 @@ if not exist ".env" (
     pause >nul
 )
 
+REM --- 3b. Broker session -------------------------------------------------------
+REM Session tokens expire every 24h. Validate before launching; the preflight
+REM reuses whatever is already saved in .env / data/setup.json and only prompts
+REM for what is actually expired or missing.
+"%VENV_PY%" scripts\preflight_token.py
+if errorlevel 1 (
+    echo.
+    echo  [warn] Broker session is not active - the dashboard will start OFFLINE.
+    echo         Live prices, signals and the algo need a valid token.
+    echo.
+)
+
 REM --- 4. Launch ---------------------------------------------------------------
 echo  [run] Starting the dashboard on http://localhost:8000 ...
 echo        Leave this window open. Press Ctrl+C to stop.

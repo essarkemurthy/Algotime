@@ -11,8 +11,10 @@
 # -TaskName  self-unregister that scheduled task once the restart succeeds.
 
 param(
-    [int]    $Port     = 8000,
-    [string] $TaskName = ""
+    [int]    $Port        = 8000,
+    [string] $TaskName    = "",
+    [switch] $Interactive,   # allow the token preflight to prompt
+    [switch] $Force          # restart even if the session is dead
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,6 +44,27 @@ try {
         Say "no open paper positions - safe to restart"
     }
 } catch { Say "app not responding (already down?)" }
+
+# --- 1b. Broker session -------------------------------------------------------
+# Validate before tearing the old instance down: restarting onto a dead token
+# just trades a working-but-stale app for a disconnected one.
+$pre = Join-Path $repo "scripts\preflight_token.py"
+if (Test-Path $pre) {
+    if ($Interactive) {
+        & $py $pre                       # may prompt for a fresh token
+    } else {
+        & $py $pre "--check" | Out-Null  # unattended: never block on input
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Say "WARNING broker session not active - app will start OFFLINE"
+        if (-not $Force) {
+            Say "aborting; pass -Force to restart anyway, or -Interactive to be prompted"
+            exit 1
+        }
+    } else {
+        Say "broker session validated"
+    }
+}
 
 # --- 2. Stop whatever holds the port -----------------------------------------
 $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
