@@ -55,54 +55,55 @@
       // reflow into a single row when the pane is opened.
       '.tile-section.sp-open .tile-row{display:grid;}',
       '.tile-section.sp-open .sp-list{display:grid;}',
-      // Strategies render as raised, rounded cards in a responsive grid. Depth
-      // comes from three stacked layers: an inset top highlight for the lit
-      // edge, a soft ambient shadow, and a tighter contact shadow beneath.
+      // Boxes mirror .strat-tile.running from the tile rows: teal hairline ring
+      // over a mint-to-surface wash, numbered head, status dot, footer. Same
+      // family as the tiles above them, with a little more depth.
       '.sp-list{margin-top:18px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;}',
-      '.sp-box{position:relative;',
-      '  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,0) 38%),',
-      '             linear-gradient(168deg,var(--bg-surface,#fff),var(--bg-sunken,#faf9f6));',
-      '  border:1px solid var(--border-2,#dfe3e6);border-radius:var(--r-lg,14px);',
-      '  padding:16px 46px 16px 17px;',
-      '  box-shadow:inset 0 1px 0 rgba(255,255,255,.75),',
+      '.sp-box{position:relative;display:flex;flex-direction:column;gap:10px;',
+      '  min-height:128px;padding:18px 18px 16px;text-align:left;',
+      '  background:linear-gradient(180deg,var(--tu-teal-50,#eef5f2) 0%,var(--bg-surface,#fff) 60%);',
+      '  border:1px solid var(--tu-teal-300,#9ec4b8);border-radius:var(--r-lg,14px);',
+      '  box-shadow:inset 0 0 0 1px var(--tu-teal-300,#9ec4b8),',
+      '             inset 0 1px 0 rgba(255,255,255,.7),',
       '             0 1px 2px rgba(33,31,24,.05),',
-      '             0 6px 16px -6px rgba(33,31,24,.14);',
+      '             0 8px 20px -8px rgba(47,111,98,.20);',
       '  transition:transform var(--dur-fast,120ms) var(--ease-out,ease),',
       '             box-shadow var(--dur-base,200ms) var(--ease-out,ease),',
       '             border-color var(--dur-base,200ms) var(--ease-out,ease);}',
-      '.sp-box:hover{transform:translateY(-3px);border-color:var(--tu-teal-300,#9ec4b8);',
-      '  box-shadow:inset 0 1px 0 rgba(255,255,255,.8),',
+      '.sp-box:hover{transform:translateY(-3px);border-color:var(--tu-teal-400,#6fa694);',
+      '  box-shadow:inset 0 0 0 1px var(--tu-teal-400,#6fa694),',
+      '             inset 0 1px 0 rgba(255,255,255,.8),',
       '             0 2px 4px rgba(33,31,24,.05),',
-      '             0 16px 32px -10px rgba(33,31,24,.22);}',
-      // Selected: teal ring plus a warm wash, echoing .strat-tile.running.
-      '.sp-box.sel{border-color:var(--tu-teal-400,#6fa694);',
-      '  background:linear-gradient(168deg,var(--tu-teal-50,#eef5f2) 0%,var(--bg-surface,#fff) 62%);',
-      '  box-shadow:inset 0 0 0 1px var(--tu-teal-300,#9ec4b8),',
-      '             inset 0 1px 0 rgba(255,255,255,.7),',
-      '             0 10px 26px -8px rgba(47,111,98,.28);}',
-      // Accent rail down the left edge, revealed on hover/selection.
-      ".sp-box::after{content:'';position:absolute;left:0;top:14px;bottom:14px;width:3px;",
-      '  border-radius:0 3px 3px 0;background:var(--tu-teal-400,#6fa694);',
-      '  opacity:0;transition:opacity var(--dur-base,200ms) var(--ease-out,ease);}',
-      '.sp-box:hover::after,.sp-box.sel::after{opacity:1;}',
-      // Checkbox pinned to the top-right corner of each box.
-      '.sp-check{position:absolute;top:13px;right:13px;width:17px;height:17px;margin:0;',
-      '  cursor:pointer;accent-color:var(--tu-teal-600,#2f6f62);z-index:2;',
-      '  border-radius:5px;transition:transform var(--dur-fast,120ms) var(--ease-out,ease);}',
-      '.sp-check:hover{transform:scale(1.12);}',
-      '.sp-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}',
-      '.sp-name{font-size:14px;font-weight:600;color:var(--fg-1,#16191c);letter-spacing:-.005em;}',
-      '.sp-box.sel .sp-name{color:var(--tu-teal-800,#255a50);}',
-      '.sp-sub{font-size:11.5px;color:var(--fg-2,#48525c);margin-top:3px;}',
-      '.sp-desc{font-size:11.5px;line-height:1.6;color:var(--fg-3,#68727d);margin-top:8px;}',
-      '.sp-badge{font-size:9px;letter-spacing:.06em;font-weight:700;padding:3px 8px;',
-      '  border-radius:var(--r-pill,20px);background:var(--bg-sunken,#f2f4f5);',
-      '  color:var(--fg-3,#68727d);text-transform:uppercase;',
-      '  box-shadow:inset 0 0 0 1px var(--border-1,#eef1f3);}',
-      '.sp-badge.live{background:var(--tu-teal-50,#e6f1ee);color:var(--tu-teal-700,#2f6f62);',
-      '  box-shadow:inset 0 0 0 1px var(--tu-teal-200,#c5ded5);}',
-      '.sp-badge.paused{background:var(--tu-rose-200,#fbeceb);color:var(--tu-danger,#b3392c);',
-      '  box-shadow:inset 0 0 0 1px var(--tu-rose-300,#f2cfcb);}',
+      '             0 18px 34px -10px rgba(47,111,98,.30);}',
+      // Selected deepens the same treatment rather than introducing a new one.
+      '.sp-box.sel{border-color:var(--tu-teal-500,#3f8574);',
+      '  background:linear-gradient(180deg,var(--tu-teal-100,#dcebe5) 0%,var(--bg-surface,#fff) 62%);',
+      '  box-shadow:inset 0 0 0 1.5px var(--tu-teal-500,#3f8574),',
+      '             inset 0 1px 0 rgba(255,255,255,.75),',
+      '             0 12px 28px -8px rgba(47,111,98,.34);}',
+      // Head: index on the left, status dot and checkbox on the right.
+      '.sp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}',
+      '.sp-num{font-family:var(--font-mono,monospace);font-size:10.5px;font-weight:500;',
+      '  letter-spacing:.04em;color:var(--fg-3,#68727d);}',
+      '.sp-headright{display:flex;align-items:center;gap:9px;flex:none;}',
+      '.sp-dot{width:8px;height:8px;border-radius:999px;flex:none;',
+      '  background:var(--tu-success,#5f8a6b);box-shadow:0 0 0 3px rgba(95,138,107,.18);}',
+      '.sp-dot.off{background:var(--fg-4,#a8b0b8);box-shadow:none;}',
+      '.sp-check{width:16px;height:16px;margin:0;cursor:pointer;flex:none;',
+      '  accent-color:var(--tu-teal-600,#2f6f62);',
+      '  transition:transform var(--dur-fast,120ms) var(--ease-out,ease);}',
+      '.sp-check:hover{transform:scale(1.14);}',
+      '.sp-name{font-size:15px;font-weight:600;line-height:1.25;letter-spacing:-.005em;',
+      '  color:var(--tu-teal-800,#255a50);}',
+      '.sp-sub{font-size:11.5px;color:var(--fg-2,#48525c);margin-top:-4px;}',
+      '.sp-desc{font-size:11.5px;line-height:1.6;color:var(--fg-3,#68727d);}',
+      // Footer mirrors .strat-tile .foot - mono label left, value right.
+      '.sp-foot{display:flex;align-items:center;justify-content:space-between;',
+      '  font-size:11px;color:var(--fg-3,#68727d);margin-top:auto;padding-top:2px;}',
+      '.sp-foot .lbl{font-family:var(--font-mono,monospace);letter-spacing:.04em;',
+      '  text-transform:uppercase;color:var(--fg-4,#a8b0b8);}',
+      '.sp-foot .val{font-weight:600;color:var(--tu-teal-700,#2f6f62);}',
+      '.sp-foot .val.off{color:var(--fg-3,#68727d);}',
       '.sp-rule{font-family:var(--font-mono,monospace);font-size:10.5px;',
       '  color:var(--fg-2,#48525c);background:var(--bg-sunken,#f7f8f9);',
       '  padding:7px 10px;border-radius:var(--r-md,9px);display:block;margin-top:10px;',
@@ -152,20 +153,28 @@
     chip.textContent = n + ' selected';
   }
 
-  function itemHTML(o, groupKey) {
+  function itemHTML(o, groupKey, idx) {
     var sel = readSel(groupKey).indexOf(o.id) >= 0;
+    var ix = String(idx).padStart(2, '0');
+    // Only a genuinely active strategy gets the lit dot; armed/paused/off do not.
+    var on = o.state === 'running' || o.state === 'live';
     return '<div class="sp-box' + (sel ? ' sel' : '') + '" data-sp-id="' + esc(o.id) + '">'
+      + '<div class="sp-head">'
+      + '<span class="sp-num">' + ix + '</span>'
+      + '<span class="sp-headright">'
+      + '<span class="sp-dot' + (on ? '' : ' off') + '" aria-hidden="true"></span>'
       + '<input class="sp-check" type="checkbox" ' + (sel ? 'checked ' : '')
       + 'data-sp-group="' + esc(groupKey) + '" data-sp-pick="' + esc(o.id) + '"'
       + ' aria-label="Select ' + esc(o.name) + '">'
-      + '<div class="sp-top">'
-      + '<span class="sp-name">' + esc(o.name) + '</span>'
-      + (o.badge ? '<span class="sp-badge ' + esc(o.badgeCls || '') + '">' + esc(o.badge) + '</span>' : '')
-      + '</div>'
+      + '</span></div>'
+      + '<div class="sp-name">' + esc(o.name) + '</div>'
       + (o.sub ? '<div class="sp-sub">' + esc(o.sub) + '</div>' : '')
       + (o.desc ? '<div class="sp-desc">' + esc(o.desc) + '</div>' : '')
       + (o.rule ? '<div class="sp-rule">' + esc(o.rule) + '</div>' : '')
-      + '</div>';
+      + '<div class="sp-foot">'
+      + '<span class="lbl">' + esc(o.foot || '') + '</span>'
+      + '<span class="val' + (on ? '' : ' off') + '">' + esc(o.state || '') + '</span>'
+      + '</div></div>';
   }
 
   function wireChecks(listEl, groupKey, secId) {
@@ -195,15 +204,15 @@
       list.innerHTML = '<div class="sp-empty">No strategies in this group.</div>';
       return;
     }
-    list.innerHTML = rows.map(function (s) {
+    list.innerHTML = rows.map(function (s, i) {
       return itemHTML({
         id: s.id,
         name: s.name,
         sub: s.sub,
         desc: s.desc,
-        badge: s.running ? 'running' : (s.armed ? 'armed' : 'idle'),
-        badgeCls: s.running ? 'live' : ''
-      }, g.key);
+        foot: s.kind === 'opt' ? 'OPTION' : 'INTRADAY',
+        state: s.running ? 'running' : (s.armed ? 'armed' : 'off')
+      }, g.key, i + 1);
     }).join('');
     wireChecks(list, g.key, g.sec);
   }
@@ -220,19 +229,19 @@
             + 'Rules are evaluated by the signal engine on every bar close.</div>';
           return;
         }
-        list.innerHTML = rows.map(function (s) {
+        list.innerHTML = rows.map(function (s, i) {
           var scope = (s.symbols && s.symbols.length) ? s.symbols.join(', ') : 'all symbols';
           return itemHTML({
             id: s.id,
             name: s.name,
-            sub: s.direction + ' · ' + scope,
+            sub: scope,
             desc: 'Fires when ' + (String(s.match).toLowerCase() === 'any'
                     ? 'ANY of these conditions hold' : 'ALL of these conditions hold')
                   + ' on a closed bar.',
             rule: s.summary || '',
-            badge: s.enabled ? 'live' : 'paused',
-            badgeCls: s.enabled ? 'live' : 'paused'
-          }, 'cust');
+            foot: s.direction || '',
+            state: s.enabled ? 'live' : 'paused'
+          }, 'cust', i + 1);
         }).join('');
         wireChecks(list, 'cust', 'row-custom');
       }).catch(function () {
