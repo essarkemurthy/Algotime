@@ -84,7 +84,7 @@
       '  <h3 id="sess-title">Broker session expired</h3>',
       '  <p>ICICI session tokens expire every 24 hours. Paste a fresh one to reconnect &mdash;',
       '     live prices, signals and the paper algo stay paused until you do.<br>',
-      '     <a class="sess-link" href="https://api.icicidirect.com/apiuser/login"',
+      '     <a class="sess-link" href="https://api.icicidirect.com/apiuser/home"',
       '        target="_blank" rel="noopener">Open the ICICI login page &#8599;</a>',
       '     and copy the <code>apisession</code> value.</p>',
       '  <div class="sess-row"><label>API key</label>',

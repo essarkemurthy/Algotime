@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 ENV_FILE   = ROOT / ".env"
 SETUP_FILE = ROOT / "data" / "setup.json"
-LOGIN_URL  = "https://api.icicidirect.com/apiuser/login"
+LOGIN_URL  = "https://api.icicidirect.com/apiuser/home"
 FIELDS     = ("BREEZE_API_KEY", "BREEZE_API_SECRET", "BREEZE_SESSION_TOKEN")
 SETUP_KEYS = {"BREEZE_API_KEY": "api_key",
               "BREEZE_API_SECRET": "api_secret",
