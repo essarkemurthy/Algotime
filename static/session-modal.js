@@ -19,9 +19,20 @@
 
   var POLL_MS = 15000;
   var SNOOZE_MS = 600000;           // "Later" stays quiet for 10 minutes
+  var PROMPT_FROM_HOUR = 8;         // local hour the morning prompt starts
   var creds = { api_key: '', api_secret: '' };
   var open = false;
   var dismissedAt = 0;
+
+  // Only nag inside the window where a token is actually needed: weekdays from
+  // 08:00 local, ahead of the 09:15 open. Overnight and at weekends the session
+  // is expected to be dead, so a dialog then is pure noise.
+  function inPromptWindow() {
+    var d = new Date();
+    var day = d.getDay();                       // 0 Sun .. 6 Sat
+    if (day === 0 || day === 6) return false;
+    return d.getHours() >= PROMPT_FROM_HOUR;
+  }
 
   var CSS = [
     '.sess-ov{position:fixed;inset:0;background:rgba(15,18,20,.55);z-index:9998;',
@@ -170,7 +181,7 @@
       if (b.api_key) creds.api_key = b.api_key;
       if (b.api_secret) creds.api_secret = b.api_secret;
       var down = !d.broker_ok;
-      if (down && !open && Date.now() - dismissedAt > SNOOZE_MS) show();
+      if (down && !open && inPromptWindow() && Date.now() - dismissedAt > SNOOZE_MS) show();
       if (!down && open) close();
     }).catch(function () { /* transient - try again next tick */ });
   }
