@@ -1399,6 +1399,10 @@ async def setup_save_broker(body: dict):
         await asyncio.to_thread(_build_symbol_index)
         _suggestion_engine = SuggestionEngine(_ltp_cache)
         await broadcast({"type": "status", "connected": True})
+        # The startup fill runs ~20 s after boot, which on a morning start is
+        # before the token has been pasted here - it fails auth and does not
+        # retry until the next restart. Now that a session exists, run it.
+        _startup_gap_fill()
         return {"ok": True, "connected": True}
     except Exception as exc:
         _session = None
