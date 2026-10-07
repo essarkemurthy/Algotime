@@ -346,5 +346,105 @@ class TestNewDetectors(unittest.TestCase):
         self.assertEqual(sig.strategy, "VWAP_ORB")
 
 
+# ── Custom (user-defined) strategies ──────────────────────────────────────────
+
+def _rsi_cond(op, level):
+    return {"left": {"kind": "indicator", "name": "rsi", "period": 2},
+            "op": op, "right": {"kind": "value", "value": level}}
+
+
+RSI_70_30 = {
+    "id": "RSI-70-30", "name": "RSI-70-30", "direction": "BOTH", "match": "all",
+    "symbols": [],
+    "legs": [
+        {"direction": "LONG",  "match": "all", "conditions": [_rsi_cond("<", 30)]},
+        {"direction": "SHORT", "match": "all", "conditions": [_rsi_cond(">", 70)]},
+    ],
+}
+
+
+class TestCustomStrategies(unittest.TestCase):
+    def test_validate_accepts_both_with_two_legs(self):
+        from signals.custom import validate
+        self.assertEqual(validate(RSI_70_30), [])
+
+    def test_validate_rejects_both_without_short_leg(self):
+        from signals.custom import validate
+        bad = dict(RSI_70_30, legs=[RSI_70_30["legs"][0]])
+        self.assertTrue(any("LONG leg and one SHORT leg" in e for e in validate(bad)))
+
+    def test_single_direction_definition_still_works(self):
+        from signals.custom import validate, make_detector
+        defn = {"id": "X", "name": "X", "direction": "LONG", "match": "all",
+                "conditions": [_rsi_cond("<", 30)]}
+        self.assertEqual(validate(defn), [])
+        sess = make_session([10, 9, 8, 7, 6.0], small_cfg())      # falling → RSI(2)=0
+        sig = make_detector(defn)(sess)
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig.direction, LONG)
+
+    def test_rsi_70_30_sells_when_overbought(self):
+        from signals.custom import make_detector
+        sess = make_session([10, 11, 12, 13, 14.0], small_cfg())   # rising → RSI(2)=100
+        sig = make_detector(RSI_70_30)(sess)
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig.direction, SHORT)
+        self.assertEqual(sig.strategy, "RSI-70-30")
+
+    def test_rsi_70_30_buys_when_oversold(self):
+        from signals.custom import make_detector
+        sess = make_session([14, 13, 12, 11, 10.0], small_cfg())   # falling → RSI(2)=0
+        sig = make_detector(RSI_70_30)(sess)
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig.direction, LONG)
+
+    def test_rsi_70_30_silent_in_the_middle(self):
+        from signals.custom import make_detector
+        # alternating moves keep RSI(2) near 50
+        sess = make_session([10, 11, 10, 11, 10, 11.0], small_cfg())
+        self.assertIsNone(make_detector(RSI_70_30)(sess))
+
+    def test_both_sides_fire_once_each_per_day_through_engine(self):
+        """A BOTH strategy dedups per side: one buy and one sell per symbol/day,
+        and a repeat on the same side is swallowed."""
+        from signals.custom import make_detector
+        import signals.engine as eng
+
+        class _Notifier:
+            def dispatch(self, sig): return False
+
+        cfg = small_cfg()
+        engine = SignalEngine(cfg, store=None)
+        engine.notifier = _Notifier()
+        detect = make_detector(RSI_70_30)
+        # Run only the custom detector so built-ins don't muddy the count.
+        orig = eng.DETECTORS
+        eng.DETECTORS = ()
+        try:
+            import signals.custom as cust
+            orig_active = cust.active_detectors
+            cust.active_detectors = lambda: [detect]
+            try:
+                closes = [10, 11, 12, 13, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13.0]
+                fired = []
+                for i, c in enumerate(closes):
+                    bar = {"ts": OPEN_TS + timedelta(minutes=5 * i), "open": c,
+                           "high": c + 0.5, "low": c - 0.5, "close": c, "volume": 100}
+                    fired += engine.on_bar_close("TEST", bar)
+            finally:
+                cust.active_detectors = orig_active
+        finally:
+            eng.DETECTORS = orig
+        dirs = [f.direction for f in fired]
+        self.assertEqual(sorted(dirs), [LONG, SHORT])
+        self.assertTrue(all(f.strategy == "RSI-70-30" for f in fired))
+
+    def test_describe_lists_both_legs(self):
+        from signals.custom import _describe
+        txt = _describe(RSI_70_30)
+        self.assertIn("LONG: rsi(2) < 30", txt)
+        self.assertIn("SHORT: rsi(2) > 70", txt)
+
+
 if __name__ == "__main__":
     unittest.main()

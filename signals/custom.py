@@ -7,6 +7,12 @@ engine turns each stored definition into a detector function with the same
 custom strategy fires, dedups, notifies and reaches the paper algo exactly like
 a built-in one.
 
+A definition is normally one-sided (direction LONG or SHORT, one condition
+list). A two-sided definition has direction BOTH and a `legs` list, one LONG leg
+and one SHORT leg, each with its own conditions/match. The first leg that is
+true on a bar decides the signal's direction; dedup is per side per day, so a
+BOTH strategy can fire one buy and one sell on the same symbol in one session.
+
 Definitions live in data/custom_strategies.json and are reloaded when that file
 changes, so edits from the UI take effect on the next bar without a restart.
 """
@@ -31,6 +37,7 @@ STORE = Path(__file__).resolve().parent.parent / "data" / "custom_strategies.jso
 _EPS = 1e-9
 
 OPERATORS = (">", ">=", "<", "<=", "==", "!=", "cross_above", "cross_below")
+DIRECTIONS = ("LONG", "SHORT", "BOTH")
 
 # name -> (needs_period, needs_mult, human label)
 INDICATORS: Dict[str, dict] = {
@@ -151,6 +158,39 @@ def evaluate(sess, defn: dict) -> Optional[bool]:
     return any(results) if match == "any" else all(results)
 
 
+def legs_of(defn: dict) -> List[dict]:
+    """Normalise a definition to its evaluable legs.
+
+    A one-sided definition is itself the single leg. A BOTH definition carries
+    explicit legs; each is a {direction, match, conditions} dict. The result is
+    ordered LONG first so a tie on one bar resolves deterministically.
+    """
+    if str(defn.get("direction", "")).upper() == "BOTH" or defn.get("legs"):
+        legs = []
+        for leg in defn.get("legs") or []:
+            d = str((leg or {}).get("direction", "")).upper()
+            if d in ("LONG", "SHORT"):
+                legs.append({"direction": d,
+                             "match": leg.get("match", defn.get("match", "all")),
+                             "conditions": leg.get("conditions") or []})
+        legs.sort(key=lambda l: 0 if l["direction"] == "LONG" else 1)
+        return legs
+    return [{"direction": str(defn.get("direction", "LONG")).upper(),
+             "match": defn.get("match", "all"),
+             "conditions": defn.get("conditions") or []}]
+
+
+def evaluate_direction(sess, defn: dict) -> Optional[str]:
+    """Direction ("LONG"/"SHORT") of the first leg that is true, else None.
+
+    A leg that cannot be evaluated yet (indicator still warming up) is treated
+    as not firing, so one unready leg does not block the other side."""
+    for leg in legs_of(defn):
+        if evaluate(sess, leg) is True:
+            return leg["direction"]
+    return None
+
+
 def _describe(defn: dict) -> str:
     def side(spec):
         if (spec or {}).get("kind") == "value":
@@ -158,15 +198,19 @@ def _describe(defn: dict) -> str:
         n = spec.get("name", "?")
         p = spec.get("period")
         return f"{n}({p})" if p and "period" in INDICATORS.get(n, {}).get("args", []) else n
-    joiner = " OR " if str(defn.get("match", "all")).lower() == "any" else " AND "
-    return joiner.join(f"{side(c.get('left'))} {c.get('op')} {side(c.get('right'))}"
-                       for c in (defn.get("conditions") or []))
+    def leg_text(leg):
+        joiner = " OR " if str(leg.get("match", "all")).lower() == "any" else " AND "
+        return joiner.join(f"{side(c.get('left'))} {c.get('op')} {side(c.get('right'))}"
+                           for c in (leg.get("conditions") or []))
+    legs = legs_of(defn)
+    if len(legs) == 1 and str(defn.get("direction", "")).upper() != "BOTH":
+        return leg_text(legs[0])
+    return " | ".join(f"{l['direction']}: {leg_text(l)}" for l in legs)
 
 
 def make_detector(defn: dict) -> Callable:
     """Wrap a stored definition as a DETECTORS-compatible callable."""
     name = str(defn.get("id") or defn.get("name") or "CUSTOM").upper().replace(" ", "_")
-    direction = str(defn.get("direction", "LONG")).upper()
     symbols = {s.upper() for s in (defn.get("symbols") or [])}
 
     def _detect(sess) -> Optional[Signal]:
@@ -174,7 +218,8 @@ def make_detector(defn: dict) -> Callable:
             return None
         if sess.n < 2:
             return None
-        if evaluate(sess, defn) is not True:
+        direction = evaluate_direction(sess, defn)
+        if direction is None:
             return None
         i = sess.n - 1
         close = _at(sess.close, -1)
@@ -257,16 +302,34 @@ def validate(defn: dict) -> List[str]:
     errs: List[str] = []
     if not str(defn.get("name", "")).strip():
         errs.append("name is required")
-    if str(defn.get("direction", "")).upper() not in ("LONG", "SHORT"):
-        errs.append("direction must be LONG or SHORT")
+    direction = str(defn.get("direction", "")).upper()
+    if direction not in DIRECTIONS:
+        errs.append("direction must be LONG, SHORT or BOTH")
     if str(defn.get("match", "all")).lower() not in ("all", "any"):
         errs.append("match must be all or any")
-    conds = defn.get("conditions") or []
+
+    if direction == "BOTH":
+        legs = legs_of(defn)
+        have = {l["direction"] for l in legs}
+        if have != {"LONG", "SHORT"} or len(legs) != 2:
+            errs.append("a BOTH strategy needs exactly one LONG leg and one SHORT leg")
+        for leg in legs:
+            if str(leg.get("match", "all")).lower() not in ("all", "any"):
+                errs.append(f"{leg['direction']} leg: match must be all or any")
+            errs.extend(_validate_conditions(leg.get("conditions") or [],
+                                             prefix=f"{leg['direction']} leg, "))
+    else:
+        errs.extend(_validate_conditions(defn.get("conditions") or []))
+    return errs
+
+
+def _validate_conditions(conds: List[dict], prefix: str = "") -> List[str]:
+    errs: List[str] = []
     if not conds:
-        errs.append("at least one condition is required")
+        errs.append(f"{prefix}at least one condition is required")
     for i, c in enumerate(conds, 1):
         if str(c.get("op")) not in OPERATORS:
-            errs.append(f"condition {i}: operator must be one of {', '.join(OPERATORS)}")
+            errs.append(f"{prefix}condition {i}: operator must be one of {', '.join(OPERATORS)}")
         for sidename in ("left", "right"):
             spec = c.get(sidename) or {}
             kind = spec.get("kind", "value")
@@ -274,11 +337,11 @@ def validate(defn: dict) -> List[str]:
                 try:
                     float(spec.get("value"))
                 except (TypeError, ValueError):
-                    errs.append(f"condition {i}: {sidename} value must be a number")
+                    errs.append(f"{prefix}condition {i}: {sidename} value must be a number")
             elif kind == "indicator":
                 if str(spec.get("name", "")).lower() not in INDICATORS:
-                    errs.append(f"condition {i}: unknown indicator "
+                    errs.append(f"{prefix}condition {i}: unknown indicator "
                                 f"'{spec.get('name')}'")
             else:
-                errs.append(f"condition {i}: {sidename} kind must be value or indicator")
+                errs.append(f"{prefix}condition {i}: {sidename} kind must be value or indicator")
     return errs

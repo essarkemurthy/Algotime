@@ -11,8 +11,11 @@
   'use strict';
 
   var CAT = { indicators: [], operators: [] };
-  var conds = [];
+  // Two condition lists: 'long' is the only one used for a one-sided rule;
+  // 'short' appears when direction is BOTH and becomes the SELL leg.
+  var legs = { long: [], short: [] };
   var editingId = null;
+  var LEG_BOX = { long: 'cs-conds', short: 'cs-conds-short' };
 
   var OP_LABEL = {
     '>': 'is above', '>=': 'is at or above', '<': 'is below',
@@ -52,45 +55,61 @@
     }).join('');
   }
 
-  function sideHTML(side, idx, spec) {
+  function sideHTML(side, idx, spec, leg) {
     var isVal = spec.kind === 'value';
-    var h = '<select class="cs-in cs-kind" data-side="' + side + '" data-i="' + idx + '">'
+    var dl = ' data-leg="' + leg + '"';
+    var h = '<select class="cs-in cs-kind" data-side="' + side + '" data-i="' + idx + '"' + dl + '>'
       + '<option value="indicator"' + (isVal ? '' : ' selected') + '>Indicator</option>'
       + '<option value="value"' + (isVal ? ' selected' : '') + '>Level</option>'
       + '</select>';
     if (isVal) {
-      h += '<input class="cs-in cs-val" data-side="' + side + '" data-i="' + idx + '"'
+      h += '<input class="cs-in cs-val" data-side="' + side + '" data-i="' + idx + '"' + dl
         + ' type="number" step="any" value="' + esc(spec.value !== undefined ? spec.value : 0) + '">';
     } else {
-      h += '<select class="cs-in cs-name" data-side="' + side + '" data-i="' + idx + '">'
+      h += '<select class="cs-in cs-name" data-side="' + side + '" data-i="' + idx + '"' + dl + '>'
         + indicatorOptions(spec.name) + '</select>';
       if (needsPeriod(spec.name)) {
-        h += '<input class="cs-in cs-period" data-side="' + side + '" data-i="' + idx + '"'
+        h += '<input class="cs-in cs-period" data-side="' + side + '" data-i="' + idx + '"' + dl
           + ' type="number" min="1" step="1" title="period" value="' + esc(spec.period || 14) + '">';
       }
       if (needsMult(spec.name)) {
-        h += '<input class="cs-in cs-mult" data-side="' + side + '" data-i="' + idx + '"'
+        h += '<input class="cs-in cs-mult" data-side="' + side + '" data-i="' + idx + '"' + dl
           + ' type="number" step="0.1" title="multiplier" value="' + esc(spec.mult || 2) + '">';
       }
     }
     return h;
   }
 
-  function renderConds() {
-    var box = el('cs-conds');
+  function isBoth() { return el('cs-direction') && el('cs-direction').value === 'BOTH'; }
+
+  // Show the SHORT block only for a two-sided rule, and relabel the first block
+  // so it is obvious which side each list drives.
+  function syncDirectionUI() {
+    var both = isBoth();
+    var blk = el('cs-short-leg');
+    if (blk) blk.hidden = !both;
+    var lbl = el('cs-conds-label');
+    if (lbl) lbl.textContent = both ? 'BUY (LONG) conditions' : 'Conditions';
+    if (both) renderConds('short');
+  }
+
+  function renderConds(leg) {
+    if (!leg) { renderConds('long'); if (isBoth()) renderConds('short'); return; }
+    var box = el(LEG_BOX[leg]);
     if (!box) return;
+    var conds = legs[leg];
     if (!conds.length) conds.push(blankCond());
     box.innerHTML = conds.map(function (c, i) {
       return '<div class="cs-cond">'
-        + '<div class="cs-side">' + sideHTML('left', i, c.left) + '</div>'
-        + '<select class="cs-in cs-op" data-i="' + i + '">'
+        + '<div class="cs-side">' + sideHTML('left', i, c.left, leg) + '</div>'
+        + '<select class="cs-in cs-op" data-i="' + i + '" data-leg="' + leg + '">'
         + CAT.operators.map(function (o) {
             return '<option value="' + o + '"' + (o === c.op ? ' selected' : '') + '>'
               + esc(OP_LABEL[o] || o) + '</option>';
           }).join('')
         + '</select>'
-        + '<div class="cs-side">' + sideHTML('right', i, c.right) + '</div>'
-        + '<button class="cs-del" data-i="' + i + '" type="button" title="remove">&times;</button>'
+        + '<div class="cs-side">' + sideHTML('right', i, c.right, leg) + '</div>'
+        + '<button class="cs-del" data-i="' + i + '" data-leg="' + leg + '" type="button" title="remove">&times;</button>'
         + '</div>';
     }).join('');
 
@@ -99,25 +118,26 @@
     });
     box.querySelectorAll('.cs-del').forEach(function (b) {
       b.addEventListener('click', function () {
-        conds.splice(parseInt(b.dataset.i, 10), 1);
-        renderConds();
+        legs[leg].splice(parseInt(b.dataset.i, 10), 1);
+        renderConds(leg);
       });
     });
   }
 
   function onCondChange(e) {
     var t = e.target, i = parseInt(t.dataset.i, 10), side = t.dataset.side;
-    var c = conds[i];
+    var leg = t.dataset.leg || 'long';
+    var c = legs[leg][i];
     if (!c) return;
     if (t.classList.contains('cs-op')) { c.op = t.value; return; }
     var spec = c[side];
     if (t.classList.contains('cs-kind')) {
       spec.kind = t.value;
       if (spec.kind === 'value' && spec.value === undefined) spec.value = 0;
-      renderConds();
+      renderConds(leg);
       return;
     }
-    if (t.classList.contains('cs-name')) { spec.name = t.value; renderConds(); return; }
+    if (t.classList.contains('cs-name')) { spec.name = t.value; renderConds(leg); return; }
     if (t.classList.contains('cs-period')) spec.period = parseInt(t.value, 10) || 14;
     if (t.classList.contains('cs-mult')) spec.mult = parseFloat(t.value) || 2;
     if (t.classList.contains('cs-val')) spec.value = parseFloat(t.value) || 0;
@@ -129,15 +149,24 @@
     var syms = (el('cs-symbols').value || '').split(',')
       .map(function (s) { return s.trim().toUpperCase(); })
       .filter(Boolean);
-    return {
+    var direction = el('cs-direction').value;
+    var body = {
       id: editingId || undefined,
       name: (el('cs-name').value || '').trim(),
-      direction: el('cs-direction').value,
+      direction: direction,
       match: el('cs-match').value,
       symbols: syms,
-      conditions: conds,
       enabled: true
     };
+    if (direction === 'BOTH') {
+      body.legs = [
+        { direction: 'LONG',  match: el('cs-match').value,       conditions: legs.long },
+        { direction: 'SHORT', match: el('cs-match-short').value, conditions: legs.short }
+      ];
+    } else {
+      body.conditions = legs.long;
+    }
+    return body;
   }
 
   function msg(text, cls) {
@@ -248,7 +277,9 @@
     el('cs-direction').value = 'LONG';
     el('cs-match').value = 'all';
     el('cs-symbols').value = '';
-    conds = [blankCond()];
+    el('cs-match-short').value = 'all';
+    legs = { long: [blankCond()], short: [blankCond()] };
+    syncDirectionUI();
     renderConds();
     msg('New strategy — define the conditions, test it, then save.', 'busy');
     focusBuilder();
@@ -262,7 +293,19 @@
     el('cs-direction').value = s.direction || 'LONG';
     el('cs-match').value = s.match || 'all';
     el('cs-symbols').value = (s.symbols || []).join(', ');
-    conds = JSON.parse(JSON.stringify(s.conditions || [blankCond()]));
+    var clone = function (x) { return JSON.parse(JSON.stringify(x)); };
+    legs = { long: [blankCond()], short: [blankCond()] };
+    if ((s.direction || '').toUpperCase() === 'BOTH' && s.legs) {
+      s.legs.forEach(function (lg) {
+        var key = (lg.direction || '').toUpperCase() === 'SHORT' ? 'short' : 'long';
+        legs[key] = clone(lg.conditions || [blankCond()]);
+        if (key === 'short') el('cs-match-short').value = lg.match || 'all';
+        else el('cs-match').value = lg.match || 'all';
+      });
+    } else {
+      legs.long = clone(s.conditions || [blankCond()]);
+    }
+    syncDirectionUI();
     renderConds();
     msg('Editing <b>' + esc(s.name) + '</b> — saving overwrites it.', 'busy');
     focusBuilder();
@@ -380,8 +423,12 @@
       });
 
     el('cs-add').addEventListener('click', function () {
-      conds.push(blankCond()); renderConds();
+      legs.long.push(blankCond()); renderConds('long');
     });
+    el('cs-add-short').addEventListener('click', function () {
+      legs.short.push(blankCond()); renderConds('short');
+    });
+    el('cs-direction').addEventListener('change', syncDirectionUI);
     el('cs-save').addEventListener('click', save);
     el('cs-preview').addEventListener('click', preview);
     el('cs-sig-refresh').addEventListener('click', loadSignals);

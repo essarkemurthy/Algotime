@@ -2634,13 +2634,14 @@ async def get_watchlist_equity():
 async def strategy_catalogue():
     """Indicators and operators a custom rule may use — drives the UI builder so
     the form can never offer something the evaluator does not support."""
-    from signals.custom import INDICATORS, OPERATORS
+    from signals.custom import INDICATORS, OPERATORS, DIRECTIONS
     return {
         "indicators": [
             {"name": k, "label": v["label"], "args": v["args"]}
             for k, v in sorted(INDICATORS.items(), key=lambda kv: kv[1]["label"])
         ],
         "operators": list(OPERATORS),
+        "directions": list(DIRECTIONS),
         "builtins": sorted(ALL_STRATEGIES) if "ALL_STRATEGIES" in globals() else [],
     }
 

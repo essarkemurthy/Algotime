@@ -962,16 +962,26 @@
       <div class="cs-f"><label>Name</label>
         <input id="cs-name" type="text" placeholder="e.g. VWAP pullback"></div>
       <div class="cs-f"><label>Direction</label>
-        <select id="cs-direction"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select></div>
+        <select id="cs-direction"><option value="LONG">LONG</option><option value="SHORT">SHORT</option><option value="BOTH">BOTH (buy + sell legs)</option></select></div>
       <div class="cs-f"><label>Conditions must</label>
         <select id="cs-match"><option value="all">ALL match (AND)</option><option value="any">ANY match (OR)</option></select></div>
       <div class="cs-f"><label>Symbols (blank = all)</label>
         <input id="cs-symbols" type="text" placeholder="NIFTY, RELIANCE"></div>
     </div>
 
-    <div class="cs-label">Conditions</div>
+    <div class="cs-label" id="cs-conds-label">Conditions</div>
     <div id="cs-conds"></div>
     <button class="cs-btn" id="cs-add" type="button">+ Add condition</button>
+
+    <div id="cs-short-leg" hidden>
+      <div class="cs-label">SELL (SHORT) conditions</div>
+      <div class="cs-grid">
+        <div class="cs-f"><label>Short conditions must</label>
+          <select id="cs-match-short"><option value="all">ALL match (AND)</option><option value="any">ANY match (OR)</option></select></div>
+      </div>
+      <div id="cs-conds-short"></div>
+      <button class="cs-btn" id="cs-add-short" type="button">+ Add condition</button>
+    </div>
 
     <div class="cs-label">Test against stored bars before saving</div>
     <div class="cs-grid">
