@@ -253,6 +253,18 @@ def _startup_gap_fill() -> None:
             return
         tail = (proc.stdout or "").strip().splitlines()[-1:] or [""]
         if proc.returncode == 0:
+            # 15m cannot be downloaded (Breeze has no such interval), so rebuild
+            # it from the 5m bars the fill just refreshed. Local, no API cost.
+            try:
+                d15 = Path(__file__).parent / "scripts" / "derive_15m.py"
+                if d15.exists():
+                    r2 = subprocess.run([_sys.executable, str(d15), "--days", "7"],
+                                        cwd=str(Path(__file__).parent),
+                                        capture_output=True, text=True, timeout=600)
+                    log.info("15m resample: %s",
+                             (r2.stdout or r2.stderr or "").strip().splitlines()[-1:] or "")
+            except Exception as exc:
+                log.warning("15m resample failed: %s", exc)
             try:
                 marker.parent.mkdir(exist_ok=True)
                 marker.write_text("ok", encoding="utf-8")
