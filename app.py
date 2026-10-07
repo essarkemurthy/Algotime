@@ -3075,6 +3075,24 @@ async def get_spot_table():
     return {"rows": rows, "count": len(rows),
             "connected": bool(_session and _session._api)}
 
+@app.get("/api/index/members")
+async def get_index_members():
+    """Constituents of each index the charts page can filter the spot table by.
+
+    `live` counts members currently in the tick cache, so the UI can say how
+    many of an index's stocks actually have prices right now.
+    """
+    from index_members import INDICES
+    live = set(_ltp_cache.keys())
+    out = []
+    for sym, meta in INDICES.items():
+        mem = list(meta["members"])
+        out.append({"symbol": sym, "name": meta["name"], "members": mem,
+                    "live": sum(1 for m in mem if m in live)})
+    out.sort(key=lambda r: r["name"])
+    return {"indices": out, "count": len(out)}
+
+
 @app.get("/api/ohlc/db/available")
 async def get_db_available():
     """Return which symbols + intervals are stored in PostgreSQL."""
