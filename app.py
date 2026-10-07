@@ -2584,6 +2584,40 @@ def _report_stats(closed: list) -> dict:
     }
 
 
+@app.get("/api/watchlist/equity")
+async def get_watchlist_equity():
+    """Equities for the intraday watchlist — indices deliberately excluded.
+
+    You cannot buy a spot index in cash, so NIFTY/BANKNIFTY et al have no place
+    in the intraday pane; they route to the options engine instead. Everything
+    returned here is already WS-subscribed, so prices populate immediately.
+    """
+    try:
+        from paper_algo import INDEX_SYMBOLS
+    except Exception:
+        INDEX_SYMBOLS = frozenset()
+    tier = {}
+    try:
+        from scripts.download_mapped import SYMBOLS as _MS
+        tier = {s[2]: s[3] for s in _MS if len(s) > 3}
+    except Exception as exc:
+        log.debug("watchlist tiers unavailable: %s", exc)
+
+    rows = []
+    for w in WATCHLIST:
+        label = w.get("label", "")
+        if not label or label in INDEX_SYMBOLS:
+            continue
+        rows.append({
+            "symbol":   label,
+            "code":     w.get("stock", label),
+            "exchange": w.get("exchange", "NSE"),
+            "tier":     tier.get(label, "nifty50"),
+        })
+    rows.sort(key=lambda r: r["symbol"])
+    return {"rows": rows, "count": len(rows)}
+
+
 @app.get("/api/strategy/catalogue")
 async def strategy_catalogue():
     """Indicators and operators a custom rule may use — drives the UI builder so
