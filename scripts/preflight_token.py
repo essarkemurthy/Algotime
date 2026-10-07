@@ -137,7 +137,13 @@ def _check_subscription(api_key: str, api_secret: str, token: str):
         if not resp:
             return False, "no response to get_quotes"
         if resp.get("Status") != 200:
-            return False, str(resp.get("Error") or f"status {resp.get('Status')}")
+            err = str(resp.get("Error") or f"status {resp.get('Status')}")
+            # A quota refusal says nothing about entitlement — the WebSocket feed
+            # is unaffected by the REST call budget, so do not report it as an
+            # inactive subscription.
+            if "limit" in err.lower() and "exceed" in err.lower():
+                return True, "quote skipped (REST call quota reached) — feed unaffected"
+            return False, err
         rows = resp.get("Success") or []
         if not rows:
             return False, "quote returned no rows — data subscription may be inactive"

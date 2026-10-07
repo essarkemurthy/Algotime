@@ -621,6 +621,8 @@ def _auto_learn_token(token: str, tick: dict) -> Optional[str]:
 def _on_tick(tick: dict) -> None:
     """Synchronous callback invoked by the Breeze SDK on every market tick.
     Runs in the SDK's socketio background thread — dict writes are GIL-safe."""
+    global _last_tick_at
+    _last_tick_at = time.time()
     token = tick.get("symbol", "")
     ltp   = tick.get("last")
     if not token or ltp is None:
@@ -874,6 +876,65 @@ def _setup_ws_feeds() -> None:
 _paper_day: Optional[date] = None   # trading date the in-memory paper state belongs to
 
 
+# Liveness, as opposed to "an object exists". A Breeze session that expires
+# overnight leaves _session and _session._api in place, so the old
+# bool(_session and _session._api) check reported a healthy broker while no tick
+# had arrived for hours — and the UI never prompted for a new token because
+# nothing said the session was down.
+_last_tick_at: float = 0.0
+_session_probed_at: float = 0.0
+_TICK_SILENCE_SEC = 150      # ticks this recent prove the session is alive
+_PROBE_EVERY_SEC  = 180      # otherwise probe, at most this often
+
+
+_session_dead: bool = False
+
+
+
+async def _session_watchdog() -> None:
+    """Notice a dead broker session and make the app admit it.
+
+    Ticks arriving is proof enough. When they stop — overnight, or because the
+    token expired mid-session — ask the broker directly, and on failure drop the
+    session so /api/setup/status reports broker_ok false and the dashboard
+    raises its token dialog.
+    """
+    global _session, _session_probed_at, _session_dead
+    await asyncio.sleep(45)      # let startup settle
+    while True:
+        await asyncio.sleep(30)
+        try:
+            if not (_session and _session._api):
+                continue
+            if (time.time() - _last_tick_at) < _TICK_SILENCE_SEC:
+                _session_dead = False
+                continue
+            if (time.time() - _session_probed_at) < _PROBE_EVERY_SEC:
+                continue
+            _session_probed_at = time.time()
+            tok = _session.cfg.session_token
+            resp = await asyncio.to_thread(_session.api.get_customer_details,
+                                           api_session=tok)
+            if resp and resp.get("Status") == 200:
+                _session_dead = False
+                continue
+            log.warning("Session probe rejected: %s", (resp or {}).get("Error"))
+        except Exception as exc:
+            log.warning("Session probe failed — treating session as dead: %s", exc)
+        else:
+            pass
+        # Fall through only when the probe did not succeed.
+        _session_dead = True
+        try:
+            await asyncio.to_thread(_session.disconnect)
+        except Exception:
+            pass
+        _session = None
+        _ws_subscriptions.clear()
+        log.warning("Broker session is dead — dropped it so the UI can prompt.")
+        await broadcast({"type": "status", "connected": False})
+
+
 async def _broadcast_loop() -> None:
     """Push LTP + P&L snapshots to all UI clients every second.
     Also broadcasts quota stats every 10 seconds."""
@@ -1095,6 +1156,7 @@ async def lifespan(app: FastAPI):
     global _broadcast_task, _chain_snap_task, _main_loop
     _main_loop      = asyncio.get_event_loop()
     _broadcast_task = asyncio.create_task(_broadcast_loop())
+    asyncio.create_task(_session_watchdog())
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
     _load_symbol_index()
     _load_setup_config()
