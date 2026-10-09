@@ -57,6 +57,13 @@ class SignalConfig:
     atr_period: int     = field(default_factory=lambda: _env_int("SIGNAL_ATR_PERIOD", 14))
     avg_vol_period: int = field(default_factory=lambda: _env_int("SIGNAL_AVG_VOL_PERIOD", 20))
 
+    # ── Indicator warm-up ─────────────────────────────────────────────────────
+    # Prior-session bars kept behind today's bars so RSI/ATR/EMA/Bollinger etc.
+    # are defined from the first bar of the day instead of ~75 minutes in.
+    # 150 five-minute bars = two full sessions. VWAP, the opening range and the
+    # volume gate stay strictly intraday regardless.
+    history_bars: int = field(default_factory=lambda: _env_int("SIGNAL_HISTORY_BARS", 150))
+
     # ── VWAP Reversal thresholds ──────────────────────────────────────────────
     stretch_atr: float   = field(default_factory=lambda: _env_float("SIGNAL_STRETCH_ATR", 1.0))
     bull_rsi_low: float  = field(default_factory=lambda: _env_float("SIGNAL_BULL_RSI_LOW", 35.0))

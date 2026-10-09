@@ -483,6 +483,54 @@ class DataStore:
         cols = ["ts", "open", "high", "low", "close", "volume"]
         return [dict(zip(cols, r)) for r in rows]
 
+    def get_spot_bars_from_ticks(self, symbol: str, interval_minutes: int,
+                                 start: datetime, end: datetime,
+                                 session_start_min: int = 9 * 60 + 15,
+                                 session_end_min: int = 15 * 60 + 30) -> List[Dict]:
+        """Rebuild OHLCV bars for one symbol from spot_ticks, oldest first.
+
+        Buckets are anchored to the session open in IST, matching
+        signals.aggregator.BarAggregator, and ticks outside 09:15-15:30 are
+        ignored (the feed replays stale prints after the close). Bar timestamps
+        are naive local (IST) datetimes, the same shape the live aggregator
+        emits, so the two can be mixed in one SymbolSession. Volume is the sum
+        of last-traded quantities seen, which under-counts but is consistent
+        with the live bars. Used to warm indicator history for every watchlist
+        symbol, including the ~50 for which no candles are downloaded.
+        """
+        rows = self._queryall(
+            """WITH t AS (
+                   SELECT ts, ltp::float AS ltp, COALESCE(volume, 0) AS vol,
+                          (ts AT TIME ZONE 'Asia/Kolkata') AS lts
+                   FROM spot_ticks
+                   WHERE symbol = %s AND ts >= %s AND ts < %s
+               ), m AS (
+                   SELECT ts, ltp, vol, lts,
+                          (EXTRACT(EPOCH FROM lts - date_trunc('day', lts))::int / 60) AS mins
+                   FROM t
+               ), b AS (
+                   SELECT date_trunc('day', lts)
+                          + make_interval(mins => %s + ((mins - %s) / %s) * %s) AS bucket,
+                          ts, ltp, vol
+                   FROM m
+                   WHERE mins >= %s AND mins < %s
+               )
+               SELECT bucket,
+                      (array_agg(ltp ORDER BY ts))[1]      AS open,
+                      max(ltp)                             AS high,
+                      min(ltp)                             AS low,
+                      (array_agg(ltp ORDER BY ts DESC))[1] AS close,
+                      sum(vol)                             AS volume
+               FROM b
+               GROUP BY bucket
+               ORDER BY bucket""",
+            (symbol, start, end,
+             session_start_min, session_start_min, interval_minutes, interval_minutes,
+             session_start_min, session_end_min),
+        )
+        return [{"ts": r[0], "open": float(r[1]), "high": float(r[2]), "low": float(r[3]),
+                 "close": float(r[4]), "volume": float(r[5] or 0)} for r in rows]
+
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self) -> None:

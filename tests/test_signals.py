@@ -446,5 +446,87 @@ class TestCustomStrategies(unittest.TestCase):
         self.assertIn("SHORT: rsi(2) > 70", txt)
 
 
+# ── Indicator warm-up from prior-session history ──────────────────────────────
+
+def _bars(closes, start, *, spread=0.5, vol=100):
+    return [{"ts": start + timedelta(minutes=5 * i), "open": c, "high": c + spread,
+             "low": c - spread, "close": c, "volume": vol} for i, c in enumerate(closes)]
+
+
+class TestSessionHistory(unittest.TestCase):
+    def test_rsi_defined_from_first_bar_with_history(self):
+        """Without history RSI(14) is NaN for the first 14 bars; with yesterday's
+        bars behind it, it is finite on today's very first bar."""
+        cfg = SignalConfig(); cfg.rsi_period = 14; cfg.history_bars = 150
+        yday = _bars([100 + (i % 7) * 0.5 for i in range(40)],
+                     datetime(2026, 6, 24, 9, 15))
+        cold = SymbolSession(symbol="T", cfg=cfg, trade_date=TRADE_DATE)
+        warm = SymbolSession(symbol="T", cfg=cfg, trade_date=TRADE_DATE)
+        warm.set_history(yday)
+        for b in _bars([103.0, 103.5], OPEN_TS):
+            cold.add_bar(b); warm.add_bar(b)
+        self.assertTrue(math.isnan(cold.rsi()[-1]))
+        self.assertFalse(math.isnan(warm.rsi()[-1]))
+        self.assertFalse(math.isnan(warm.atr()[-1]))
+        # arrays stay aligned with today's bars, not history + today
+        self.assertEqual(len(warm.rsi()), warm.n)
+        self.assertEqual(len(warm.atr()), warm.n)
+        self.assertEqual(len(warm.ema(9)), warm.n)
+        self.assertEqual(len(warm.bollinger(20, 2.0)[0]), warm.n)
+        self.assertEqual(len(warm.donchian(20)[0]), warm.n)
+
+    def test_history_does_not_leak_into_intraday_series(self):
+        """VWAP, the raw columns and the volume gate are session-scoped."""
+        cfg = small_cfg()
+        sess = SymbolSession(symbol="T", cfg=cfg, trade_date=TRADE_DATE)
+        sess.set_history(_bars([500, 500, 500], datetime(2026, 6, 24, 9, 15), vol=10_000))
+        for b in _bars([10.0, 10.0], OPEN_TS):
+            sess.add_bar(b)
+        self.assertEqual(sess.n, 2)
+        self.assertEqual(list(sess.close), [10.0, 10.0])
+        self.assertAlmostEqual(float(sess.vwap()[-1]), 10.0, places=6)
+        self.assertEqual(sess.trailing_avg_volume(1), 100.0)
+
+    def test_history_matches_cold_indicator_values(self):
+        """Warm-up changes *when* an indicator is defined, not its maths: a warm
+        session equals a cold session that saw all the same bars."""
+        cfg = small_cfg(); cfg.history_bars = 150
+        closes = [10, 11, 12, 11, 10, 9, 10, 11, 12, 13.0]
+        all_bars = _bars(closes, datetime(2026, 6, 24, 15, 0))
+        cold = SymbolSession(symbol="T", cfg=cfg, trade_date=TRADE_DATE)
+        for b in all_bars:
+            cold.add_bar(b)
+        warm = SymbolSession(symbol="T", cfg=cfg, trade_date=TRADE_DATE)
+        warm.set_history(all_bars[:6])
+        for b in all_bars[6:]:
+            warm.add_bar(b)
+        np.testing.assert_allclose(warm.rsi(), cold.rsi()[6:])
+        np.testing.assert_allclose(warm.atr(), cold.atr()[6:])
+        np.testing.assert_allclose(warm.ema(3), cold.ema(3)[6:])
+
+    def test_reset_carries_today_into_history_and_trims(self):
+        cfg = small_cfg(); cfg.history_bars = 5
+        sess = SymbolSession(symbol="T", cfg=cfg, trade_date=TRADE_DATE)
+        sess.set_history(_bars([1, 2, 3], datetime(2026, 6, 24, 9, 15)))
+        for b in _bars([4, 5, 6, 7.0], OPEN_TS):
+            sess.add_bar(b)
+        sess.reset(TRADE_DATE + timedelta(days=1))
+        self.assertEqual(sess.n, 0)
+        self.assertEqual([b["close"] for b in sess.history], [3, 4, 5, 6, 7.0])
+
+    def test_engine_seed_merges_with_live_bars_in_order(self):
+        cfg = small_cfg()
+        engine = SignalEngine(cfg, store=None)
+        # a live bar arrived before seeding finished
+        live = _bars([12.0], OPEN_TS + timedelta(minutes=10))[0]
+        engine._session_for("T", TRADE_DATE).add_bar(live)
+        seed = _bars([10.0, 11.0, 12.0], OPEN_TS)          # overlaps the live bar
+        hist = _bars([9.0] * 20, datetime(2026, 6, 24, 9, 15))
+        engine.seed_session("T", seed, TRADE_DATE, history=hist)
+        sess = engine._session_for("T", TRADE_DATE)
+        self.assertEqual([b["ts"] for b in sess.bars], [b["ts"] for b in seed])
+        self.assertEqual(len(sess.history), 20)
+
+
 if __name__ == "__main__":
     unittest.main()

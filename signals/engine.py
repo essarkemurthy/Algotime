@@ -45,16 +45,27 @@ class SignalEngine:
 
     # ── seeding (optional) ────────────────────────────────────────────────────
 
-    def seed_session(self, symbol: str, bars: List[dict], trade_date: date) -> None:
-        """Pre-fill a symbol's session from historical bars (e.g. on mid-day start).
+    def seed_session(self, symbol: str, bars: List[dict], trade_date: date,
+                     history: Optional[List[dict]] = None) -> None:
+        """Pre-fill a symbol's session from stored bars (e.g. on a mid-day start).
 
-        Bars are added without running detection so that, once live bars arrive,
-        indicators reflect the full session from 09:15.
+        `bars` are today's closed bars and are added without running detection
+        so that, once live bars arrive, intraday series reflect the session from
+        09:15. `history` is prior-session bars that only warm the trailing
+        indicators. Seeding may race the live feed, so bars already present are
+        kept and the merged list is re-sorted by timestamp.
         """
         sess = self._session_for(symbol, trade_date)
-        for b in bars:
-            sess.add_bar(b)
-        log.info("Seeded %s with %d historical bars for %s.", symbol, len(bars), trade_date)
+        if history:
+            sess.set_history(history)
+        if bars:
+            have = {b["ts"] for b in sess.bars}
+            merged = list(sess.bars) + [b for b in bars if b["ts"] not in have]
+            merged.sort(key=lambda b: b["ts"])
+            sess.bars = merged
+            sess._cache.clear()
+        log.info("Seeded %s: %d bars today, %d warm-up bars, for %s.",
+                 symbol, len(bars or []), len(sess.history), trade_date)
 
     # ── main entry point ──────────────────────────────────────────────────────
 

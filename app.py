@@ -193,10 +193,14 @@ def _signal_broadcast(payload: dict) -> None:
         asyncio.run_coroutine_threadsafe(broadcast(payload), _main_loop)
 
 
+_signal_boot_ts: Optional[datetime] = None   # when the live aggregator came up
+
+
 def _init_signal_engine() -> None:
     """Build the signal engine from env config. Safe to call once at startup."""
-    global _signal_cfg, _signal_engine, _signal_agg
+    global _signal_cfg, _signal_engine, _signal_agg, _signal_boot_ts
     try:
+        _signal_boot_ts = datetime.now()
         _signal_cfg = SignalConfig()
         _signal_agg = BarAggregator(_signal_cfg.interval_minutes, _signal_cfg.session_start)
         _signal_engine = SignalEngine(_signal_cfg, store=_db_store,
@@ -276,25 +280,62 @@ def _startup_gap_fill() -> None:
 
     threading.Thread(target=_run, daemon=True, name="startup-gap-fill").start()
 
+def _naive_local(ts: datetime) -> datetime:
+    """Timezone-aware -> naive system-local, the form datetime.now() produces."""
+    return ts.astimezone().replace(tzinfo=None) if ts.tzinfo is not None else ts
+
+
 def _seed_signal_sessions() -> None:
-    """Best-effort: pre-fill today's bars from the candles table so indicators
-    are warm if the dashboard starts mid-session. No-op without a DB / bars."""
+    """Best-effort: warm every watchlist session from the database.
+
+    Two things are seeded per symbol:
+      * history — the last `history_bars` bars from prior sessions, rebuilt from
+        spot_ticks, so RSI/ATR/EMA are defined from the first bar of the day;
+      * today — closed bars since 09:15, from the candles table when present,
+        else rebuilt from spot_ticks, so a mid-session restart does not lose the
+        opening range or VWAP.
+    Only buckets that closed before the live aggregator came up are seeded, so
+    nothing is double-counted against bars the aggregator itself emits.
+    No-op without a DB."""
     if not (_signal_engine and _db_store and _signal_cfg):
         return
     today = date.today()
+    minutes = _signal_cfg.interval_minutes
+    boot = _signal_boot_ts or datetime.now()
+    day_start = datetime(today.year, today.month, today.day)
+    hist_from = day_start - timedelta(days=7)      # spans holidays + weekends
+    seeded = warmed = 0
     for w in WATCHLIST:
+        label = w["label"]
         try:
-            bars = _db_store.get_intraday_bars(w["label"], _signal_cfg.bar_interval, today)
+            history = _db_store.get_spot_bars_from_ticks(label, minutes, hist_from, day_start)
+            history = history[-_signal_cfg.history_bars:]
+
+            bars = _db_store.get_intraday_bars(label, _signal_cfg.bar_interval, today)
+            # candles.ts is TIMESTAMPTZ; the live aggregator stamps bars with naive
+            # local time, so normalise or the two cannot be compared or merged.
             bars = [
-                {"ts": b["ts"], "open": float(b["open"]), "high": float(b["high"]),
+                {"ts": _naive_local(b["ts"]), "open": float(b["open"]), "high": float(b["high"]),
                  "low": float(b["low"]), "close": float(b["close"]),
                  "volume": float(b["volume"] or 0)}
                 for b in bars if b["open"] is not None
             ]
-            if bars:
-                _signal_engine.seed_session(w["label"], bars, today)
+            # Downloaded candles lag the session by up to an hour, so fill what they
+            # lack from ticks; where both exist the candle wins (true volume).
+            have = {b["ts"] for b in bars}
+            bars += [b for b in _db_store.get_spot_bars_from_ticks(label, minutes, day_start, boot)
+                     if b["ts"] not in have]
+            bars.sort(key=lambda b: b["ts"])
+            bars = [b for b in bars if b["ts"] + timedelta(minutes=minutes) <= boot]
+
+            if bars or history:
+                _signal_engine.seed_session(label, bars, today, history=history)
+                seeded += bool(bars)
+                warmed += bool(history)
         except Exception as exc:
-            log.debug("Seed skipped for %s: %s", w["label"], exc)
+            log.debug("Seed skipped for %s: %s", label, exc)
+    log.info("Signal seeding done: %d symbols with today's bars, %d with warm-up history.",
+             seeded, warmed)
 
 # ── Setup configuration ───────────────────────────────────────────────────────
 _CONFIG_FILE = Path("data/setup.json")

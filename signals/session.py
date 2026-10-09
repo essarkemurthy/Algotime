@@ -5,6 +5,17 @@ A SymbolSession accumulates the day's *closed* bars (reset at 09:15 IST) and
 exposes the OHLCV series + derived indicator series the detectors need. All
 indicator math lives in signals.indicators; this class only assembles arrays
 and caches them per bar count.
+
+Two kinds of series live here:
+
+* Intraday series — the raw OHLCV columns, VWAP and the trailing volume gate —
+  cover today's bars only. The opening range and VWAP are session concepts and
+  must not see yesterday.
+* Trailing indicators — RSI, ATR, EMA, Bollinger, Supertrend, Donchian — are
+  computed over `history` (prior-session bars) followed by today's bars, then
+  sliced so index i still refers to today's bar i. Without that warm-up a
+  14-period indicator is NaN until 10:30 on a 5m chart, and every signal fired
+  before then reports RSI/ATR as missing.
 """
 
 from dataclasses import dataclass, field
@@ -23,6 +34,8 @@ class SymbolSession:
     cfg: SignalConfig
     trade_date: Optional[date] = None
     bars: List[dict] = field(default_factory=list)
+    # Prior-session bars (oldest first) that only feed the trailing indicators.
+    history: List[dict] = field(default_factory=list)
 
     # cached indicator arrays, invalidated whenever a bar is appended
     _cache: Dict[str, np.ndarray] = field(default_factory=dict)
@@ -30,8 +43,16 @@ class SymbolSession:
     # ── bar ingestion ─────────────────────────────────────────────────────────
 
     def reset(self, trade_date: date) -> None:
+        """Day boundary: today's bars become history, the intraday state clears."""
         self.trade_date = trade_date
-        self.bars.clear()
+        self.set_history(self.history + self.bars)
+        self.bars = []
+        self._cache.clear()
+
+    def set_history(self, bars: List[dict]) -> None:
+        """Replace the warm-up bars, keeping only the most recent `history_bars`."""
+        keep = max(0, int(getattr(self.cfg, "history_bars", 0) or 0))
+        self.history = list(bars)[-keep:] if keep else []
         self._cache.clear()
 
     def add_bar(self, bar: dict) -> None:
@@ -65,47 +86,55 @@ class SymbolSession:
                 self.high, self.low, self.close, self.volume)
         return self._cache["vwap"]
 
+    # ── trailing indicators (history-warmed) ──────────────────────────────────
+
+    def _full(self, key: str) -> np.ndarray:
+        """Column over history + today's bars, for trailing indicators."""
+        ck = f"full:{key}"
+        if ck not in self._cache:
+            self._cache[ck] = np.array(
+                [b[key] for b in self.history] + [b[key] for b in self.bars], dtype=float)
+        return self._cache[ck]
+
+    def _today(self, arr):
+        """Drop the history prefix so the result aligns with `bars`."""
+        h = len(self.history)
+        if isinstance(arr, tuple):
+            return tuple(a[h:] for a in arr)
+        return arr[h:]
+
+    def _trailing(self, key: str, fn, *args):
+        if key not in self._cache:
+            self._cache[key] = self._today(fn(*args))
+        return self._cache[key]
+
     def rsi(self) -> np.ndarray:
-        if "rsi" not in self._cache:
-            self._cache["rsi"] = indicators.rsi_wilder(self.close, self.cfg.rsi_period)
-        return self._cache["rsi"]
+        return self.rsi_n(self.cfg.rsi_period)
 
     def atr(self) -> np.ndarray:
-        if "atr" not in self._cache:
-            self._cache["atr"] = indicators.atr_wilder(
-                self.high, self.low, self.close, self.cfg.atr_period)
-        return self._cache["atr"]
+        return self._trailing("atr", indicators.atr_wilder,
+                              self._full("high"), self._full("low"), self._full("close"),
+                              self.cfg.atr_period)
 
     def ema(self, period: int) -> np.ndarray:
-        key = f"ema{period}"
-        if key not in self._cache:
-            self._cache[key] = indicators.ema(self.close, period)
-        return self._cache[key]
+        return self._trailing(f"ema{period}", indicators.ema, self._full("close"), period)
 
     def rsi_n(self, period: int) -> np.ndarray:
-        key = f"rsi{period}"
-        if key not in self._cache:
-            self._cache[key] = indicators.rsi_wilder(self.close, period)
-        return self._cache[key]
+        return self._trailing(f"rsi{period}", indicators.rsi_wilder,
+                              self._full("close"), period)
 
     def bollinger(self, period: int, k: float):
-        key = f"bb{period}_{k}"
-        if key not in self._cache:
-            self._cache[key] = indicators.bollinger_bands(self.close, period, k)
-        return self._cache[key]
+        return self._trailing(f"bb{period}_{k}", indicators.bollinger_bands,
+                              self._full("close"), period, k)
 
     def supertrend(self, period: int, mult: float):
-        key = f"st{period}_{mult}"
-        if key not in self._cache:
-            self._cache[key] = indicators.supertrend(
-                self.high, self.low, self.close, period, mult)
-        return self._cache[key]
+        return self._trailing(f"st{period}_{mult}", indicators.supertrend,
+                              self._full("high"), self._full("low"), self._full("close"),
+                              period, mult)
 
     def donchian(self, period: int):
-        key = f"dc{period}"
-        if key not in self._cache:
-            self._cache[key] = indicators.donchian(self.high, self.low, period)
-        return self._cache[key]
+        return self._trailing(f"dc{period}", indicators.donchian,
+                              self._full("high"), self._full("low"), period)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
