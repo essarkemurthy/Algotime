@@ -109,6 +109,8 @@ def _validate(api_key: str, api_secret: str, token: str):
     if not (api_key and api_secret and token):
         return False, "missing api_key / api_secret / session_token"
     try:
+        from trade_engine import master_cache
+        master_cache.install()
         from breeze_connect import BreezeConnect
         api = BreezeConnect(api_key=api_key)
         api.generate_session(api_secret=api_secret, session_token=token)
@@ -128,6 +130,8 @@ def _check_subscription(api_key: str, api_secret: str, token: str):
     inactive, which shows up as an empty/failed quote rather than an auth error.
     """
     try:
+        from trade_engine import master_cache
+        master_cache.install()
         from breeze_connect import BreezeConnect
         api = BreezeConnect(api_key=api_key)
         api.generate_session(api_secret=api_secret, session_token=token)

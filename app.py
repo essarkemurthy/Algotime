@@ -29,6 +29,8 @@ from pydantic import BaseModel
 # doesn't take the app down — the successful import is cached for
 # trade_engine.session and everything imported after it.
 import sys as _sys
+from trade_engine import master_cache as _master_cache
+_master_cache.install()   # serve SecurityMaster.zip from data/ when the host stalls
 for _attempt in range(8):
     try:
         import breeze_connect  # noqa: F401
@@ -52,7 +54,9 @@ from trade_engine.engine import OptionsAlgoEngine
 from trade_engine.risk import StopLossManager
 from trade_engine.router import OrderRouter
 from trade_engine.session import BreezeSession
-from trade_engine.symbols import SymbolBuilder, nearest_monthly_expiry, nearest_weekly_expiry
+from trade_engine.symbols import (SymbolBuilder, expiry_candidates_after,
+                                  master_expiry, nearest_monthly_expiry,
+                                  nearest_weekly_expiry, parse_breeze_expiry)
 
 from suggestions import SuggestionEngine
 from paper_engine import PaperTrader
@@ -344,6 +348,39 @@ _setup_config: dict = {
     "broker": {"type": "icici", "api_key": "", "api_secret": "", "session_token": ""},
     "setup_complete": False,
 }
+
+
+_ALGO_STATE_FILE = Path("data/algo_paper.json")
+
+
+def _save_algo_state() -> None:
+    """Persist the paper-algo arming (engine gates + enabled strategies) so a
+    restart does not silently disarm a running paper session."""
+    try:
+        _ALGO_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ALGO_STATE_FILE.write_text(json.dumps({
+            "trade_intraday": bool(_algo.cfg.trade_intraday),
+            "trade_options":  bool(_algo.cfg.trade_options),
+            "enabled":        sorted(_algo.enabled),
+        }, indent=2))
+    except Exception as exc:
+        log.warning("Could not save algo state: %s", exc)
+
+
+def _load_algo_state() -> None:
+    if not _ALGO_STATE_FILE.exists():
+        return
+    try:
+        st = json.loads(_ALGO_STATE_FILE.read_text())
+        _algo.cfg.trade_intraday = bool(st.get("trade_intraday", False))
+        _algo.cfg.trade_options  = bool(st.get("trade_options", False))
+        if isinstance(st.get("enabled"), list):
+            _algo.enabled = {s for s in st["enabled"] if s in ALL_STRATEGIES}
+        log.info("Algo state restored: intraday=%s options=%s enabled=%s",
+                 _algo.cfg.trade_intraday, _algo.cfg.trade_options,
+                 ",".join(sorted(_algo.enabled)) or "-")
+    except Exception as exc:
+        log.warning("Could not load algo state: %s", exc)
 
 
 def _load_setup_config() -> None:
@@ -829,6 +866,10 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
     if sub_key in _ws_subscriptions or not (_session and _session._api):
         return True   # already subscribed or no session
     try:
+        # The SDK builds its master key from the expiry string as given, so an
+        # ISO datetime silently resolves to token "4.1!False" (a feed that never
+        # ticks — Monday 2026-11-09's option exited at its entry price for this).
+        expiry = master_expiry(expiry) if expiry else ""
         # get_stock_token_value reads self.interval which is only set after the
         # first subscribe_feeds() call. Ensure it exists before calling directly.
         if not hasattr(_session.api, "interval"):
@@ -889,6 +930,7 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
 def _ws_unsubscribe(stock: str, exchange: str, product: str = "cash",
                     right: str = "", strike: str = "", expiry: str = "") -> None:
     """Unsubscribe from a Breeze feed."""
+    expiry = master_expiry(expiry) if expiry else ""     # same key form as _ws_subscribe
     sub_key = f"{stock}|{exchange}|{product}|{right}|{strike}|{expiry}"
     if sub_key not in _ws_subscriptions or not (_session and _session._api):
         return
@@ -1190,8 +1232,9 @@ async def _auto_connect_broker() -> None:
             api_secret=broker["api_secret"],
             session_token=broker["session_token"],
         )
-        _session = BreezeSession(cfg)
-        await asyncio.to_thread(_session.connect)
+        sess = BreezeSession(cfg)
+        await asyncio.to_thread(sess.connect)
+        _session = sess          # publish only once established (watchdog race)
         await asyncio.to_thread(_setup_ws_feeds)
         await asyncio.to_thread(_build_symbol_index)
         _suggestion_engine = SuggestionEngine(_ltp_cache)
@@ -1213,6 +1256,7 @@ async def lifespan(app: FastAPI):
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
     _load_symbol_index()
     _load_setup_config()
+    _load_algo_state()
     # Restore saved DB URL to env so API endpoints can use it
     saved_db = _setup_config.get("db", {})
     if saved_db.get("mode") == "postgres" and saved_db.get("url"):
@@ -1332,8 +1376,9 @@ async def connect(req: ConnectReq):
         session_token=req.session_token,
     )
     try:
-        _session = BreezeSession(cfg)
-        await asyncio.to_thread(_session.connect)
+        sess = BreezeSession(cfg)
+        await asyncio.to_thread(sess.connect)
+        _session = sess          # publish only once established (watchdog race)
         await asyncio.to_thread(_setup_ws_feeds)
         await asyncio.to_thread(_build_symbol_index)   # extract from SDK security master
     except Exception as exc:
@@ -1508,8 +1553,12 @@ async def setup_save_broker(body: dict):
             api_secret=broker.get("api_secret", ""),
             session_token=broker["session_token"],
         )
-        _session = BreezeSession(cfg)
-        await asyncio.to_thread(_session.connect)
+        sess = BreezeSession(cfg)
+        await asyncio.to_thread(sess.connect)
+        # Publish only once established: the session watchdog probes whatever
+        # _session holds, and a half-built session (SDK object present, token
+        # not yet generated) fails that probe and gets dropped mid-connect.
+        _session = sess
         await asyncio.to_thread(_setup_ws_feeds)
         await asyncio.to_thread(_build_symbol_index)
         _suggestion_engine = SuggestionEngine(_ltp_cache)
@@ -2298,29 +2347,38 @@ async def options_page():
 
 
 # Symbol metadata for option chain
+# Weekday is the regular expiry day; the exchange shifts it a day earlier on a
+# holiday, and BANKNIFTY/FINNIFTY/MIDCPNIFTY list monthly contracts only. The
+# options engine therefore asks Breeze for the nearest *listed* expiry
+# (_resolve_atm_option) and uses these only as fallbacks / for the chain page.
+# "code" is the Breeze internal stock code: chain quotes, the security master and
+# WS subscriptions only know BANKNIFTY as CNXBAN, SENSEX as BSESEN, etc. — the
+# exchange names return "Error while calling service (T10:55)".
 _CHAIN_META = {
-    "NIFTY":     {"exchange": "NFO", "step": 50,  "expiry": "thursday"},
-    "BANKNIFTY": {"exchange": "NFO", "step": 100, "expiry": "thursday"},
-    "SENSEX":    {"exchange": "BFO", "step": 100, "expiry": "friday"},
-    "FINNIFTY":  {"exchange": "NFO", "step": 50,  "expiry": "thursday"},
-    "MIDCPNIFTY":{"exchange": "NFO", "step": 25,  "expiry": "thursday"},
+    "NIFTY":     {"code": "NIFTY",  "exchange": "NFO", "step": 50,  "expiry": "tuesday"},
+    "BANKNIFTY": {"code": "CNXBAN", "exchange": "NFO", "step": 100, "expiry": "tuesday"},
+    "SENSEX":    {"code": "BSESEN", "exchange": "BFO", "step": 100, "expiry": "thursday"},
+    "FINNIFTY":  {"code": "NIFFIN", "exchange": "NFO", "step": 50,  "expiry": "tuesday"},
+    "MIDCPNIFTY":{"code": "NIFSEL", "exchange": "NFO", "step": 25,  "expiry": "tuesday"},
 }
+_EXPIRY_WEEKDAY = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4}
 
 
 def _nearest_expiry_for(symbol: str, expiry_type: str) -> date:
-    """Return nearest weekly or monthly expiry for the given symbol."""
-    from datetime import time as dtime_t
-    meta = _CHAIN_META.get(symbol.upper(), {"expiry": "thursday"})
+    """Return the nearest weekly or monthly expiry for the given symbol (calendar
+    rule only — holiday shifts are not known here)."""
+    meta = _CHAIN_META.get(symbol.upper(), {"expiry": "tuesday"})
     if expiry_type != "weekly":
         return nearest_monthly_expiry()
+    dow = _EXPIRY_WEEKDAY.get(str(meta.get("expiry", "")).lower(), 1)
+    if dow == 1:
+        return nearest_weekly_expiry()
     today = date.today()
-    now   = datetime.now()
-    if meta["expiry"] == "friday":
-        days = (4 - today.weekday()) % 7
-        if days == 0 and now.hour >= 15 and now.minute >= 30:
-            days = 7
-        return today + timedelta(days=days)
-    return nearest_weekly_expiry()
+    now = datetime.now()
+    days = (dow - today.weekday()) % 7
+    if days == 0 and (now.hour, now.minute) >= (15, 30):
+        days = 7
+    return today + timedelta(days=days)
 
 
 @app.get("/api/chain/live")
@@ -2337,7 +2395,7 @@ async def get_chain_live(symbol: str = "NIFTY", expiry_type: str = "weekly"):
         await asyncio.to_thread(_limiter.acquire, f"chain_{sym}")
         resp = await asyncio.to_thread(
             _session.api.get_option_chain_quotes,
-            stock_code=sym,
+            stock_code=meta.get("code", sym),
             exchange_code=meta["exchange"],
             product_type="options",
             expiry_date=SymbolBuilder.breeze_dt(expiry),
@@ -2400,34 +2458,76 @@ async def get_chain_live(symbol: str = "NIFTY", expiry_type: str = "weekly"):
     }
 
 
+# Expiry Breeze actually lists for each underlying, cached per day so the
+# options engine spends one chain call per signal instead of probing.
+_algo_expiry_cache: Dict[str, tuple] = {}        # sym -> (as_of_date, expiry)
+# A long premium bought on expiry day decays to nothing within hours; when the
+# nearest listed expiry is today, roll to the next one that is listed.
+OPTION_AVOID_EXPIRY_DAY = True
+
+
+def _fetch_chain_rows(sym: str, meta: dict, expiry: Optional[date], right: str) -> list:
+    """One blocking get_option_chain_quotes call for one right ("call" | "put";
+    Breeze answers right="others" with calls only, so the wanted side is explicit).
+
+    expiry=None asks Breeze for the nearest listed expiry, which makes the
+    exchange calendar the source of truth: holiday-shifted weeklies (2026-11-09
+    for the 11-10 holiday) and monthly-only indices need no local rules."""
+    _limiter.acquire(f"algo_chain_{sym}")
+    resp = _session.api.get_option_chain_quotes(
+        stock_code=meta.get("code", sym), exchange_code=meta["exchange"], product_type="options",
+        expiry_date=SymbolBuilder.breeze_dt(expiry) if expiry else "",
+        right=right, strike_price="0")
+    if resp.get("Status") != 200:
+        log.info("Algo option chain %s %s %s: %s", sym, right, expiry or "nearest", resp.get("Error"))
+        return []
+    return resp.get("Success") or []
+
+
 def _resolve_atm_option(underlying: str, direction: str) -> Optional[dict]:
     """Blocking: resolve the ATM CE (LONG) / PE (SHORT) for an index underlying.
 
     Returns {stock, right, strike, expiry, premium, exchange} or None. Meant to be
-    called via asyncio.to_thread from _route_option_signal — it makes a blocking
-    Breeze get_option_chain_quotes call and must not run on the SDK tick thread."""
+    called via asyncio.to_thread from _route_option_signal — it makes blocking
+    Breeze get_option_chain_quotes calls and must not run on the SDK tick thread."""
     if not (_session and _session._api):
         return None
     sym = underlying.upper()
     meta = _CHAIN_META.get(sym)
     if not meta:
         return None
-    expiry = _nearest_expiry_for(sym, "weekly")
+    today = date.today()
+    cached = _algo_expiry_cache.get(sym)
+    want_expiry: Optional[date] = cached[1] if cached and cached[0] == today else None
+    want = "ce" if direction == "LONG" else "pe"
+    right_word = "call" if want == "ce" else "put"
+
     try:
-        _limiter.acquire(f"algo_chain_{sym}")
-        resp = _session.api.get_option_chain_quotes(
-            stock_code=sym, exchange_code=meta["exchange"], product_type="options",
-            expiry_date=SymbolBuilder.breeze_dt(expiry), right="others", strike_price="0")
+        rows = _fetch_chain_rows(sym, meta, want_expiry, right_word)
+        listed = next((d for d in (parse_breeze_expiry(r.get("expiry_date")) for r in rows) if d),
+                      want_expiry)
+        if (want_expiry is None and OPTION_AVOID_EXPIRY_DAY
+                and rows and listed is not None and listed <= today):
+            for cand in expiry_candidates_after(listed):
+                alt = _fetch_chain_rows(sym, meta, cand, right_word)
+                if alt:
+                    log.info("Algo options %s: %s expires today, rolled to %s", sym, listed, cand)
+                    rows, listed = alt, cand
+                    break
+            else:
+                log.warning("Algo options %s: only the expiry-day chain (%s) is listed; using it",
+                            sym, listed)
     except Exception as exc:
         log.warning("Algo option chain fetch failed for %s: %s", sym, exc)
         return None
-    if resp.get("Status") != 200:
-        log.warning("Algo option chain non-200 for %s: %s", sym, resp.get("Error"))
+    if not rows or listed is None:
+        log.warning("Algo option chain empty for %s (expiry %s)", sym, want_expiry or "nearest")
         return None
+    expiry = listed
+    _algo_expiry_cache[sym] = (today, expiry)
 
-    want = "ce" if direction == "LONG" else "pe"
     quotes: Dict[int, float] = {}
-    for r in resp.get("Success") or []:
+    for r in rows:
         try:
             strike = int(float(r.get("strike_price") or 0))
             side = str(r.get("right", "")).lower()
@@ -2447,7 +2547,7 @@ def _resolve_atm_option(underlying: str, direction: str) -> Optional[dict]:
     else:
         ordered = sorted(quotes.keys())
         strike = ordered[len(ordered) // 2]
-    return {"stock": sym, "right": "CE" if want == "ce" else "PE",
+    return {"stock": sym, "code": meta.get("code", sym), "right": "CE" if want == "ce" else "PE",
             "strike": strike, "expiry": expiry.isoformat(),
             "premium": quotes.get(strike, 0.0), "exchange": meta["exchange"]}
 
@@ -2468,9 +2568,9 @@ async def _route_option_signal(sig) -> None:
         right_word = "call" if contract["right"] == "CE" else "put"
         breeze_expiry = SymbolBuilder.breeze_dt(date.fromisoformat(contract["expiry"]))
         # Subscribe so the option's premium ticks flow into _ltp_cache → SL/TP checks.
-        await asyncio.to_thread(_ws_subscribe, contract["stock"], contract["exchange"],
-                                "options", right_word, str(contract["strike"]),
-                                breeze_expiry, option_symbol)
+        await asyncio.to_thread(_ws_subscribe, contract.get("code", contract["stock"]),
+                                contract["exchange"], "options", right_word,
+                                str(contract["strike"]), breeze_expiry, option_symbol)
         # Seed the resolved premium so mark-to-market is sensible before the first tick.
         if contract.get("premium") and option_symbol not in _ltp_cache:
             _ltp_cache[option_symbol] = float(contract["premium"])
@@ -2572,6 +2672,7 @@ async def algo_paper_toggle(req: AlgoToggleReq):
     if req.strategy not in ALL_STRATEGIES:
         raise HTTPException(400, f"Unknown strategy: {req.strategy}")
     _algo.set_enabled(req.strategy, req.enabled)
+    _save_algo_state()
     snap = _algo.snapshot()
     await broadcast({"type": "algo_update", "data": snap})
     return {"status": "ok", "strategy": req.strategy, "enabled": req.enabled}
@@ -2601,6 +2702,7 @@ async def algo_paper_config(req: AlgoConfigReq):
         _algo.cfg.trade_options = bool(req.trade_options)
         log.info("Algo options engine %s",
                  "LAUNCHED" if _algo.cfg.trade_options else "stopped")
+    _save_algo_state()
     snap = _algo.snapshot()
     await broadcast({"type": "algo_update", "data": snap})
     return snap

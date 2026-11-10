@@ -37,6 +37,8 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 import psycopg2, psycopg2.pool
+from trade_engine import master_cache
+master_cache.install()
 from breeze_connect import BreezeConnect
 
 from scripts.download_mapped import SYMBOLS as MAPPED_SYMBOLS  # (breeze_code, exch, db_sym, tier)
@@ -62,7 +64,7 @@ CHUNK_DAYS = {"1minute": 2, "5minute": 10, "30minute": 25, "1day": 365}
 RESWEEP_DAYS = {"1m": 9, "5m": 5, "30m": 5}
 # Symbols that Breeze's historical endpoint can no longer serve (dead / renamed /
 # live-feed-only index).  Forward-filling them only burns calls.
-SKIP_SYMBOLS = {"NIFTYJR", "ZOMATO", "NIFTYMIDSELECT"}
+SKIP_SYMBOLS = {"NIFTYJR", "ZOMATO", "NIFTYMIDSELECT", "INDIAVIX"}
 # Abort the run after this many consecutive pairs that yielded nothing but errors.
 ABORT_AFTER_BAD_PAIRS = 8
 
@@ -274,9 +276,14 @@ def main():
     ap.add_argument("--symbols", default="", help="Comma list of symbols to fill (default all)")
     ap.add_argument("--dry-run", action="store_true",
                     help="List what would be fetched and the estimated API calls; no network")
+    ap.add_argument("--delta", action="store_true",
+                    help="Fetch only forward of each pair's last candle; skip the trailing "
+                         "RESWEEP_DAYS re-fetch of intraday intervals")
     args = ap.parse_args()
-    global DRY_RUN
+    global DRY_RUN, RESWEEP_DAYS
     DRY_RUN = args.dry_run
+    if args.delta:
+        RESWEEP_DAYS = {}
     only_ivs = {x.strip() for x in args.intervals.split(",") if x.strip()}
     only_syms = {x.strip().upper() for x in args.symbols.split(",") if x.strip()}
 
@@ -300,9 +307,33 @@ def main():
              len(cov), len({s for s, _, _ in cov}))
     log.info("=" * 70)
 
+    # --delta: probe the DB frontier once per interval (one NIFTY call) and, if
+    # the market has produced nothing since, treat every pair sitting on that
+    # frontier as current.  Only pairs lagging their peers are then fetched.
+    frontier_current: Dict[str, bool] = {}
+    if args.delta:
+        for iv_db, iv_api in IV_API.items():
+            fr = max((t for s, i, t in cov if i == iv_db and t), default=None)
+            if fr is None:
+                continue
+            if DRY_RUN:
+                frontier_current[iv_db] = True
+                log.info("  [delta] %-3s frontier %s (dry run: assumed current)", iv_db, fr)
+                continue
+            probe = fetch_range(api, "NIFTY", "NSE", iv_api, iv_db, "NIFTY",
+                                fr + timedelta(minutes=1), now)
+            frontier_current[iv_db] = not probe
+            log.info("  [delta] %-3s frontier %s -> %s", iv_db, fr,
+                     "current" if not probe else "%d new bars, fetching" % len(probe))
+
     total_new = updated = skipped = est_calls = bad_pairs = 0
     for symbol, iv_db, last_ts in cov:
         iv_api = IV_API.get(iv_db)
+        if args.delta and last_ts and frontier_current.get(iv_db):
+            fr = max(t for s, i, t in cov if i == iv_db and t)
+            if last_ts.date() >= fr.date():
+                skipped += 1
+                continue
         if iv_api is None or symbol in SKIP_SYMBOLS:
             continue
         if only_ivs and iv_db not in only_ivs:

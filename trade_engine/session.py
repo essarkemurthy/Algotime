@@ -1,6 +1,8 @@
 import logging
 from typing import Optional
 
+from . import master_cache
+master_cache.install()          # before the SDK import (it downloads the master then)
 from breeze_connect import BreezeConnect
 
 from .config import EngineConfig

@@ -126,3 +126,44 @@ def all_expiries(expiry_type: str, weekly_n: int = 8,
         if m > last_weekly
     }
     return sorted(weeklies | extra_monthlies)
+
+
+def parse_breeze_expiry(value) -> Optional[date]:
+    """Breeze quotes expiries as '09-Nov-2026'; also accept ISO '2026-11-09[T...]'."""
+    if not value:
+        return None
+    s = str(value).strip()
+    for fmt, width in (("%d-%b-%Y", 11), ("%Y-%m-%d", 10)):
+        try:
+            return datetime.strptime(s[:width], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def expiry_candidates_after(d: date) -> list:
+    """Expiries that may be listed strictly after d, nearest first: the next
+    weekly, the one after it, and the next monthly.
+
+    Used to roll off an expiry-day contract. A holiday-shifted weekly lands a
+    day early (e.g. Mon 2026-11-09 for the Tue 2026-11-10 holiday), so the next
+    regular weekday may itself be unlisted; the caller tries each in turn."""
+    start = d + timedelta(days=1)
+    nxt = nearest_weekly_expiry(start)
+    out = []
+    for c in (nxt, nxt + timedelta(days=7), nearest_monthly_expiry(start)):
+        if c > d and c not in out:
+            out.append(c)
+    return sorted(out)
+
+
+def master_expiry(value) -> str:
+    """Expiry in the form the Breeze security master keys use ('17-Nov-2026').
+
+    `get_stock_token_value` / `subscribe_feeds` build the lookup key
+    'OPT-<code>-<expiry>-<strike>-<CE|PE>' from the expiry string *as given*, so an
+    ISO datetime (what breeze_dt() makes for REST calls) yields token '4.1!False'
+    and a feed that never ticks. Accepts ISO date/datetime or already-formatted.
+    """
+    d = parse_breeze_expiry(value)
+    return d.strftime("%d-%b-%Y") if d else str(value or "")
