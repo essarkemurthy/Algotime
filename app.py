@@ -14,6 +14,7 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -283,6 +284,107 @@ def _startup_gap_fill() -> None:
             log.warning("Startup gap fill exited %s. %s", proc.returncode, tail[0])
 
     threading.Thread(target=_run, daemon=True, name="startup-gap-fill").start()
+
+# ── Continuous Breeze candle sync ─────────────────────────────────────────────
+# The live WS only persists ticks; the candles table used by charts, backtests
+# and the signal engine's seed only advanced when update_all.py was run by hand.
+# This loop keeps it current all session: every INTRADAY_SYNC_MIN minutes it
+# pulls 1m bars from Breeze for the symbols on the live feed (delta only) and
+# derives 5m/15m/30m locally, then once after the close it runs a full delta
+# fill of every symbol/interval so the day ends on the exchange's own bars.
+_SYNC_EVERY_MIN   = int(os.getenv("INTRADAY_SYNC_MIN", "10") or 0)   # 0 disables
+_SYNC_OPEN        = dt_time(9, 20)
+_SYNC_CLOSE       = dt_time(15, 35)
+_SYNC_EOD_AT      = dt_time(15, 45)
+_fill_lock        = threading.Lock()           # one update_all.py at a time
+_sync_state: Dict[str, object] = {"enabled": _SYNC_EVERY_MIN > 0, "every_min": _SYNC_EVERY_MIN,
+                                  "last_run": None, "last_result": None, "runs": 0,
+                                  "eod_done": None}
+
+
+def _run_fill(args: List[str], timeout: int) -> tuple:
+    """Blocking: run scripts/update_all.py with args; (returncode, last line)."""
+    import subprocess
+    script = Path(__file__).parent / "scripts" / "update_all.py"
+    cmd = [_sys.executable, str(script), *args]
+    proc = subprocess.run(cmd, cwd=str(Path(__file__).parent),
+                          capture_output=True, text=True, timeout=timeout)
+    tail = [l for l in (proc.stdout or "").splitlines() if "ALL DONE" in l or "ABORT" in l]
+    if tail:
+        return proc.returncode, tail[-1].split("] ", 1)[-1]
+    err = ((proc.stderr or proc.stdout or "").strip().splitlines() or [""])[-1]
+    return proc.returncode, err[-200:]
+
+
+def _run_derive(script_name: str, args: List[str]) -> str:
+    import subprocess
+    script = Path(__file__).parent / "scripts" / script_name
+    proc = subprocess.run([_sys.executable, str(script), *args], cwd=str(Path(__file__).parent),
+                          capture_output=True, text=True, timeout=600)
+    return ((proc.stdout or proc.stderr or "").strip().splitlines() or [""])[-1]
+
+
+def _intraday_sync_once() -> None:
+    """Blocking: one intraday delta pull of 1m bars for the live symbols."""
+    # live cash/index symbols only; option feeds are keyed NIFTY_CE_<strike>_<expiry>
+    syms = sorted({s for s in _token_to_symbol.values() if s and "_" not in s})
+    if not syms:
+        _sync_state["last_result"] = "no live symbols"
+        return
+    if not _fill_lock.acquire(blocking=False):
+        _sync_state["last_result"] = "skipped: another fill is running"
+        return
+    try:
+        rc, line = _run_fill(["--delta", "--days", "2", "--no-futures", "--intervals", "1m",
+                              "--symbols", ",".join(syms)], timeout=900)
+        derived = _run_derive("derive_bars.py", ["--days", "1"]) if rc == 0 else "skipped"
+        _sync_state["last_result"] = f"rc={rc} {line} | {derived}"
+        _sync_state["runs"] = int(_sync_state.get("runs") or 0) + 1
+        (log.info if rc == 0 else log.warning)("Intraday sync (%d symbols): %s | %s",
+                                                len(syms), line, derived)
+    finally:
+        _fill_lock.release()
+
+
+def _eod_sync_once() -> None:
+    """Blocking: full delta fill of every symbol/interval after the close."""
+    if not _fill_lock.acquire(blocking=False):
+        _sync_state["last_result"] = "eod skipped: another fill is running"
+        return
+    try:
+        rc, line = _run_fill(["--delta", "--days", "5", "--no-futures"], timeout=3600)
+        d15 = _run_derive("derive_15m.py", ["--days", "3"]) if rc == 0 else "skipped"
+        _sync_state["last_result"] = f"EOD rc={rc} {line} | {d15}"
+        if rc == 0:
+            _sync_state["eod_done"] = date.today().isoformat()
+        (log.info if rc == 0 else log.warning)("EOD sync: %s | %s", line, d15)
+    finally:
+        _fill_lock.release()
+
+
+async def _intraday_sync_loop() -> None:
+    if _SYNC_EVERY_MIN <= 0:
+        log.info("Intraday candle sync disabled (INTRADAY_SYNC_MIN=0).")
+        return
+    log.info("Intraday candle sync every %d min during %s-%s; EOD full delta at %s.",
+             _SYNC_EVERY_MIN, _SYNC_OPEN, _SYNC_CLOSE, _SYNC_EOD_AT)
+    await asyncio.sleep(90)                      # let feeds + startup fill settle
+    while True:
+        try:
+            now = datetime.now()
+            if _db_store is None or not (_session and _session._api) or now.weekday() >= 5:
+                pass
+            elif _SYNC_OPEN <= now.time() <= _SYNC_CLOSE:
+                _sync_state["last_run"] = now.isoformat(timespec="seconds")
+                await asyncio.to_thread(_intraday_sync_once)
+            elif now.time() >= _SYNC_EOD_AT and _sync_state.get("eod_done") != date.today().isoformat():
+                _sync_state["last_run"] = now.isoformat(timespec="seconds")
+                await asyncio.to_thread(_eod_sync_once)
+        except Exception as exc:
+            log.warning("Candle sync error: %s", exc)
+            _sync_state["last_result"] = f"error: {exc}"
+        await asyncio.sleep(_SYNC_EVERY_MIN * 60)
+
 
 def _naive_local(ts: datetime) -> datetime:
     """Timezone-aware -> naive system-local, the form datetime.now() produces."""
@@ -1254,6 +1356,7 @@ async def lifespan(app: FastAPI):
     _broadcast_task = asyncio.create_task(_broadcast_loop())
     asyncio.create_task(_session_watchdog())
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
+    asyncio.create_task(_intraday_sync_loop())
     _load_symbol_index()
     _load_setup_config()
     _load_algo_state()
@@ -1410,6 +1513,7 @@ async def get_status():
     return {
         "connected":    bool(_session and _session._api),
         "algo_running": bool(_algo_task and not _algo_task.done()),
+        "candle_sync":  _sync_state,
     }
 
 

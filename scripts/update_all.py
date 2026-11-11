@@ -313,6 +313,8 @@ def main():
     frontier_current: Dict[str, bool] = {}
     if args.delta:
         for iv_db, iv_api in IV_API.items():
+            if only_ivs and iv_db not in only_ivs:
+                continue
             fr = max((t for s, i, t in cov if i == iv_db and t), default=None)
             if fr is None:
                 continue
