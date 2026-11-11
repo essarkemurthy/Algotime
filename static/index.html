@@ -397,8 +397,18 @@
     0%   { color: var(--tu-danger); }
     100% { color: inherit; }
   }
+  @keyframes ltp-flash-b {
+    0%   { color: var(--tu-success); }
+    100% { color: inherit; }
+  }
+  @keyframes ltp-flash-dn-b {
+    0%   { color: var(--tu-danger); }
+    100% { color: inherit; }
+  }
   .ltp-up { animation: ltp-flash    0.6s ease-out forwards; }
   .ltp-dn { animation: ltp-flash-dn 0.6s ease-out forwards; }
+  .ltp-up-b { animation: ltp-flash-b    0.6s ease-out forwards; }
+  .ltp-dn-b { animation: ltp-flash-dn-b 0.6s ease-out forwards; }
 
   /* ── DB-only mode banner ──────────────────────────────────── */
   .db-only-banner { display: none; background: #FFF8E1; border-bottom: 1px solid #FFD54F; padding: 8px 0; }
@@ -977,9 +987,13 @@
 
   // ── flash helper ─────────────────────────────────────────────────────────────
   function flash(el, dir) {
-    el.classList.remove('ltp-up', 'ltp-dn');
-    void el.offsetWidth;                         // force reflow to restart animation
-    el.classList.add(dir > 0 ? 'ltp-up' : 'ltp-dn');
+    // Alternate between two identical keyframe sets: a changed animation-name
+    // restarts the flash without the forced reflow (offsetWidth) that cost a
+    // full layout per tick and let the page fall behind the feed.
+    const b = el.dataset.fl === '1';
+    el.classList.remove('ltp-up', 'ltp-dn', 'ltp-up-b', 'ltp-dn-b');
+    el.classList.add((dir > 0 ? 'ltp-up' : 'ltp-dn') + (b ? '' : '-b'));
+    el.dataset.fl = b ? '0' : '1';
   }
 
   // ── LTP cache (prev values for direction) ────────────────────────────────────
@@ -1000,7 +1014,52 @@
   }
 
   // ── update one symbol ────────────────────────────────────────────────────────
+  // ── per-frame paint queue ──────────────────────────────────────────────────
+  // 150+ ticks/s arrive on the socket; painting each one synchronously (with a
+  // DOM walk per tick) made the handler slower than the feed, so the browser's
+  // message queue grew and the numbers lagged further behind every minute.
+  // Now: remember the latest price per symbol, paint once per animation frame.
+  let _pend = new Map(), _raf = 0;
+  const _paintedOk = {};
   function applySingle(sym, ltp) {
+    _pend.set(sym, ltp);
+    if (!_raf) _raf = requestAnimationFrame(_flushPend);
+  }
+  function _flushPend() {
+    _raf = 0;
+    const batch = _pend; _pend = new Map();
+    batch.forEach((ltp, sym) => paintSingle(sym, ltp));
+    if (brokerConnected) connText.textContent = `Breeze connected · NSE · ${ticksReceived} ticks`;
+  }
+
+  // symbol -> {cells, tiles}; rebuilt at most every 2 s (or when a node is gone)
+  let _elIdx = null, _elIdxAt = 0;
+  function elIndex() {
+    const now = Date.now();
+    if (_elIdx && now - _elIdxAt < 2000) return _elIdx;
+    const idx = new Map();
+    const add = (sym, kind, el) => {
+      if (!sym) return;
+      let e = idx.get(sym);
+      if (!e) { e = { cells: [], tiles: [] }; idx.set(sym, e); }
+      e[kind].push(el);
+    };
+    document.querySelectorAll('.ticker-cell').forEach(cell => {
+      const n = cell.querySelector('.name');
+      if (n) add(TICKER_SYM[n.textContent.trim()], 'cells', cell);
+    });
+    document.querySelectorAll('.watch-tile').forEach(tile => {
+      const t = tile.querySelector('.ticker');
+      if (!t) return;
+      const raw = (t.childNodes[0]?.textContent || '').trim().toUpperCase();
+      add(WATCH_SYM[raw], 'tiles', tile);
+    });
+    _elIdx = idx; _elIdxAt = now;
+    return idx;
+  }
+
+  function paintSingle(sym, ltp, retry) {
+    if (prev[sym] === ltp && _paintedOk[sym]) return;      // nothing changed on screen
     const dir = prev[sym] != null ? Math.sign(ltp - prev[sym]) : 0;
     prev[sym] = ltp;
 
@@ -1008,11 +1067,11 @@
     const absChg = (pc != null) ? (ltp - pc) : null;
     const pctChg = (pc != null && pc !== 0) ? (absChg / pc * 100) : null;
 
-    // ticker strip
-    document.querySelectorAll('.ticker-cell').forEach(cell => {
-      const nameEl = cell.querySelector('.name');
-      if (!nameEl) return;
-      if (TICKER_SYM[nameEl.textContent.trim()] !== sym) return;
+    const e = elIndex().get(sym) || { cells: [], tiles: [] };
+    let stale = false, found = 0;
+    e.cells.forEach(cell => {
+      if (!cell.isConnected) { stale = true; return; }
+      found++;
       const ltpEl = cell.querySelector('.ltp');
       if (ltpEl) {
         ltpEl.textContent = fmt(ltp);
@@ -1021,13 +1080,9 @@
       setChg(cell.querySelector('.chg'), absChg, pctChg, true);
       cell.dataset.tick = ltp;
     });
-
-    // watchlist tiles
-    document.querySelectorAll('.watch-tile').forEach(tile => {
-      const tickerEl = tile.querySelector('.ticker');
-      if (!tickerEl) return;
-      const raw = (tickerEl.childNodes[0]?.textContent || '').trim().toUpperCase();
-      if (WATCH_SYM[raw] !== sym) return;
+    e.tiles.forEach(tile => {
+      if (!tile.isConnected) { stale = true; return; }
+      found++;
       const ltpEl = tile.querySelector('.ltp');
       if (ltpEl) {
         ltpEl.textContent = fmt(ltp);
@@ -1035,6 +1090,11 @@
       }
       setChg(tile.querySelector('.chg'), absChg, pctChg, false);
     });
+    _paintedOk[sym] = found > 0;
+    if (stale && !retry) {                 // the strip/tiles were re-rendered: re-index once
+      _elIdxAt = 0; _paintedOk[sym] = false;
+      paintSingle(sym, ltp, true);
+    }
   }
 
   // ── seed last-known price + %-change from the backend (DB fallback) ──────────
@@ -1096,6 +1156,11 @@
       if (msg.type === 'price' && msg.symbol && msg.ltp != null) {
         applySingle(msg.symbol, msg.ltp);
         bumpTick();
+      }
+      // 250 ms server batch of changed prices: symbol -> [ltp, change]
+      if (msg.type === 'prices' && msg.data) {
+        for (const sym in msg.data) applySingle(sym, msg.data[sym][0]);
+        ticksReceived += Object.keys(msg.data).length;   // label refreshes in the paint frame
       }
       // VWAP-Reversal / ORB signal alerts (read-only notifications)
       if (msg.type === 'signal') {

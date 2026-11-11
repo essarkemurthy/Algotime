@@ -704,14 +704,50 @@ class AlgoStartReq(BaseModel):
 # ── WebSocket broadcast ───────────────────────────────────────────────────────
 
 async def broadcast(msg: dict) -> None:
-    dead = set()
+    """Send one message to every UI client, concurrently.
+
+    Sends used to run one client at a time, so a single stalled browser tab
+    held up the stream for all of them. A client that cannot take a frame
+    within _WS_SEND_TIMEOUT is dropped instead."""
+    clients = list(_ws_clients)
+    if not clients:
+        return
     payload = json.dumps(msg)
-    for ws in list(_ws_clients):
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _ws_clients.difference_update(dead)
+    results = await asyncio.gather(
+        *(asyncio.wait_for(ws.send_text(payload), timeout=_WS_SEND_TIMEOUT) for ws in clients),
+        return_exceptions=True)
+    for ws, res in zip(clients, results):
+        if isinstance(res, BaseException):
+            _ws_clients.discard(ws)
+            try:
+                await ws.close()
+            except Exception:
+                pass
+
+
+_WS_SEND_TIMEOUT = 2.0
+
+# Per-tick price fan-out is coalesced: the SDK thread records the latest
+# (ltp, change) per symbol and _price_flush_loop sends one "prices" message
+# every _PRICE_FLUSH_SEC. At 150+ ticks/s the old one-message-per-tick stream
+# (each a JSON encode + socket write per client) was more than the browser
+# could paint, so the UI drifted further behind the feed as the session ran.
+_PRICE_FLUSH_SEC = 0.25
+_price_dirty: Dict[str, tuple] = {}
+_price_dirty_lock = threading.Lock()
+
+
+async def _price_flush_loop() -> None:
+    while True:
+        await asyncio.sleep(_PRICE_FLUSH_SEC)
+        with _price_dirty_lock:
+            if not _price_dirty:
+                continue
+            batch = dict(_price_dirty)
+            _price_dirty.clear()
+        if _ws_clients:
+            await broadcast({"type": "prices",
+                             "data": {s: [l, c] for s, (l, c) in batch.items()}})
 
 
 # ── P&L computation ───────────────────────────────────────────────────────────
@@ -921,13 +957,9 @@ def _on_tick(tick: dict) -> None:
         "ts":         now.strftime("%H:%M:%S"),
     }
 
-    # Broadcast live price to all UI clients immediately (ticker strip / watchlist)
-    if _main_loop:
-        asyncio.run_coroutine_threadsafe(
-            broadcast({"type": "price", "symbol": cache_key, "ltp": ltp_f,
-                       "change": entry["change"]}),
-            _main_loop,
-        )
+    # Live price for the ticker strip / watchlist: coalesced by _price_flush_loop
+    with _price_dirty_lock:
+        _price_dirty[cache_key] = (ltp_f, entry["change"])
 
     # Detailed tick data for the tick pane (only when that symbol is being watched)
     if cache_key == _tick_watch and _main_loop:
@@ -1356,6 +1388,7 @@ async def lifespan(app: FastAPI):
     _broadcast_task = asyncio.create_task(_broadcast_loop())
     asyncio.create_task(_session_watchdog())
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
+    asyncio.create_task(_price_flush_loop())
     asyncio.create_task(_intraday_sync_loop())
     _load_symbol_index()
     _load_setup_config()

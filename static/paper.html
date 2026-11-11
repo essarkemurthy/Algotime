@@ -1753,8 +1753,37 @@ setInterval(() => {
   });
 }, 3000);
 
+// Ticks arrive far faster than the page can repaint (150+/s across the
+// watchlist). Queue the latest value per symbol and paint once per animation
+// frame, so the handler never falls behind the socket and the display stays
+// current instead of drifting seconds behind.
+let _ltpPending = new Map();
+let _ltpRaf = 0;
+const _ltpPainted = {};     // symbol -> true once a DOM element has shown it
 function applyLtp(symbol, ltp, change, live) {
+  const prev = _ltpPending.get(symbol);
+  _ltpPending.set(symbol, { ltp, change, live: !!live || !!(prev && prev.live) });
+  if (!_ltpRaf) _ltpRaf = requestAnimationFrame(_flushLtp);
+}
+function _flushLtp() {
+  _ltpRaf = 0;
+  const batch = _ltpPending;
+  _ltpPending = new Map();
+  batch.forEach((v, k) => paintLtp(k, v.ltp, v.change, v.live));
+}
+function paintLtp(symbol, ltp, change, live) {
+  const unchanged = ltpCache[symbol] === ltp && _ltpPainted[symbol];
   ltpCache[symbol] = ltp;
+  if (unchanged) {
+    // Same price: nothing to redraw; just keep the index tile's live flasher on.
+    const tid = IDX_SYMBOL_MAP[symbol];
+    if (live && tid) {
+      const ve = document.getElementById(tid);
+      if (ve) { idxLastTick[tid] = Date.now(); setTileLive(ve.closest('.index-tile'), true); }
+    }
+    return;
+  }
+  let painted = 0;
   // Change is measured STRICTLY against the previous trading day's close (seeded
   // from the DB). We ignore the broker tick's own `change` field so the delta is
   // never a prev-tick value; if no prev-close is known, show no change ("—").
@@ -1763,9 +1792,10 @@ function applyLtp(symbol, ltp, change, live) {
   change = havePrev ? (ltp - prevCloseRef) : null;
   // Update watchlist rows — CMP
   document.querySelectorAll('.watch-row[data-symbol="' + symbol + '"] .ltp').forEach(el => {
+    painted++;
     const prev = parseFloat(el.textContent.replace(/,/g, '')) || ltp;
+    // colour-only classes: no forced reflow needed (offsetWidth reads cost a layout per tick)
     el.classList.remove('flash-up', 'flash-dn');
-    void el.offsetWidth;
     el.classList.add(ltp >= prev ? 'flash-up' : 'flash-dn');
     el.textContent = fmtIN(ltp, 2);
   });
@@ -1789,8 +1819,8 @@ function applyLtp(symbol, ltp, change, live) {
   if (tileId) {
     const valEl = document.getElementById(tileId);
     if (valEl) {
+      painted++;
       valEl.classList.remove('flash-up', 'flash-dn');
-      void valEl.offsetWidth;
       valEl.classList.add('flash-up');
       let chgSpan = '<span class="chg">—</span>';
       if (change != null) {
@@ -1810,6 +1840,7 @@ function applyLtp(symbol, ltp, change, live) {
       }
     }
   }
+  if (painted) _ltpPainted[symbol] = true;
 }
 
 (function connectWS() {
@@ -1830,6 +1861,9 @@ function applyLtp(symbol, ltp, change, live) {
       } else if (msg.type === 'status') {
         setConnected(msg.connected);
         if (!msg.connected) loadDbPrices();
+      } else if (msg.type === 'prices' && msg.data) {
+        // 250 ms server batch of changed prices: symbol -> [ltp, change]
+        Object.entries(msg.data).forEach(([k, v]) => applyLtp(k, v[0], v[1], true));
       } else if (msg.type === 'price' && msg.symbol && msg.ltp != null) {
         // per-tick immediate update — backend fires this for every incoming tick
         applyLtp(msg.symbol, msg.ltp, msg.change, true);
