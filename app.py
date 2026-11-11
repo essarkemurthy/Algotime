@@ -1374,6 +1374,7 @@ async def _auto_connect_broker() -> None:
         _suggestion_engine = SuggestionEngine(_ltp_cache)
         await broadcast({"type": "status", "connected": True})
         log.info("Auto-connected to Breeze on startup.")
+        await _refresh_account(force=True)
     except Exception as exc:
         _session = None
         log.warning("Auto-connect to Breeze failed (token may be stale): %s", exc)
@@ -1522,6 +1523,7 @@ async def connect(req: ConnectReq):
         raise HTTPException(500, f"Connection failed: {exc}")
     _suggestion_engine = SuggestionEngine(_ltp_cache)
     await broadcast({"type": "status", "connected": True})
+    await _refresh_account(force=True)
     return {"status": "connected"}
 
 
@@ -1539,37 +1541,92 @@ async def disconnect_api():
         _session = None
     global _account_name
     _account_name = None
+    _account.clear()
     await broadcast({"type": "status", "connected": False})
     return {"status": "disconnected"}
 
 
-# Broker account holder, as returned by Breeze get_customer_details. Fetched once
-# per connected session and persisted in data/setup.json so the header avatar and
-# the profile card show the real account name even while the broker is offline.
+# Broker account, as returned by Breeze get_customer_details + get_funds.
+# Refreshed right after every successful login and at most once a minute on
+# demand. The identity fields are persisted in data/setup.json so the header
+# avatar and the profile card still show them while the broker is offline.
 _account_name: Optional[str] = None
+_account: Dict[str, object] = {}
+_account_at: float = 0.0
+_ACCOUNT_TTL_SEC = 60
+_ACCOUNT_SAVED_KEYS = ("name", "user_id", "last_login", "segments")
+
+
+def _mask_account(acct: object) -> str:
+    acct = str(acct or "")
+    return ("XXXX" + acct[-4:]) if len(acct) >= 4 else acct
+
+
+async def _refresh_account(force: bool = False) -> Dict[str, object]:
+    global _account_name, _account_at
+    if not (_session and _session._api):
+        return _account
+    if not force and _account and (time.time() - _account_at) < _ACCOUNT_TTL_SEC:
+        return _account
+    tok = _session.cfg.session_token
+    try:
+        cd = await asyncio.to_thread(_session.api.get_customer_details, api_session=tok)
+        su = (cd or {}).get("Success") or {}
+        if cd and cd.get("Status") == 200 and su.get("idirect_user_name"):
+            seg = su.get("segments_allowed") or {}
+            ident = {
+                "name":       str(su.get("idirect_user_name") or "").strip(),
+                "user_id":    str(su.get("idirect_userid") or "").strip(),
+                "last_login": str(su.get("idirect_lastlogin_time") or "").strip(),
+                "segments":   [k for k, v in seg.items() if v == "Y" and k != "Trading"],
+            }
+            _account.update(ident)
+            _account["exchange_status"] = su.get("exg_status") or {}
+            _account["trade_dates"] = su.get("exg_trade_date") or {}
+            _account_name = ident["name"]
+            changed = False
+            for k, v in ident.items():
+                if _setup_config.get("account_" + k) != v:
+                    _setup_config["account_" + k] = v
+                    changed = True
+            if changed:
+                _save_setup_config()
+        else:
+            log.warning("get_customer_details rejected: %s", (cd or {}).get("Error"))
+    except Exception as exc:
+        log.warning("get_customer_details failed: %s", exc)
+    try:
+        fr = await asyncio.to_thread(_session.api.get_funds)
+        fs = (fr or {}).get("Success") or {}
+        if fr and fr.get("Status") == 200 and fs:
+            def _num(key: str) -> float:
+                try:
+                    return float(fs.get(key) or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+            _account["funds"] = {
+                "bank_account":        _mask_account(fs.get("bank_account")),
+                "total_balance":       _num("total_bank_balance"),
+                "allocated_equity":    _num("allocated_equity"),
+                "allocated_fno":       _num("allocated_fno"),
+                "allocated_commodity": _num("allocated_commodity"),
+                "allocated_currency":  _num("allocated_currency"),
+                "blocked":             _num("block_by_trade_balance"),
+                "unallocated":         _num("unallocated_balance"),
+            }
+        else:
+            log.warning("get_funds rejected: %s", (fr or {}).get("Error"))
+    except Exception as exc:
+        log.warning("get_funds failed: %s", exc)
+    _account_at = time.time()
+    _account["fetched_at"] = datetime.now().strftime("%H:%M:%S")
+    log.info("Account refreshed: %s (%s)", _account.get("name"), _account.get("user_id"))
+    return _account
 
 
 async def _get_account_name() -> Optional[str]:
-    global _account_name
-    if _account_name:
-        return _account_name
-    saved = (_setup_config.get("account_name") or "").strip()
-    if not (_session and _session._api):
-        return saved or None
-    try:
-        resp = await asyncio.to_thread(_session.api.get_customer_details,
-                                       api_session=_session.cfg.session_token)
-        name = ((resp or {}).get("Success") or {}).get("idirect_user_name") if resp else None
-        name = (name or "").strip()
-        if resp and resp.get("Status") == 200 and name:
-            _account_name = name
-            if saved != name:
-                _setup_config["account_name"] = name
-                _save_setup_config()
-            return name
-    except Exception as exc:
-        log.debug("get_customer_details failed: %s", exc)
-    return saved or None
+    acct = await _refresh_account()
+    return (acct.get("name") or _setup_config.get("account_name") or "").strip() or None
 
 
 def _initials(name: str) -> str:
@@ -1583,13 +1640,17 @@ def _initials(name: str) -> str:
 
 @app.get("/api/account")
 async def get_account():
-    """Account holder name for the UI (header avatar, profile card)."""
-    name = await _get_account_name()
-    return {
-        "connected": bool(_session and _session._api),
-        "name":      name,
-        "initials":  _initials(name) if name else None,
-    }
+    """Broker account for the UI: holder name/initials, user id, last login,
+    segments and (while connected) funds."""
+    live = await _refresh_account()
+    out: Dict[str, object] = {k: _setup_config.get("account_" + k)
+                              for k in _ACCOUNT_SAVED_KEYS if _setup_config.get("account_" + k)}
+    out.update(live)
+    name = str(out.get("name") or "").strip() or None
+    out["name"] = name
+    out["initials"] = _initials(name) if name else None
+    out["connected"] = bool(_session and _session._api)
+    return out
 
 
 @app.get("/api/status")
@@ -1756,6 +1817,7 @@ async def setup_save_broker(body: dict):
         # before the token has been pasted here - it fails auth and does not
         # retry until the next restart. Now that a session exists, run it.
         _startup_gap_fill()
+        await _refresh_account(force=True)
         return {"ok": True, "connected": True}
     except Exception as exc:
         _session = None

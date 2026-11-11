@@ -634,7 +634,7 @@
           <div class="avatar">SK</div>
           <h2 class="name">Sridhar Kumar</h2>
           <span class="email">essarkemurthy@gmail.com</span>
-          <span class="tier">Pro · expires 14 Jun 2026</span>
+          <span class="tier" id="id-tier">ICICI Direct</span>
         </div>
         <div class="role-band" id="role-band">
           <button class="cred-chip" id="chip-db" type="button" data-target="db" aria-pressed="false">
@@ -650,10 +650,10 @@
 
         </div>
         <div class="meta-rows">
-          <div class="r"><span class="l">Member since</span><span class="v">Mar 2024</span></div>
+          <div class="r"><span class="l">Broker user ID</span><span class="v" id="id-userid">—</span></div>
           <div class="r"><span class="l">Time zone</span><span class="v">Asia/Kolkata</span></div>
-          <div class="r"><span class="l">2-factor auth</span><span class="v">TOTP · on</span></div>
-          <div class="r"><span class="l">Last sign-in</span><span class="v" id="last-signin">Today · 09:14 IST</span></div>
+          <div class="r"><span class="l">Segments</span><span class="v" id="id-segments">—</span></div>
+          <div class="r"><span class="l">Last broker login</span><span class="v" id="last-signin">—</span></div>
         </div>
         <div class="foot">
           <button class="btn btn-ghost btn-sm" type="button">
@@ -1416,6 +1416,7 @@
         setStatus(st, stT, '', 'Connection successful' + (d.name ? ' · ' + esc(d.name) : ''));
         b.status = 'connected'; b.statusText = 'Connected';
         renderBrokerSelector();
+        applyAccount();
       } else {
         setStatus(st, stT, 'err', 'Connection failed' + (d.error ? ' · ' + esc(d.error) : ''));
       }
@@ -1441,6 +1442,7 @@
         setStatus(st, stT, '', 'Saved &amp; connecting…');
         b.status = 'connected'; b.statusText = 'Saved &amp; connected';
         renderBrokerSelector();
+        applyAccount();
       } else {
         setStatus(st, stT, 'err', esc(d.detail || 'Save failed'));
       }
@@ -1507,6 +1509,55 @@
   // ── Boot: load saved config from API ────────────────────────────────────────
   function fmtIN(n) {
     return Number(n).toFixed(0).replace(/\B(?=(\d{2})*(\d{3})(?!\d))/g, ',');
+  }
+
+  // ── Broker account (fetched by the server on every successful login) ──────
+  function fmtLogin(s) {
+    // "12-Nov-2026 00:15:05" -> "Today · 00:15 IST" / "12 Nov · 00:15 IST"
+    const m = /^(\d{2})-(\w{3})-(\d{4})\s+(\d{2}:\d{2})/.exec(s || '');
+    if (!m) return s || '—';
+    const now = new Date(), mon = now.toLocaleString('en', { month: 'short' });
+    const today = String(now.getDate()).padStart(2, '0') === m[1] && mon === m[2] && String(now.getFullYear()) === m[3];
+    return (today ? 'Today' : m[1] + ' ' + m[2]) + ' · ' + m[4] + ' IST';
+  }
+  function rupee(v) { return '₹' + fmtIN(Math.round(v || 0)); }
+  async function applyAccount() {
+    try {
+      const r = await fetch('/api/account');
+      const d = await r.json();
+      if (!d) return;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      if (d.name) {
+        const name = d.name.toLowerCase().replace(/(^|[\s\-'])(\S)/g, (m, a, b) => a + b.toUpperCase());
+        document.querySelectorAll('.id-card .name').forEach(el => el.textContent = name);
+        document.querySelectorAll('.id-card .avatar, .profile-btn').forEach(el => el.textContent = d.initials || '');
+      }
+      set('id-tier', 'ICICI Direct · ' + (d.connected ? 'connected' : 'offline'));
+      set('id-userid', d.user_id || '—');
+      set('id-segments', (d.segments && d.segments.length) ? d.segments.join(' · ') : '—');
+      set('last-signin', fmtLogin(d.last_login));
+
+      const icici = BROKERS.find(b => b.id === 'icici');
+      if (!icici) return;
+      icici.demat = icici.demat.map(row => {
+        if (row.l === 'Client ID' && d.user_id) return { l: 'Client ID', v: esc(d.user_id) };
+        if (row.l === 'Segments' && d.segments && d.segments.length) return { l: 'Segments', v: esc(d.segments.join(' · ')) };
+        if (row.l === 'Bank' && d.funds) return { l: 'Bank', v: esc(d.funds.bank_account || '—') };
+        return row;
+      });
+      if (d.funds) {
+        const f = d.funds;
+        icici.funds.rows = [
+          { l: 'Bank balance',       v: rupee(f.total_balance),    tone: '' },
+          { l: 'Allocated · F&O',    v: rupee(f.allocated_fno),    tone: '' },
+          { l: 'Allocated · equity', v: rupee(f.allocated_equity), tone: '' },
+          { l: 'Blocked by trades',  v: rupee(f.blocked),          tone: f.blocked > 0 ? 'neg' : '' },
+          { l: 'Unallocated',        v: rupee(f.unallocated),      tone: 'pos' },
+        ];
+        icici.funds.suffix = 'live · ' + (f.bank_account || '') + (d.fetched_at ? ' · ' + d.fetched_at : '');
+      }
+      if (activeBrokerId === 'icici') { renderFunds(); renderDemat(); }
+    } catch (e) {}
   }
 
   async function bootFromApi() {
@@ -1580,6 +1631,7 @@
 
     // Render after loading API data
     selectBroker(activeBrokerId);
+    applyAccount();
   }
 
   // ── Start ────────────────────────────────────────────────────────────────────
