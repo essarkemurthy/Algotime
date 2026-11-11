@@ -34,6 +34,8 @@ def period_range(period: str, fy: Optional[int] = None,
     p = (period or "1m").lower()
     if p == "all":
         return None, None
+    if p in ("today", "1d"):
+        return today, today
     if p == "fy":
         start_year = fy if fy is not None else (today.year if today.month >= 4 else today.year - 1)
         f, t = fy_bounds(start_year)
