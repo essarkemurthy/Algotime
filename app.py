@@ -15,7 +15,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse
@@ -2383,30 +2383,29 @@ def _nearest_expiry_for(symbol: str, expiry_type: str) -> date:
 
 @app.get("/api/chain/live")
 async def get_chain_live(symbol: str = "NIFTY", expiry_type: str = "weekly"):
-    """Fetch live option chain from Breeze. Returns pivoted strike rows."""
+    """Fetch live option chain from Breeze. Returns pivoted strike rows.
+
+    Uses the expiry Breeze actually lists (nearest, rolled off expiry day) —
+    the same resolution the options paper engine trades on — so monthly-only
+    indices and holiday-shifted weeklies need no local calendar."""
     if not (_session and _session._api):
         return {"session": False, "rows": [], "expiry": None, "atm": None, "pcr": None}
 
     sym    = symbol.upper()
     meta   = _CHAIN_META.get(sym, {"exchange": "NFO", "step": 50, "expiry": "thursday"})
-    expiry = _nearest_expiry_for(sym, expiry_type)
+    today  = date.today()
+    cached = _algo_expiry_cache.get(sym)
+    want: Optional[date] = cached[1] if cached and cached[0] == today else None
 
     try:
-        await asyncio.to_thread(_limiter.acquire, f"chain_{sym}")
-        resp = await asyncio.to_thread(
-            _session.api.get_option_chain_quotes,
-            stock_code=meta.get("code", sym),
-            exchange_code=meta["exchange"],
-            product_type="options",
-            expiry_date=SymbolBuilder.breeze_dt(expiry),
-            right="others",
-            strike_price="0",
-        )
+        calls, expiry = await asyncio.to_thread(_listed_chain_rows, sym, meta, want, "call")
+        puts = await asyncio.to_thread(_fetch_chain_rows, sym, meta, expiry, "put") if expiry else []
     except Exception as exc:
         raise HTTPException(500, str(exc))
-
-    if resp.get("Status") != 200:
-        raise HTTPException(502, f"Breeze: {resp.get('Error', resp)}")
+    if not calls or expiry is None:
+        raise HTTPException(502, f"Breeze: no option chain listed for {sym}")
+    _algo_expiry_cache[sym] = (today, expiry)
+    resp = {"Success": list(calls) + list(puts)}
 
     strikes: dict = {}
     for r in resp.get("Success") or []:
@@ -2431,10 +2430,10 @@ async def get_chain_live(symbol: str = "NIFTY", expiry_type: str = "weekly"):
 
     # ATM estimate — use spot from LTP cache, else midpoint of chain
     spot = None
-    if _ltp_cache:
-        ltp_entry = _ltp_cache.get(sym) or _ltp_cache.get(sym.lower())
-        if ltp_entry:
-            spot = float(ltp_entry.get("ltp") or ltp_entry.get("close") or 0) or None
+    try:
+        spot = float(_ltp_cache.get(sym) or 0) or None      # cache holds plain floats
+    except (TypeError, ValueError):
+        spot = None
     atm = None
     if spot and rows:
         step = meta["step"]
@@ -2484,6 +2483,31 @@ def _fetch_chain_rows(sym: str, meta: dict, expiry: Optional[date], right: str) 
     return resp.get("Success") or []
 
 
+def _listed_chain_rows(sym: str, meta: dict, want_expiry: Optional[date],
+                       right_word: str) -> Tuple[list, Optional[date]]:
+    """Blocking: chain rows for one right on the expiry Breeze actually lists.
+
+    want_expiry=None asks for the nearest listed chain and, when that chain
+    expires today (OPTION_AVOID_EXPIRY_DAY), rolls to the next listed expiry.
+    Returns (rows, expiry); rows is [] when Breeze has nothing."""
+    today = date.today()
+    rows = _fetch_chain_rows(sym, meta, want_expiry, right_word)
+    listed = next((d for d in (parse_breeze_expiry(r.get("expiry_date")) for r in rows) if d),
+                  want_expiry)
+    if (want_expiry is None and OPTION_AVOID_EXPIRY_DAY
+            and rows and listed is not None and listed <= today):
+        for cand in expiry_candidates_after(listed):
+            alt = _fetch_chain_rows(sym, meta, cand, right_word)
+            if alt:
+                log.info("Options %s: %s expires today, rolled to %s", sym, listed, cand)
+                rows, listed = alt, cand
+                break
+        else:
+            log.warning("Options %s: only the expiry-day chain (%s) is listed; using it",
+                        sym, listed)
+    return rows, listed
+
+
 def _resolve_atm_option(underlying: str, direction: str) -> Optional[dict]:
     """Blocking: resolve the ATM CE (LONG) / PE (SHORT) for an index underlying.
 
@@ -2503,20 +2527,7 @@ def _resolve_atm_option(underlying: str, direction: str) -> Optional[dict]:
     right_word = "call" if want == "ce" else "put"
 
     try:
-        rows = _fetch_chain_rows(sym, meta, want_expiry, right_word)
-        listed = next((d for d in (parse_breeze_expiry(r.get("expiry_date")) for r in rows) if d),
-                      want_expiry)
-        if (want_expiry is None and OPTION_AVOID_EXPIRY_DAY
-                and rows and listed is not None and listed <= today):
-            for cand in expiry_candidates_after(listed):
-                alt = _fetch_chain_rows(sym, meta, cand, right_word)
-                if alt:
-                    log.info("Algo options %s: %s expires today, rolled to %s", sym, listed, cand)
-                    rows, listed = alt, cand
-                    break
-            else:
-                log.warning("Algo options %s: only the expiry-day chain (%s) is listed; using it",
-                            sym, listed)
+        rows, listed = _listed_chain_rows(sym, meta, want_expiry, right_word)
     except Exception as exc:
         log.warning("Algo option chain fetch failed for %s: %s", sym, exc)
         return None
