@@ -1435,13 +1435,21 @@ def _load_symbol_index() -> None:
 # ── Periodic chain/delta snapshot (runs when connected, stores to DB) ─────────
 
 _CHAIN_SNAP_INTERVAL_SEC = int(os.getenv("CHAIN_SNAP_SEC", "300"))  # default 5 min
+_CHAIN_SNAP_HOURS_ONLY = os.getenv("CHAIN_SNAP_HOURS_ONLY", "1").strip().lower() in ("1", "true", "yes", "on")
+_CHAIN_SNAP_OPEN = dt_time(9, 0)
+_CHAIN_SNAP_CLOSE = dt_time(15, 45)
 
 
 async def _chain_snapshot_loop() -> None:
     """Every CHAIN_SNAP_SEC, fetch full option chains + PCR and persist to DB."""
     await asyncio.sleep(60)   # give connection 60 s to settle before first run
     while True:
-        if _session and _session._api and _db_store:
+        # Chains only exist to be read during the session. Overnight runs made
+        # ~700 failing REST calls an hour (no quotes after close), none of them
+        # counted by _limiter, and risked Breeze's daily cap before the open.
+        now = datetime.now()
+        in_hours = (now.weekday() < 5 and _CHAIN_SNAP_OPEN <= now.time() <= _CHAIN_SNAP_CLOSE)
+        if _session and _session._api and _db_store and (in_hours or not _CHAIN_SNAP_HOURS_ONLY):
             try:
                 from collector.chain import ChainSnapshotCollector
                 from collector.config import CollectorConfig
