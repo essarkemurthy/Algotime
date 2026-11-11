@@ -791,7 +791,7 @@
       <!-- ── Open positions ── -->
       <div class="tab-pane" data-pane="positions" role="tabpanel">
         <h2>Open positions</h2>
-        <p class="lead">Live positions on the paper desk. Square-off intraday at 15:15 IST; F&amp;O held to expiry unless a strategy rule fires.</p>
+        <p class="lead">Open positions on the broker account (ICICI Direct), read from Breeze and refreshed every 15 s. <span id="pos-meta" style="color:var(--fg-3);">not loaded</span></p>
         <div class="positions-wrap">
           <table class="table positions">
             <thead>
@@ -1278,10 +1278,36 @@
   }
 
   // ── Tabs ─────────────────────────────────────────────────────────────────────
+  // ── Broker positions (real account) → Open positions tab ─────────────────
+  async function loadBrokerPositions() {
+    try {
+      const r = await fetch('/api/broker/positions');
+      const d = await r.json();
+      const icici = BROKERS.find(b => b.id === 'icici');
+      if (!icici) return;
+      const pos = d.positions || [];
+      icici.positions = pos.map(p => ({
+        ticker: p.instrument, seg: p.segment, qty: String(p.qty),
+        entry: fmtIN(p.avg_price, 2), cmp: p.ltp ? fmtIN(p.ltp, 2) : '—',
+        m2m: (p.m2m >= 0 ? '+ ' : '− ') + '₹' + fmtIN(Math.abs(p.m2m), 0),
+        m2mTone: p.m2m > 0 ? 'pos' : (p.m2m < 0 ? 'neg' : 'flat'),
+        day: '—', dayTone: 'flat', strat: 'Broker',
+      }));
+      const tot = d.m2m_total || 0;
+      icici.positionsNet = pos.length ? ((tot >= 0 ? '+ ' : '− ') + '₹' + fmtIN(Math.abs(tot), 0)) : '— flat';
+      icici.positionsNetTone = tot > 0 ? 'pos' : (tot < 0 ? 'neg' : 'flat');
+      const meta = document.getElementById('pos-meta');
+      if (meta) meta.textContent = d.error ? ('error: ' + d.error) : (d.connected ? ('as of ' + d.fetched_at) : 'broker offline');
+      if (activeBrokerId === 'icici') renderPositions();
+    } catch (e) {}
+  }
+  setInterval(loadBrokerPositions, 15000);
+
   function switchTab(id) {
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === id));
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('on', p.dataset.pane === id));
     if (typeof syncCredChips === 'function') syncCredChips();
+    if (id === 'positions') loadBrokerPositions();
   }
   document.getElementById('tabs').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-tab]');
@@ -1632,6 +1658,7 @@
     // Render after loading API data
     selectBroker(activeBrokerId);
     applyAccount();
+    loadBrokerPositions();
   }
 
   // ── Start ────────────────────────────────────────────────────────────────────

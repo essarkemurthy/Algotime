@@ -893,43 +893,34 @@
   </section>
 
   <!-- ============================================================
-       Activity log
+       Signals and broker positions (today, live)
        ============================================================ -->
   <section class="section">
     <div class="section-head">
       <div class="left">
-        <div class="eyebrow">Diagnostics</div>
-        <h2>Recent activity</h2>
+        <div class="eyebrow">Today</div>
+        <h2>Signals and live positions</h2>
       </div>
-      <div class="meta">Last 60 minutes · <b>14,827</b> ticks · <b>0</b> errors</div>
+      <div class="meta" id="sig-meta">loading…</div>
     </div>
 
     <div class="card">
       <div class="card-head">
-        <div class="card-title">System log</div>
-        <div class="card-actions">
-          <div class="seg">
-            <button class="on">All</button>
-            <button>Ticks</button>
-            <button>DB</button>
-            <button>Errors</button>
-          </div>
-          <a href="#" class="filter-link">View full log →</a>
-        </div>
+        <div class="card-title">Strategy signals <span class="count" id="sig-count">0</span></div>
+        <div class="card-actions"><a href="/paper" class="filter-link">Paper trading →</a></div>
       </div>
-      <div class="log-list">
-        <div class="log-row"><span class="t">10:42:14</span><span class="marker"></span><span class="msg">Tick · <b>NIFTY</b> @ <b>22,547.30</b> <span class="muted">(seq 14827)</span></span></div>
-        <div class="log-row"><span class="t">10:42:08</span><span class="marker ok"></span><span class="msg">DB write · <b>candles</b> +1 row · 5m bucket for NIFTY closed at <b>22,541.20</b></span></div>
-        <div class="log-row"><span class="t">10:42:00</span><span class="marker ok"></span><span class="msg">DB write · <b>chain_snapshots</b> · 138 rows · NIFTY 22 May expiry</span></div>
-        <div class="log-row"><span class="t">10:41:54</span><span class="marker"></span><span class="msg">Tick · <b>RELIANCE</b> @ <b>2,917.40</b> <span class="muted">(strategy: supertrend, signal fired)</span></span></div>
-        <div class="log-row"><span class="t">10:41:32</span><span class="marker warn"></span><span class="msg">Rate limiter · 74 / 75 calls in current window · pacing requests</span></div>
-        <div class="log-row"><span class="t">10:40:08</span><span class="marker"></span><span class="msg">Subscribe ack · added <b>SBIN</b> to WebSocket feed</span></div>
-        <div class="log-row"><span class="t">10:38:00</span><span class="marker ok"></span><span class="msg">DB write · <b>spot_ticks</b> batch · 612 rows committed in 84ms</span></div>
-        <div class="log-row"><span class="t">10:37:14</span><span class="marker"></span><span class="msg">Heartbeat · Breeze WebSocket pong · latency <b>42ms</b></span></div>
-        <div class="log-row"><span class="t">10:32:09</span><span class="marker ok"></span><span class="msg">Paper order routed · <b>PT-2026-0027</b> · BANKNIFTY FUT SELL 1 @ MKT</span></div>
-        <div class="log-row"><span class="t">10:24:58</span><span class="marker ok"></span><span class="msg">Paper order filled · <b>PT-2026-0026</b> · NIFTY FUT BUY 1 @ 22,521.10</span></div>
-        <div class="log-row"><span class="t">09:48:11</span><span class="marker"></span><span class="msg">Strategy <b>supertrend · 5m</b> · early signal post open · half-sized per warmup rule</span></div>
-        <div class="log-row"><span class="t">09:15:02</span><span class="marker ok"></span><span class="msg">Session start · Breeze WebSocket connected · 8 symbols subscribed in 312ms</span></div>
+      <div class="log-list" id="sig-log">
+        <div class="log-row" id="sig-log-empty"><span class="t">—</span><span class="marker"></span><span class="msg">No signals yet today.</span></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-head">
+        <div class="card-title">Broker account · open positions <span class="count" id="bk-pos-count">—</span></div>
+        <div class="card-actions"><span class="meta" id="bk-meta">not loaded</span></div>
+      </div>
+      <div class="log-list" id="bk-pos-list">
+        <div class="log-row" id="bk-pos-empty"><span class="t">—</span><span class="marker"></span><span class="msg">No open positions on the broker account.</span></div>
       </div>
     </div>
   </section>
@@ -1162,15 +1153,17 @@
         for (const sym in msg.data) applySingle(sym, msg.data[sym][0]);
         ticksReceived += Object.keys(msg.data).length;   // label refreshes in the paint frame
       }
-      // VWAP-Reversal / ORB signal alerts (read-only notifications)
+      // strategy signal alerts (read-only notifications)
       if (msg.type === 'signal') {
         const dir = (msg.direction || '').toUpperCase();
         showToast(msg.message || (msg.symbol + ' ' + msg.strategy + ' ' + dir),
                   dir === 'SHORT' ? 'short' : 'long');
+        addSignalRow(msg, true);
       }
       // generic backend alerts (daily-loss, algo lifecycle, etc.)
       if (msg.type === 'alert' && msg.message) {
         showToast(msg.message, 'alert');
+        addLogRow(new Date().toTimeString().slice(0, 8), msg.message, 'warn');
       }
     };
 
@@ -1185,6 +1178,60 @@
 
   connect();
   seedQuotes();                       // populate ticker + watchlist from DB / last-known
+
+  // ── Today's signals (seeded from /api/signals, appended live over the WS) ──
+  const _sigSeen = new Set();
+  let _sigCount = 0;
+  function escT(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  function addLogRow(time, html, cls) {
+    const list = document.getElementById('sig-log'); if (!list) return;
+    const empty = document.getElementById('sig-log-empty'); if (empty) empty.remove();
+    list.insertAdjacentHTML('afterbegin', '<div class="log-row"><span class="t">' + escT(time) + '</span>'
+      + '<span class="marker ' + (cls || '') + '"></span><span class="msg">' + html + '</span></div>');
+    while (list.children.length > 80) list.removeChild(list.lastChild);
+  }
+  function addSignalRow(sig, isNew) {
+    const key = [sig.symbol, sig.strategy, sig.direction, sig.ts].join('|');
+    if (_sigSeen.has(key)) return; _sigSeen.add(key); _sigCount++;
+    const dir = (sig.direction || '').toUpperCase();
+    const t = String(sig.ts || '').slice(11, 19) || '—';
+    const idx = (typeof INDEX_SET !== 'undefined' && INDEX_SET.has && INDEX_SET.has(sig.symbol));
+    addLogRow(t, 'Signal · <b>' + escT(sig.symbol) + '</b> · ' + escT(sig.strategy) + ' · <b>' + dir + '</b>'
+      + ' @ ' + escT(fmt(sig.trigger_price)) + (sig.vol_ratio != null && Number(sig.vol_ratio) === 0 ? ' · <i>no volume (index)</i>' : ''),
+      dir === 'LONG' ? 'ok' : (dir === 'SHORT' ? 'warn' : ''));
+    const c = document.getElementById('sig-count'); if (c) c.textContent = _sigCount;
+    const m = document.getElementById('sig-meta'); if (m) m.textContent = _sigCount + ' signals today';
+  }
+  function seedSignals() {
+    fetch('/api/signals').then(r => r.json()).then(d => {
+      const list = ((d && d.signals) || []).slice().reverse();     // oldest first so newest ends on top
+      list.forEach(s => addSignalRow(s, false));
+      const m = document.getElementById('sig-meta'); if (m) m.textContent = _sigCount + ' signals today';
+    }).catch(() => {});
+  }
+  seedSignals();
+  setInterval(seedSignals, 30000);
+
+  // ── Broker account open positions (real), every 15 s ──
+  let _bkSig = null;
+  function loadBrokerPositions() {
+    fetch('/api/broker/positions').then(r => r.json()).then(d => {
+      const list = document.getElementById('bk-pos-list'); if (!list) return;
+      const pos = d.positions || [];
+      const cnt = document.getElementById('bk-pos-count'); if (cnt) cnt.textContent = d.connected ? (pos.length + ' open') : 'offline';
+      const meta = document.getElementById('bk-meta');
+      if (meta) meta.textContent = d.error ? ('error: ' + d.error) : (d.fetched_at ? 'as of ' + d.fetched_at : 'not loaded');
+      const sig = JSON.stringify(pos); if (sig === _bkSig) return; _bkSig = sig;
+      list.innerHTML = pos.length ? pos.map(p =>
+        '<div class="log-row"><span class="t">' + escT(p.segment) + '</span><span class="marker ' + (p.m2m > 0 ? 'ok' : (p.m2m < 0 ? 'warn' : '')) + '"></span>'
+        + '<span class="msg"><b>' + escT(p.instrument) + '</b> · qty <b>' + p.qty + '</b> · avg ' + escT(fmt(p.avg_price))
+        + ' · LTP ' + (p.ltp ? escT(fmt(p.ltp)) : '—') + ' · M2M <b>' + (p.m2m >= 0 ? '+' : '') + escT(fmt(p.m2m)) + '</b></span></div>'
+      ).join('') : '<div class="log-row" id="bk-pos-empty"><span class="t">—</span><span class="marker"></span><span class="msg">'
+        + (d.connected ? 'No open positions on the broker account.' : 'Broker offline.') + '</span></div>';
+    }).catch(() => {});
+  }
+  loadBrokerPositions();
+  setInterval(loadBrokerPositions, 15000);
 
   // ── signal / alert toasts ──────────────────────────────────────────────────
   let _toastHost = null;

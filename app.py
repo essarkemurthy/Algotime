@@ -2301,6 +2301,128 @@ async def get_orders():
     return {"orders": _order_log[-100:]}
 
 
+# ── Broker account: the real positions and today's orders (ICICI Direct) ──────
+# Read-only views of what is actually held in the demat/F&O account, so manual
+# fills can be seen next to the signals that prompted them. Each endpoint is
+# served from a 15 s cache; the REST calls go through _limiter.
+_broker_cache: Dict[str, tuple] = {}
+_BROKER_CACHE_SEC = 15
+
+
+def _f0(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _broker_rows(resp) -> list:
+    if not isinstance(resp, dict) or resp.get("Status") != 200:
+        return []
+    rows = resp.get("Success")
+    return rows if isinstance(rows, list) else []
+
+
+def _broker_err(resp) -> Optional[str]:
+    """None for the broker's 'nothing here' answers, else the error text."""
+    if not isinstance(resp, dict):
+        return "no response"
+    err = str(resp.get("Error") or "")
+    if not err or "No Positions" in err or "No Data" in err:
+        return None
+    return err
+
+
+def _norm_position(r: dict) -> dict:
+    qty = int(_f0(r.get("quantity")))
+    if str(r.get("action") or "").lower().startswith("s") and qty > 0:
+        qty = -qty
+    right = str(r.get("right") or "").strip()
+    right = {"call": "CE", "put": "PE"}.get(right.lower(), right.upper() or None)
+    strike = _f0(r.get("strike_price")) or None
+    stock = str(r.get("stock_code") or r.get("underlying") or "")
+    expiry = r.get("expiry_date") or None
+    product = str(r.get("product_type") or "").lower()
+    exch = str(r.get("exchange_code") or "")
+    avg = _f0(r.get("average_price") or r.get("price"))
+    ltp = _f0(r.get("ltp")) or float(_ltp_cache.get(stock) or 0)
+    label = stock + (f" {int(strike)} {right} {expiry}" if strike and right else "")
+    m2m = (ltp - avg) * qty if (ltp and avg) else _f0(r.get("pnl"))
+    return {"instrument": label, "stock": stock, "exchange": exch, "product": product or "cash",
+            "segment": (exch + " " + (product or "cash")).strip(), "qty": qty, "avg_price": avg,
+            "ltp": ltp, "m2m": round(m2m, 2), "right": right, "strike": strike, "expiry": expiry}
+
+
+def _norm_order(r: dict, exch: str) -> dict:
+    right = str(r.get("right") or "").strip()
+    right = {"call": "CE", "put": "PE"}.get(right.lower(), right.upper() or None)
+    strike = _f0(r.get("strike_price")) or None
+    stock = str(r.get("stock_code") or "")
+    label = stock + (f" {int(strike)} {right} {r.get('expiry_date') or ''}".rstrip() if strike and right else "")
+    return {"order_id": r.get("order_id"), "time": r.get("order_datetime") or r.get("exchange_acknowledgement_date"),
+            "exchange": exch, "instrument": label, "product": r.get("product_type"),
+            "action": str(r.get("action") or "").upper(), "qty": int(_f0(r.get("quantity"))),
+            "pending_qty": int(_f0(r.get("pending_quantity"))), "price": _f0(r.get("price")),
+            "avg_price": _f0(r.get("average_price")), "order_type": r.get("order_type"),
+            "status": r.get("status")}
+
+
+async def _broker_cached(key: str, fn):
+    now = time.time()
+    hit = _broker_cache.get(key)
+    if hit and now - hit[0] < _BROKER_CACHE_SEC:
+        return hit[1]
+    payload = await asyncio.to_thread(fn)
+    _broker_cache[key] = (now, payload)
+    return payload
+
+
+@app.get("/api/broker/positions")
+async def broker_positions():
+    if not (_session and _session._api):
+        return {"connected": False, "positions": [], "count": 0, "m2m_total": 0.0,
+                "error": "broker offline", "fetched_at": None}
+
+    def _fetch():
+        try:
+            _limiter.acquire("get_portfolio_positions")
+            resp = _session.api.get_portfolio_positions()
+        except Exception as exc:
+            return {"connected": True, "positions": [], "count": 0, "m2m_total": 0.0,
+                    "error": str(exc), "fetched_at": datetime.now().strftime("%H:%M:%S")}
+        pos = [_norm_position(r) for r in _broker_rows(resp)]
+        return {"connected": True, "positions": pos, "count": len(pos),
+                "m2m_total": round(sum(x["m2m"] for x in pos), 2), "error": _broker_err(resp),
+                "fetched_at": datetime.now().strftime("%H:%M:%S")}
+    return await _broker_cached("positions", _fetch)
+
+
+@app.get("/api/broker/orders")
+async def broker_orders():
+    if not (_session and _session._api):
+        return {"connected": False, "orders": [], "count": 0, "error": "broker offline", "fetched_at": None}
+
+    def _fetch():
+        today = date.today().isoformat()
+        orders, errors = [], []
+        for exch in ("NFO", "NSE"):
+            try:
+                _limiter.acquire(f"get_order_list_{exch}")
+                resp = _session.api.get_order_list(
+                    exchange_code=exch, from_date=today + "T00:00:00.000Z", to_date=today + "T23:59:59.000Z")
+            except Exception as exc:
+                errors.append(f"{exch}: {exc}")
+                continue
+            err = _broker_err(resp)
+            if err:
+                errors.append(f"{exch}: {err}")
+            orders += [_norm_order(r, exch) for r in _broker_rows(resp)]
+        orders.sort(key=lambda o: str(o.get("time") or ""), reverse=True)
+        return {"connected": True, "orders": orders, "count": len(orders),
+                "error": "; ".join(errors) or None, "fetched_at": datetime.now().strftime("%H:%M:%S")}
+    return await _broker_cached("orders", _fetch)
+
+
 @app.get("/api/ltp")
 async def get_ltp():
     return _ltp_cache

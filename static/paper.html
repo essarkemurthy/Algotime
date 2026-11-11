@@ -1251,6 +1251,29 @@
       </div>
     </div>
 
+    <!-- Broker account: what is really held and ordered on ICICI Direct -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-head">
+        <div class="card-title">Broker account · live positions <span class="count" id="bk-pos-count">—</span></div>
+        <div class="card-actions"><span class="meta" id="bk-meta">not loaded</span></div>
+      </div>
+      <div style="overflow:auto;">
+        <table class="table">
+          <thead><tr><th>Instrument</th><th>Segment</th><th class="right">Qty</th><th class="right">Avg</th><th class="right">LTP</th><th class="right">M2M</th></tr></thead>
+          <tbody id="bk-pos-body"><tr><td colspan="6" style="text-align:center;color:var(--fg-3);padding:16px;">No open positions on the broker account.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card-head" style="margin-top:14px;">
+        <div class="card-title">Today's broker orders <span class="count" id="bk-ord-count">—</span></div>
+      </div>
+      <div style="overflow:auto;">
+        <table class="table">
+          <thead><tr><th>Time</th><th>Instrument</th><th>Side</th><th class="right">Qty</th><th class="right">Price</th><th>Type</th><th>Status</th></tr></thead>
+          <tbody id="bk-ord-body"><tr><td colspan="7" style="text-align:center;color:var(--fg-3);padding:16px;">No broker orders today.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Row 2 — Signal monitor + Trades placed -->
     <div class="row even">
       <!-- Signal monitor -->
@@ -2240,6 +2263,7 @@ function renderAlgo(snap) {
         + '<td class="right ' + up + '">' + fmtSigned(p.upnl) + '</td><td>' + p.opened_at + '</td></tr>';
     }).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--fg-3);padding:20px;">No open algo positions.</td></tr>';
   }
+  renderOptionFeed(snap);
   // Master launch toggles reflect current config.
   if (snap.config) {
     syncLaunch('algo-intraday-toggle', !!snap.config.trade_intraday);
@@ -2399,6 +2423,68 @@ function renderReports(data) {
       + '<td class="right">' + (s.exec_lag_sec != null ? s.exec_lag_sec : '—') + '</td></tr>'
     ).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--fg-3);padding:24px;">No signals generated yet.</td></tr>';
   }
+}
+
+// ── Broker account (real positions / today's orders), refreshed every 15 s ──
+let _bkPosSig = null, _bkOrdSig = null;
+function loadBroker() {
+  fetch('/api/broker/positions').then(r => r.json()).then(d => {
+    const body = document.getElementById('bk-pos-body'); if (!body) return;
+    const pos = d.positions || [];
+    const cnt = document.getElementById('bk-pos-count');
+    if (cnt) cnt.textContent = d.connected ? (pos.length + ' open') : 'offline';
+    const meta = document.getElementById('bk-meta');
+    if (meta) meta.textContent = d.error ? ('error: ' + d.error)
+      : (d.fetched_at ? ('as of ' + d.fetched_at + (pos.length ? ' · M2M ' + fmtSigned(d.m2m_total) : '')) : 'not loaded');
+    const sig = JSON.stringify(pos); if (sig === _bkPosSig) return; _bkPosSig = sig;
+    body.innerHTML = pos.length ? pos.map(p => {
+      const c = p.m2m > 0 ? 'pnl-pos' : (p.m2m < 0 ? 'pnl-neg' : 'pnl-flat');
+      return '<tr><td><b>' + escHtml(p.instrument) + '</b></td><td>' + escHtml(p.segment) + '</td>'
+        + '<td class="right mono">' + p.qty + '</td><td class="right mono">' + fmtIN(p.avg_price, 2) + '</td>'
+        + '<td class="right mono">' + (p.ltp ? fmtIN(p.ltp, 2) : '—') + '</td>'
+        + '<td class="right mono ' + c + '">' + fmtSigned(p.m2m) + '</td></tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--fg-3);padding:16px;">'
+      + (d.connected ? 'No open positions on the broker account.' : 'Broker offline.') + '</td></tr>';
+  }).catch(() => {});
+  fetch('/api/broker/orders').then(r => r.json()).then(d => {
+    const body = document.getElementById('bk-ord-body'); if (!body) return;
+    const ords = d.orders || [];
+    const cnt = document.getElementById('bk-ord-count');
+    if (cnt) cnt.textContent = d.connected ? (ords.length + ' today') : 'offline';
+    const sig = JSON.stringify(ords); if (sig === _bkOrdSig) return; _bkOrdSig = sig;
+    body.innerHTML = ords.length ? ords.map(o =>
+      '<tr><td class="mono">' + escHtml(String(o.time || '—').slice(-8)) + '</td><td><b>' + escHtml(o.instrument) + '</b></td>'
+      + '<td><span class="side ' + (o.action === 'BUY' ? 'buy' : 'sell') + '">' + escHtml(o.action) + '</span></td>'
+      + '<td class="right mono">' + o.qty + '</td><td class="right mono">' + fmtIN(o.avg_price || o.price, 2) + '</td>'
+      + '<td>' + escHtml(o.order_type || '—') + '</td><td>' + escHtml(o.status || '—') + '</td></tr>'
+    ).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--fg-3);padding:16px;">'
+      + (d.connected ? 'No broker orders today.' : 'Broker offline.') + '</td></tr>';
+  }).catch(() => {});
+}
+loadBroker();
+setInterval(loadBroker, 15000);
+
+// ── Option signal feed: every index signal the options engine saw, with its
+//    decision (routed / executed / skipped and why). Fed from the algo snapshot.
+let _optFeedSig = null;
+function renderOptionFeed(snap) {
+  const feed = document.getElementById('feed-opt'); if (!feed) return;
+  const rows = (snap.signals_log || []).filter(r => r.product === 'options').slice(0, 60);
+  const sig = JSON.stringify(rows); if (sig === _optFeedSig) return; _optFeedSig = sig;
+  if (!rows.length) return;
+  feed.innerHTML = rows.map(r => {
+    const dir = (r.direction || '').toUpperCase();
+    return '<div class="feed-item"><div class="feed-time">' + escHtml(r.signal_ts || r.received_at || '—') + '</div>'
+      + '<div class="feed-body"><div class="feed-head-row"><span class="ticker">' + escHtml(r.symbol || '') + '</span>'
+      + '<span class="strat">' + escHtml(r.strategy || '') + '</span>'
+      + '<span class="chg ' + (dir === 'LONG' ? 'pos' : 'neg') + '" style="font-family:var(--font-mono);font-size:11px;font-weight:600;">' + dir + '</span>'
+      + decisionBadge(r.decision, r.reason) + '</div>'
+      + '<div class="feed-msg">' + (r.instrument ? '<b>' + escHtml(r.instrument) + '</b> · ' : '')
+      + 'trig <b>' + fmtIN(r.trigger_price, 2) + '</b>' + (r.entry_price ? ' · entry <b>' + fmtIN(r.entry_price, 2) + '</b>' : '')
+      + '</div></div></div>';
+  }).join('');
+  const chip = document.getElementById('sig-status-opt');
+  if (chip) chip.textContent = rows.length + ' today';
 }
 
 function toggleStrategy(strat, enabled) {
