@@ -121,6 +121,13 @@ class TestFeatures(unittest.TestCase):
         self.assertEqual(f[days[16]].prev_date, days[14])         # skips the special day
         self.assertNotIn(short_day, f)
 
+    def test_weekend_session_excluded(self):
+        sat = date(2024, 1, 20)                                   # full-length DR-drill Saturday
+        rows = [{"ts": b.ts, "open": b.open, "high": b.high, "low": b.low, "close": b.close, "volume": 0}
+                for b in flat_session(sat, 100.0)]
+        self.assertNotIn(sat, S.split_sessions(pd.DataFrame(rows), P))
+        self.assertIn(sat, S.split_sessions(pd.DataFrame(rows), S.Params(exclude_weekends=False)))
+
     def test_resample_5m_anchor_and_tz(self):
         ts = pd.date_range("2026-06-25 09:15", "2026-06-25 15:30", freq="1min", tz="Asia/Kolkata")
         df = pd.DataFrame({"ts": ts, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 1})

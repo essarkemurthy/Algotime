@@ -75,6 +75,7 @@ class Params:
     be_trigger_r: float = 1.0
     cost_points: float = 3.0
     min_session_bars: int = 70            # five-minute bars; a full session has 75
+    exclude_weekends: bool = True         # special Sat/Sun sessions (budget, DR drills) are dropped
     max_chase_atr: float = 0.10           # alert only: do not chase beyond entry + this
 
     @property
@@ -141,6 +142,8 @@ def split_sessions(df_5m: pd.DataFrame, params: Params = Params()) -> Dict[date,
     df = df_5m.assign(ts=ts).sort_values("ts")
     for d, g in df.groupby(df["ts"].dt.date):
         if len(g) < params.min_session_bars:
+            continue
+        if params.exclude_weekends and d.weekday() >= 5:
             continue
         out[d] = [Bar(r.ts.to_pydatetime(), float(r.open), float(r.high), float(r.low),
                       float(r.close), int(r.volume)) for r in g.itertuples(index=False)]
