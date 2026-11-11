@@ -1,7 +1,31 @@
-# orb_cpr_nifty backtest  2022-01-01 -> 2026-11-12  (generated 2026-11-12 00:51 IST)
+# orb_cpr_nifty backtest  2022-01-01 -> 2026-11-12  (generated 2026-11-12 01:03 IST, commit 9397e18)
 
-- 1-minute rows: 457,431; valid sessions (>= 70 five-minute bars): 1192 (2022-01-03 .. 2026-11-11); sessions with features: 1178
+- 1-minute rows: 457,431; valid sessions (>= 70 five-minute bars, weekdays): 1192 (2022-01-03 .. 2026-11-11); sessions with features: 1178
 - params: bar_minutes=5, or_minutes=15, session_open=09:15:00, signal_start=09:30:00, signal_end=11:00:00, time_exit=15:15:00, atr_period=14, gap_atr_max=1.0, or_min_atr=0.2, or_max_atr=0.6, cpr_max_pct=0.6, stop_atr_cap=0.5, target_r=1.5, be_trigger_r=1.0, cost_points=3.0, min_session_bars=70, exclude_weekends=True, max_chase_atr=0.1
+
+## Day-filter funnel and data sanity
+| step | sessions |
+|---|---|
+| sessions in 1m data | 1200 |
+| - weekend special sessions | 7 |
+| - fewer than 70 five-minute bars | 2 |
+| = valid sessions | 1192 |
+| - no features (first 15 sessions) | 14 |
+| = evaluable sessions | 1178 |
+| pass gap | 1138 |
+| pass or_min | 1002 |
+| pass or_max | 961 |
+| pass cpr | 939 |
+| pass or_break | 861 |
+| pass cpr_align | 670 |
+| = trades taken | 670 |
+
+- survivors of every filter == trades: **yes** (670 vs 670)
+- duplicate 1-minute timestamps: 0
+- valid sessions whose first 5m bar is not 09:15: 0
+- weekend special sessions excluded: 7  ['2023-11-12', '2024-01-20', '2024-03-02', '2024-05-18', '2025-02-01', '2026-02-01', '2026-11-08']
+- weekday sessions excluded for < 70 five-minute bars: 2  ['2022-03-07', '2024-11-01']
+- trades by year: {2022: 114, 2023: 149, 2024: 126, 2025: 165, 2026: 116}
 
 ## Baseline (default params) and cost sensitivity
 | set | n | avg R | win % | total R | max DD R | PF | avg pts |
@@ -13,7 +37,7 @@
 
 Skips: cpr_too_wide=30, gap_too_large=38, no_breakout=269, no_features=14, or_too_large=37, or_too_small=134; signal days=670 of 1192
 
-## By year (net 3 pts)
+## By year (net 3 pts; descriptive, see slice table for significance)
 | set | n | avg R | win % | total R | max DD R | PF | avg pts |
 |---|---|---|---|---|---|---|---|
 | 2022 | 114 | -0.045 | 40.4% | -5.1 | 9.8 | 0.90 | 0.6 |
@@ -22,15 +46,15 @@ Skips: cpr_too_wide=30, gap_too_large=38, no_breakout=269, no_features=14, or_to
 | 2025 | 165 | 0.071 | 46.1% | 11.7 | 6.5 | 1.17 | 3.6 |
 | 2026 | 116 | 0.009 | 49.1% | 1.1 | 19.0 | 1.02 | 6.3 |
 
-## Exit reasons (net 3 pts)
+## Exit reasons (net 3 pts; conditioned on outcome, descriptive only)
 | reason | n | avg R |
 |---|---|---|
 | stop | 275 | -1.047 |
 | time | 187 | 0.331 |
 | target | 158 | 1.452 |
 | be_stop | 50 | -0.047 |
-| LONG | 335 | -0.049 |
-| SHORT | 335 | 0.053 |
+
+Target and stop buckets are positive/negative by construction and the time-exit bucket is selected on having avoided both; none of these is evidence for a variant.
 
 ## Parameter grid (full sample, net 3 pts; for robustness only, not selection)
 - cells: 81; positive avg R: 58 (72%); grid = {'or_min_atr': (0.15, 0.2, 0.25), 'or_max_atr': (0.5, 0.6, 0.7), 'target_r': (1.0, 1.5, 2.0), 'cpr_max_pct': (0.4, 0.6, 0.8)}
@@ -92,6 +116,49 @@ Skips: cpr_too_wide=30, gap_too_large=38, no_breakout=269, no_features=14, or_to
 - bootstrap 95% CI of mean R (net 3 pts): [-0.084, 0.117]
 - distinct parameter sets chosen across windows: 9 of 16
 
+## Like-for-like: fixed spec params vs walk-forward, same OOS windows (net 3 pts)
+- OOS windows: 949 sessions, 2023-01-02 .. 2026-11-11
+| set | n | avg R | 95% CI | win % | total R | max DD R |
+|---|---|---|---|---|---|---|
+| fixed spec params | 556 | 0.011 | [-0.071, 0.091] | 44.4% | 6.3 | 19.5 |
+| walk-forward (re-chosen) | 451 | 0.018 | [-0.084, 0.117] | 43.0% | 7.9 | 16.5 |
+- difference walk-forward minus fixed: 0.006R, 95% CI [-0.136, 0.138]
+- parameter selection added measurable value: **no** (CI of the difference includes zero)
+
+## Slice analysis (exploratory; 23 slices examined, Holm-adjusted; full sample, net 3 pts)
+| dimension | slice | n | mean R | rest mean R | p raw | p Holm | significant |
+|---|---|---|---|---|---|---|---|
+| weekday | Fri | 142 | 0.176 | -0.045 | 0.028 | 0.652 | no |
+| weekday | Mon | 132 | -0.017 | 0.006 | 0.819 | 1.000 | no |
+| weekday | Thu | 132 | -0.078 | 0.021 | 0.328 | 1.000 | no |
+| weekday | Tue | 133 | -0.009 | 0.004 | 0.894 | 1.000 | no |
+| weekday | Wed | 131 | -0.077 | 0.021 | 0.325 | 1.000 | no |
+| side | LONG | 335 | -0.049 | 0.053 | 0.201 | 1.000 | no |
+| side | SHORT | 335 | 0.053 | -0.049 | 0.201 | 1.000 | no |
+| year | 2022 | 114 | -0.045 | 0.011 | 0.591 | 1.000 | no |
+| year | 2023 | 149 | -0.117 | 0.036 | 0.118 | 1.000 | no |
+| year | 2024 | 126 | 0.088 | -0.018 | 0.309 | 1.000 | no |
+| year | 2025 | 165 | 0.071 | -0.021 | 0.325 | 1.000 | no |
+| year | 2026 | 116 | 0.009 | 0.000 | 0.930 | 1.000 | no |
+| signal_hour | 10 | 226 | -0.026 | 0.016 | 0.610 | 1.000 | no |
+| signal_hour | 11 | 9 | 0.014 | 0.002 | 0.978 | 1.000 | no |
+| signal_hour | 9 | 435 | 0.016 | -0.025 | 0.621 | 1.000 | no |
+| or_atr_tercile | T1 | 223 | -0.069 | 0.037 | 0.221 | 1.000 | no |
+| or_atr_tercile | T2 | 223 | 0.089 | -0.042 | 0.119 | 1.000 | no |
+| or_atr_tercile | T3 | 224 | -0.015 | 0.010 | 0.763 | 1.000 | no |
+| cpr_width_tercile | T1 | 223 | 0.031 | -0.013 | 0.615 | 1.000 | no |
+| cpr_width_tercile | T2 | 223 | 0.021 | -0.008 | 0.741 | 1.000 | no |
+| cpr_width_tercile | T3 | 224 | -0.046 | 0.026 | 0.393 | 1.000 | no |
+| gap_sign | gap_down_or_flat | 252 | 0.002 | 0.002 | 0.997 | 1.000 | no |
+| gap_sign | gap_up | 418 | 0.002 | 0.002 | 0.997 | 1.000 | no |
+- **No slice is significant after multiplicity** (23 looks). Weekday, side, year and hour differences are consistent with noise. No slice may be used as a filter in this strategy.
+
+## Regime check: rolling 50-trade hit rate vs a stationary binomial
+- trades 670, hit rate 43.7%, overlapping windows 621
+- observed rolling range: 28% .. 62%
+- simulated 95% band for the minimum: 20% .. 34%; for the maximum: 54% .. 68%
+- observed range outside the band: **no**. No regime change is supported: the swings are what a constant hit rate produces.
+
 ## Go-live gates
 | gate | result | detail |
 |---|---|---|
@@ -101,4 +168,10 @@ Skips: cpr_too_wide=30, gap_too_large=38, no_breakout=269, no_features=14, or_to
 | 4 paper phase: >=30 sessions with alerts + journal, realised vs backtest R within tolerance | **PENDING** | PENDING - paper phase not started |
 | 5 live one lot only for >=20 sessions before any size change | **PENDING** | PENDING - after gate 4 |
 
-- wrote reports/orb_cpr_nifty_trades.csv (670 rows), reports/orb_cpr_nifty_oos_trades.csv (451 rows); elapsed 17s
+## Verdict: **FAIL**
+- like-for-like: fixed 0.011R vs walk-forward 0.018R, difference CI [-0.136, 0.138]; selection added value: no
+- slices significant after multiplicity: 0 of 23
+- regime change supported: no
+- data 2022-01 .. 2026-11 is CONSUMED for this strategy family (see hypotheses/ledger.md)
+
+- wrote reports/orb_cpr_nifty_trades.csv (670 rows), reports/orb_cpr_nifty_oos_trades.csv (451 rows); elapsed 19s

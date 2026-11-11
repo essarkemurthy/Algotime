@@ -6,15 +6,20 @@ strategies/backtest.py — backtest CLI for the pure strategies in this package.
 
 Reads `nifty_1m` (scripts/fetch_nifty_history.py), reuses the strategy's own
 feature / evaluate / simulate functions, and reports:
-  baseline (default Params, net of 3 pts) · cost sensitivity 0/3/6/10 pts ·
-  by year · exit and skip reasons · parameter grid · rolling walk-forward
-  (12 months in-sample, 3 months out-of-sample) · bootstrap 95% CI of mean R ·
+  day-filter funnel + data sanity · baseline (default Params, net of 3 pts) ·
+  cost sensitivity 0/3/6/10 pts · by year · exit reasons · parameter grid ·
+  rolling walk-forward (12 months in-sample, 3 months out-of-sample) ·
+  like-for-like (fixed spec params on exactly the OOS windows vs walk-forward
+  OOS, with CIs) · exploratory slices with Holm-adjusted p-values · rolling
+  hit-rate regime check against a stationary binomial · bootstrap 95% CI ·
   out-of-sample max drawdown.
 Writes reports/<name>_trades.csv, reports/<name>_oos_trades.csv and
-reports/<name>_report.md. `--gates` prints PASS/FAIL per go-live gate.
+reports/<name>_report.md. `--gates` prints PASS/FAIL per go-live gate, the
+verdict, and records it in reports/<name>_verdict_<date>.md.
 
 Walk-forward picks each window's parameters on in-sample average R (net of 3
 pts) only; the full-sample grid is reported for robustness, never for selection.
+Slices are exploratory: nothing in them may become a filter of this strategy.
 """
 
 from __future__ import annotations
@@ -22,13 +27,14 @@ from __future__ import annotations
 import argparse
 import itertools
 import os
+import subprocess
 import sys
 import time as _time
 from collections import Counter
 from dataclasses import asdict, replace
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -37,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv                       # noqa: E402
 load_dotenv(ROOT / ".env")
 
+from strategies import analysis as A                 # noqa: E402
 from strategies import orb_cpr_nifty as S            # noqa: E402
 
 REPORT_DIR = ROOT / "reports"
@@ -58,6 +65,7 @@ GATE_MAX_DD_R = 12.0
 GATE_GRID_POSITIVE = 0.60
 RUPEES_PER_R = 2000.0
 ACCOUNT_INR = 150_000.0
+HIT_WINDOW = 50
 
 
 # ── Data ──────────────────────────────────────────────────────────────────────
@@ -102,6 +110,14 @@ def grid_params(base: S.Params):
 
 def param_label(p: S.Params) -> str:
     return " ".join(f"{k}={getattr(p, k)}" for k in GRID)
+
+
+def git_rev() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
+                                       text=True).strip()
+    except Exception:
+        return "unknown"
 
 
 # ── Analyses ──────────────────────────────────────────────────────────────────
@@ -214,15 +230,36 @@ def main() -> int:
     df, sessions = load_sessions(d0, d1, base)
     feats = S.daily_features(sessions, base)
     days = sorted(sessions)
-    say(f"# {args.name} backtest  {d0} -> {d1}  (generated {datetime.now():%Y-%m-%d %H:%M} IST)")
+    say(f"# {args.name} backtest  {d0} -> {d1}  (generated {datetime.now():%Y-%m-%d %H:%M} IST, "
+        f"commit {git_rev()})")
     say("")
-    say(f"- 1-minute rows: {len(df):,}; valid sessions (>= {base.min_session_bars} five-minute bars): "
-        f"{len(sessions)} ({days[0]} .. {days[-1]}); sessions with features: {len(feats)}")
+    say(f"- 1-minute rows: {len(df):,}; valid sessions (>= {base.min_session_bars} five-minute bars, "
+        f"weekdays): {len(sessions)} ({days[0]} .. {days[-1]}); sessions with features: {len(feats)}")
     say(f"- params: {', '.join(f'{k}={v}' for k, v in asdict(base).items())}")
     say("")
 
     # baseline + cost sensitivity
     trades, skips = S.run(sessions, feats, base)
+
+    # funnel + sanity
+    fn = A.funnel(df, sessions, feats, base, trades)
+    say("## Day-filter funnel and data sanity")
+    say("| step | sessions |\n|---|---|")
+    for k, v in fn["counts"].items():
+        say(f"| {k} | {v} |")
+    say(f"| = trades taken | {fn['trades']} |")
+    say("")
+    say(f"- survivors of every filter == trades: **{'yes' if fn['survivors_equal_trades'] else 'NO'}** "
+        f"({fn['survivors']} vs {fn['trades']})")
+    say(f"- duplicate 1-minute timestamps: {fn['duplicates_1m']}")
+    say(f"- valid sessions whose first 5m bar is not {base.session_open:%H:%M}: {len(fn['not_0915'])}"
+        + (f"  {fn['not_0915'][:10]}" if fn['not_0915'] else ""))
+    say(f"- weekend special sessions excluded: {len(fn['weekend'])}  {[str(d) for d in fn['weekend']]}")
+    say(f"- weekday sessions excluded for < {base.min_session_bars} five-minute bars: {len(fn['short'])}  "
+        f"{[str(d) for d in fn['short']]}")
+    say(f"- trades by year: {fn['trades_by_year']}")
+    say("")
+
     say("## Baseline (default params) and cost sensitivity")
     say(HEADER)
     for c in COSTS:
@@ -233,22 +270,21 @@ def main() -> int:
     say("")
 
     # by year
-    say("## By year (net 3 pts)")
+    say("## By year (net 3 pts; descriptive, see slice table for significance)")
     say(HEADER)
     for y in sorted({t.trade_date.year for t in trades}):
         say(stats_line(str(y), [t for t in trades if t.trade_date.year == y], BASE_COST))
     say("")
 
     # exits
-    say("## Exit reasons (net 3 pts)")
+    say("## Exit reasons (net 3 pts; conditioned on outcome, descriptive only)")
     say("| reason | n | avg R |\n|---|---|---|")
     for reason, n in Counter(t.reason for t in trades).most_common():
         rs = [t.r_net(BASE_COST) for t in trades if t.reason == reason]
         say(f"| {reason} | {n} | {fmt(sum(rs) / n, 3)} |")
-    say("| LONG | %d | %s |" % (sum(1 for t in trades if t.direction == S.LONG),
-                               fmt(S.summarize([t for t in trades if t.direction == S.LONG], BASE_COST)["avg_r"], 3)))
-    say("| SHORT | %d | %s |" % (sum(1 for t in trades if t.direction == S.SHORT),
-                                fmt(S.summarize([t for t in trades if t.direction == S.SHORT], BASE_COST)["avg_r"], 3)))
+    say("")
+    say("Target and stop buckets are positive/negative by construction and the time-exit bucket "
+        "is selected on having avoided both; none of these is evidence for a variant.")
     say("")
 
     # grid
@@ -266,6 +302,7 @@ def main() -> int:
 
     # walk-forward
     wf_rows, oos_trades = [], []
+    lfl = None
     if not args.no_walkforward:
         say(f"## Walk-forward ({WF_IS_MONTHS}m in-sample / {WF_OOS_MONTHS}m out-of-sample, step {WF_OOS_MONTHS}m)")
         wf_rows, oos_trades = walk_forward(sessions, feats, base, log=lambda s: out.append(s) or print(s))
@@ -284,13 +321,70 @@ def main() -> int:
         say(f"- distinct parameter sets chosen across windows: {len({r['params'] for r in wf_rows})} of {len(wf_rows)}")
         say("")
 
+        # like-for-like
+        lfl = A.like_for_like(sessions, feats, base, wf_rows, oos_trades, BASE_COST)
+        say("## Like-for-like: fixed spec params vs walk-forward, same OOS windows (net 3 pts)")
+        say(f"- OOS windows: {lfl['days']} sessions, {lfl['from']} .. {lfl['to']}")
+        say("| set | n | avg R | 95% CI | win % | total R | max DD R |\n|---|---|---|---|---|---|---|")
+        b, o = lfl["base"], lfl["oos"]
+        say(f"| fixed spec params | {b['n']} | {fmt(b['avg_r'], 3)} | [{fmt(lfl['base_ci'][0], 3)}, {fmt(lfl['base_ci'][1], 3)}] | "
+            f"{fmt(b['win_rate'] * 100, 1)}% | {fmt(b['total_r'], 1)} | {fmt(b['max_dd_r'], 1)} |")
+        say(f"| walk-forward (re-chosen) | {o['n']} | {fmt(o['avg_r'], 3)} | [{fmt(lfl['oos_ci'][0], 3)}, {fmt(lfl['oos_ci'][1], 3)}] | "
+            f"{fmt(o['win_rate'] * 100, 1)}% | {fmt(o['total_r'], 1)} | {fmt(o['max_dd_r'], 1)} |")
+        say(f"- difference walk-forward minus fixed: {fmt(lfl['diff'], 3)}R, 95% CI "
+            f"[{fmt(lfl['diff_ci'][0], 3)}, {fmt(lfl['diff_ci'][1], 3)}]")
+        say(f"- parameter selection added measurable value: **{'yes' if lfl['selection_added'] else 'no'}** "
+            f"(CI of the difference {'excludes' if lfl['selection_added'] else 'includes'} zero)")
+        say("")
+
+    # slices (exploratory, multiplicity-adjusted)
+    rows, n_slices = A.slice_analysis(trades, BASE_COST)
+    flagged = [r for r in rows if r["flagged"]]
+    say(f"## Slice analysis (exploratory; {n_slices} slices examined, Holm-adjusted; full sample, net 3 pts)")
+    say("| dimension | slice | n | mean R | rest mean R | p raw | p Holm | significant |\n|---|---|---|---|---|---|---|---|")
+    for r in rows:
+        say(f"| {r['dim']} | {r['label']} | {r['n']} | {fmt(r['mean_r'], 3)} | {fmt(r['rest_mean_r'], 3)} | "
+            f"{fmt(r['p_raw'], 3)} | {fmt(r['p_holm'], 3)} | {'YES' if r['flagged'] else 'no'} |")
+    if flagged:
+        say(f"- {len(flagged)} slice(s) significant after multiplicity: "
+            + ", ".join(f"{r['dim']}={r['label']}" for r in flagged)
+            + ". Exploratory only: no slice may be used as a filter in this strategy.")
+    else:
+        say(f"- **No slice is significant after multiplicity** ({n_slices} looks). Weekday, side, year and "
+            "hour differences are consistent with noise. No slice may be used as a filter in this strategy.")
+    say("")
+
+    # regime check
+    rg = A.regime_check(trades, BASE_COST, window=HIT_WINDOW)
+    say(f"## Regime check: rolling {HIT_WINDOW}-trade hit rate vs a stationary binomial")
+    say(f"- trades {rg['n']}, hit rate {rg['p']:.1%}, overlapping windows {rg['windows']}")
+    say(f"- observed rolling range: {rg['obs_min']:.0%} .. {rg['obs_max']:.0%}")
+    say(f"- simulated 95% band for the minimum: {rg['band_min'][0]:.0%} .. {rg['band_min'][1]:.0%}; "
+        f"for the maximum: {rg['band_max'][0]:.0%} .. {rg['band_max'][1]:.0%}")
+    say(f"- observed range outside the band: **{'yes' if rg['outside'] else 'no'}**. "
+        + ("A regime change is not ruled out; it is not demonstrated either." if rg['outside']
+           else "No regime change is supported: the swings are what a constant hit rate produces."))
+    say("")
+
     # gates
+    verdict = None
     if args.gates:
         say("## Go-live gates")
         say("| gate | result | detail |\n|---|---|---|")
-        for name, ok, detail in gates(oos_trades, grid_results, wf_rows):
+        gres = gates(oos_trades, grid_results, wf_rows)
+        for name, ok, detail in gres:
             res = "PENDING" if ok is None else ("PASS" if ok else "FAIL")
             say(f"| {name} | **{res}** | {detail} |")
+        verdict = "FAIL" if any(ok is False for _, ok, _ in gres) else "PASS (gates 1-3)"
+        say("")
+        say(f"## Verdict: **{verdict}**")
+        if lfl is not None:
+            say(f"- like-for-like: fixed {fmt(lfl['base']['avg_r'], 3)}R vs walk-forward {fmt(lfl['oos']['avg_r'], 3)}R, "
+                f"difference CI [{fmt(lfl['diff_ci'][0], 3)}, {fmt(lfl['diff_ci'][1], 3)}]; selection added value: "
+                f"{'yes' if lfl['selection_added'] else 'no'}")
+        say(f"- slices significant after multiplicity: {len(flagged)} of {n_slices}")
+        say(f"- regime change supported: {'not ruled out' if rg['outside'] else 'no'}")
+        say("- data 2022-01 .. 2026-11 is CONSUMED for this strategy family (see hypotheses/ledger.md)")
         say("")
 
     # files
@@ -301,6 +395,12 @@ def main() -> int:
         f"reports/{args.name}_oos_trades.csv ({len(oos_trades)} rows); elapsed {_time.time() - t0:.0f}s")
     (REPORT_DIR / f"{args.name}_report.md").write_text("\n".join(out) + "\n", encoding="utf-8")
     print(f"report: reports/{args.name}_report.md")
+    if verdict is not None:
+        vfile = REPORT_DIR / f"{args.name}_verdict_{date.today().isoformat()}.md"
+        head = out.index("## Go-live gates")
+        vfile.write_text(f"# {args.name} verdict {date.today()} (commit {git_rev()})\n\n"
+                         + "\n".join(out[head:]) + "\n", encoding="utf-8")
+        print(f"verdict: {vfile.relative_to(ROOT)}")
     return 0
 
 
