@@ -737,6 +737,79 @@ _price_dirty: Dict[str, tuple] = {}
 _price_dirty_lock = threading.Lock()
 
 
+# Options safety net: the WS feed for a freshly subscribed contract can stay
+# silent (refused subscription, token mismatch, socket hiccup). Any open option
+# leg that has not ticked for _OPT_STALE_SEC is priced by a REST get_quotes every
+# _OPT_POLL_SEC during market hours, through the same tick path (LTP cache,
+# algo SL/TP checks, UI), so an entry can never again sit frozen at its entry
+# premium until the square-off.
+_last_tick_sym: Dict[str, float] = {}
+_OPT_POLL_SEC = 5
+_OPT_STALE_SEC = 20
+_OPT_POLL_OPEN = dt_time(9, 15)
+_OPT_POLL_CLOSE = dt_time(15, 31)
+_opt_poll_noted: Set[str] = set()
+
+
+def _rest_option_ltp(symbol: str, pos: dict) -> Optional[float]:
+    """Blocking: last traded premium of one option contract via REST."""
+    stock = symbol.split("_")[0]
+    meta = _CHAIN_META.get(stock) or {}
+    _limiter.acquire(f"opt_poll_{stock}")
+    resp = _session.api.get_quotes(
+        stock_code=meta.get("code", stock), exchange_code=meta.get("exchange", "NFO"),
+        expiry_date=SymbolBuilder.breeze_dt(date.fromisoformat(str(pos["expiry"]))),
+        product_type="options", right="call" if pos.get("right") == "CE" else "put",
+        strike_price=str(pos.get("strike") or ""))
+    if resp.get("Status") == 200 and resp.get("Success"):
+        try:
+            return float(resp["Success"][0].get("ltp") or 0) or None
+        except (TypeError, ValueError):
+            return None
+    log.info("Option REST quote %s: %s", symbol, resp.get("Error"))
+    return None
+
+
+def _apply_polled_price(symbol: str, ltp: float) -> None:
+    _ltp_cache[symbol] = ltp
+    if _algo is not None:
+        try:
+            _algo.on_tick(symbol, ltp)
+        except Exception as exc:
+            log.error("Algo tick error (polled) for %s: %s", symbol, exc)
+    with _price_dirty_lock:
+        _price_dirty[symbol] = (ltp, 0.0)
+
+
+async def _option_price_poll_loop() -> None:
+    while True:
+        await asyncio.sleep(_OPT_POLL_SEC)
+        try:
+            if not (_session and _session._api and _algo is not None):
+                continue
+            if not (_OPT_POLL_OPEN <= datetime.now().time() <= _OPT_POLL_CLOSE):
+                continue
+            seen: Set[str] = set()
+            for pos in _algo.snapshot().get("open_positions", []):
+                if pos.get("product") != "options" or not pos.get("expiry"):
+                    continue
+                sym = pos["symbol"]
+                if sym in seen:
+                    continue
+                seen.add(sym)
+                if time.time() - _last_tick_sym.get(sym, 0.0) < _OPT_STALE_SEC:
+                    continue
+                ltp = await asyncio.to_thread(_rest_option_ltp, sym, pos)
+                if ltp:
+                    if sym not in _opt_poll_noted:
+                        _opt_poll_noted.add(sym)
+                        log.warning("Option feed silent for %s — pricing by REST every %ds (ltp %.2f)",
+                                    sym, _OPT_POLL_SEC, ltp)
+                    _apply_polled_price(sym, ltp)
+        except Exception as exc:
+            log.debug("option price poll: %s", exc)
+
+
 async def _price_flush_loop() -> None:
     while True:
         await asyncio.sleep(_PRICE_FLUSH_SEC)
@@ -857,6 +930,8 @@ def _on_tick(tick: dict) -> None:
         return
 
     cache_key = _token_to_symbol.get(token)
+    if cache_key is not None:
+        _last_tick_sym[cache_key] = _last_tick_at
 
     if cache_key is None:
         cache_key = _auto_learn_token(token, tick)
@@ -1034,18 +1109,34 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
                 log.warning("No valid token for %s/%s (got %r) — subscribing anyway, will learn from first tick",
                             stock, exchange, raw_token)
 
-        # Subscribe via WebSocket
-        resp = _session.api.subscribe_feeds(
-            stock_code=stock,
-            exchange_code=exchange,
-            product_type=product,
-            expiry_date=expiry,
-            strike_price=str(strike) if strike else "",
-            right=right,
-            get_exchange_quotes=True,
-            get_market_depth=False,
-        )
+        # Subscribe via WebSocket. The SDK refuses every subscribe_feeds with
+        # "Could not authenticate credentials" once its socket has seen a single
+        # connect_error (a transient reconnect flips `authentication` to False and
+        # nothing resets it), even while ticks keep flowing on that socket. That
+        # is how 2026-11-11's option legs never got a price. Heal the flag (or a
+        # dead socket) first, and retry once after a forced reconnect.
+        def _subscribe() -> object:
+            return _session.api.subscribe_feeds(
+                stock_code=stock,
+                exchange_code=exchange,
+                product_type=product,
+                expiry_date=expiry,
+                strike_price=str(strike) if strike else "",
+                right=right,
+                get_exchange_quotes=True,
+                get_market_depth=False,
+            )
+        _ensure_feed_socket()
+        resp = _subscribe()
+        if _subscribe_refused(resp):
+            log.warning("subscribe_feeds %s/%s refused (%s) — reconnecting feed socket and retrying",
+                        stock, exchange, resp)
+            _ensure_feed_socket(force=True)
+            resp = _subscribe()
         log.info("subscribe_feeds %s/%s → %s", stock, exchange, resp)
+        if _subscribe_refused(resp):
+            log.error("WS subscribe failed for %s/%s: %s", stock, exchange, resp)
+            return False
 
         if eq_token:
             _token_to_symbol[eq_token] = cache_key or stock
@@ -1059,6 +1150,41 @@ def _ws_subscribe(stock: str, exchange: str, product: str = "cash",
     except Exception as exc:
         log.error("WS subscribe failed for %s/%s: %s", stock, exchange, exc)
         return False
+
+
+def _subscribe_refused(resp: object) -> bool:
+    return isinstance(resp, str) and "Exception" in resp
+
+
+def _ensure_feed_socket(force: bool = False) -> None:
+    """Make the SDK's rate-refresh socket usable for subscribe_feeds.
+
+    Blocking (SDK socket calls); run via asyncio.to_thread. A connected socket
+    with a stale `authentication=False` flag just gets the flag reset. A socket
+    that is not connected (or force=True) is torn down and reconnected, and
+    every token we had is watched again so the equity feed resumes."""
+    api = _session.api
+    h = getattr(api, "sio_rate_refresh_handler", None)
+    connected = bool(getattr(getattr(h, "sio", None), "connected", False)) if h else False
+    if h is not None and connected and not force:
+        if getattr(h, "authentication", True) is False:
+            log.warning("Breeze feed socket: stale auth flag on a connected socket — reset")
+            h.authentication = True
+        return
+    log.warning("Breeze feed socket %s — reconnecting (%d tokens to re-watch)",
+                "reconnect forced" if force else "not connected", len(_token_to_symbol))
+    try:
+        api.ws_disconnect()
+    except Exception:
+        pass
+    api.ws_connect()
+    h = api.sio_rate_refresh_handler
+    h.authentication = True
+    for tok in list(_token_to_symbol):
+        try:
+            h.watch(tok)
+        except Exception as exc:
+            log.debug("re-watch %s failed: %s", tok, exc)
 
 
 def _ws_unsubscribe(stock: str, exchange: str, product: str = "cash",
@@ -1390,6 +1516,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_session_watchdog())
     _chain_snap_task = asyncio.create_task(_chain_snapshot_loop())
     asyncio.create_task(_price_flush_loop())
+    asyncio.create_task(_option_price_poll_loop())
     asyncio.create_task(_intraday_sync_loop())
     _load_symbol_index()
     _load_setup_config()
@@ -2830,9 +2957,12 @@ async def _route_option_signal(sig) -> None:
         right_word = "call" if contract["right"] == "CE" else "put"
         breeze_expiry = SymbolBuilder.breeze_dt(date.fromisoformat(contract["expiry"]))
         # Subscribe so the option's premium ticks flow into _ltp_cache → SL/TP checks.
-        await asyncio.to_thread(_ws_subscribe, contract.get("code", contract["stock"]),
-                                contract["exchange"], "options", right_word,
-                                str(contract["strike"]), breeze_expiry, option_symbol)
+        ok = await asyncio.to_thread(_ws_subscribe, contract.get("code", contract["stock"]),
+                                     contract["exchange"], "options", right_word,
+                                     str(contract["strike"]), breeze_expiry, option_symbol)
+        if not ok:
+            log.warning("Option feed subscription failed for %s — the position will be "
+                        "priced by REST polling (_option_price_poll_loop)", option_symbol)
         # Seed the resolved premium so mark-to-market is sensible before the first tick.
         if contract.get("premium") and option_symbol not in _ltp_cache:
             _ltp_cache[option_symbol] = float(contract["premium"])
