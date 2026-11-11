@@ -1284,5 +1284,20 @@ loadSymbols();
 <div id="theme-picker-mount"></div>
 <script src="/static/theme.js"></script>
 <script src="/static/session-modal.js"></script>
+<script>
+// Header avatar and the profile card show the broker account holder's name
+// (Breeze customer details), not a hardcoded user.
+(function () {
+  function titleCase(n) { return n.toLowerCase().replace(/(^|[\s\-'])(\S)/g, function (m, a, b) { return a + b.toUpperCase(); }); }
+  function initials(n) { var w = n.trim().split(/\s+/); return ((w[0] || '').charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : '')).toUpperCase(); }
+  fetch('/api/account').then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.name) return;
+    var name = titleCase(d.name), ini = d.initials || initials(name);
+    document.querySelectorAll('.profile-btn').forEach(function (el) { el.textContent = ini; el.title = name; });
+    document.querySelectorAll('.id-card .avatar').forEach(function (el) { el.textContent = ini; });
+    document.querySelectorAll('.id-card .name').forEach(function (el) { el.textContent = name; });
+  }).catch(function () {});
+})();
+</script>
 </body>
 </html>

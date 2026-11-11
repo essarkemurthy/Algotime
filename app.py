@@ -1537,8 +1537,59 @@ async def disconnect_api():
         _token_to_symbol.clear()
         await asyncio.to_thread(_session.disconnect)
         _session = None
+    global _account_name
+    _account_name = None
     await broadcast({"type": "status", "connected": False})
     return {"status": "disconnected"}
+
+
+# Broker account holder, as returned by Breeze get_customer_details. Fetched once
+# per connected session and persisted in data/setup.json so the header avatar and
+# the profile card show the real account name even while the broker is offline.
+_account_name: Optional[str] = None
+
+
+async def _get_account_name() -> Optional[str]:
+    global _account_name
+    if _account_name:
+        return _account_name
+    saved = (_setup_config.get("account_name") or "").strip()
+    if not (_session and _session._api):
+        return saved or None
+    try:
+        resp = await asyncio.to_thread(_session.api.get_customer_details,
+                                       api_session=_session.cfg.session_token)
+        name = ((resp or {}).get("Success") or {}).get("idirect_user_name") if resp else None
+        name = (name or "").strip()
+        if resp and resp.get("Status") == 200 and name:
+            _account_name = name
+            if saved != name:
+                _setup_config["account_name"] = name
+                _save_setup_config()
+            return name
+    except Exception as exc:
+        log.debug("get_customer_details failed: %s", exc)
+    return saved or None
+
+
+def _initials(name: str) -> str:
+    words = [w for w in name.split() if w]
+    if not words:
+        return ""
+    first = words[0][0]
+    last = words[-1][0] if len(words) > 1 else ""
+    return (first + last).upper()
+
+
+@app.get("/api/account")
+async def get_account():
+    """Account holder name for the UI (header avatar, profile card)."""
+    name = await _get_account_name()
+    return {
+        "connected": bool(_session and _session._api),
+        "name":      name,
+        "initials":  _initials(name) if name else None,
+    }
 
 
 @app.get("/api/status")
@@ -1547,6 +1598,7 @@ async def get_status():
         "connected":    bool(_session and _session._api),
         "algo_running": bool(_algo_task and not _algo_task.done()),
         "candle_sync":  _sync_state,
+        "account_name": await _get_account_name(),
     }
 
 
