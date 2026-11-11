@@ -1843,18 +1843,20 @@ function paintLtp(symbol, ltp, change, live) {
   if (painted) _ltpPainted[symbol] = true;
 }
 
+let _wsLive = false;    // socket open and streaming (init received)
 (function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(proto + '//' + location.host + '/ws');
 
   ws.onopen = () => {};   // wait for init message — WS open ≠ broker connected
-  ws.onclose = () => { setConnected(false); setTimeout(connectWS, 3000); };
+  ws.onclose = () => { _wsLive = false; setConnected(false); setTimeout(connectWS, 3000); };
   ws.onerror = () => setConnected(false);
 
   ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'init') {
+        _wsLive = true;
         setConnected(msg.connected);
         if (msg.ltp) Object.entries(msg.ltp).forEach(([k, v]) => applyLtp(k, v));
         if (!msg.connected) loadDbPrices();
@@ -1990,6 +1992,7 @@ function renderTrades(d) {
   }
 }
 
+let _obSig = null;
 function renderOrderBook(d) {
   const orders = d.orders || [];
   const tbody = document.getElementById('ob-body');
@@ -1998,6 +2001,12 @@ function renderOrderBook(d) {
   document.getElementById('ob-open').textContent = (d.open_positions || []).length;
 
   if (!tbody) return;
+  // Rows only change when an order is added (fills are immediate), so skip the
+  // 1 s rebuild when the list is the same.
+  const last = orders[orders.length - 1];
+  const obSig = orders.length + '|' + (last ? last.time + '|' + last.stock + '|' + last.fill_price : '');
+  if (obSig === _obSig) return;
+  _obSig = obSig;
   if (orders.length === 0) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--fg-3);padding:24px;">No orders yet.</td></tr>';
     return;
@@ -2028,8 +2037,9 @@ fetch('/api/paper/summary')
   .then(d => { renderSummary(d); renderTrades(d); renderOrderBook(d); })
   .catch(() => {});
 
-// Poll every 5s
+// Poll every 5s — only while the socket is down (it streams paper_update every 1 s)
 setInterval(() => {
+  if (_wsLive) return;
   fetch('/api/paper/summary').then(r => r.json()).then(d => {
     renderSummary(d); renderTrades(d); renderOrderBook(d);
   }).catch(() => {});
@@ -2159,10 +2169,13 @@ function fmtSigned(v) {
   return (v >= 0 ? '+' : '−') + fmtIN(Math.abs(v), 0);
 }
 
+let _algoGridSig = null;
 function renderAlgo(snap) {
   if (!snap) return;
   const grid = document.getElementById('algo-grid');
-  if (grid) {
+  const gridSig = JSON.stringify([snap.strategies, snap.config]);
+  if (grid && gridSig !== _algoGridSig) {
+    _algoGridSig = gridSig;
     const by = {}; (snap.strategies || []).forEach(s => by[s.strategy] = s);
     grid.innerHTML = ALGO_ORDER.filter(k => by[k]).map(k => {
       const s = by[k];
@@ -2203,13 +2216,22 @@ function renderAlgo(snap) {
     syncLaunch('algo-intraday-toggle', !!snap.config.trade_intraday);
     syncLaunch('algo-opt-toggle', !!snap.config.trade_options);
   }
-  // A fill just happened → refresh the (DB-backed) period report for the window.
-  scheduleReportsRefresh();
+  // Reload the (DB-backed) period report only when a fill or signal decision
+  // actually changed. It used to reload on every 2 s snapshot: a ~4 MB fetch
+  // plus a 12,000-row table rebuild that kept the main thread busy most of the
+  // time, so the index tiles only repainted in the gaps between rebuilds.
+  const sl = snap.signals_log || [];
+  const repKey = [snap.realised_pnl, snap.open_count,
+                  (snap.strategies || []).map(s => s.closed + ':' + s.open).join(','),
+                  sl.length, JSON.stringify(sl[0] || null), JSON.stringify(sl[sl.length - 1] || null)].join('|');
+  if (repKey !== _repKey) { _repKey = repKey; scheduleReportsRefresh(); }
 }
 
 // ── Reports section (DB-backed, period-filtered) ──────────────────────────────
 let REPORT_PERIOD = 'fy';
 let _repTimer = null;
+let _repKey = null;          // fingerprint of the last algo snapshot that triggered a reload
+let _repLastText = null;     // last reports payload, to skip identical rebuilds
 function scheduleReportsRefresh() {
   if (_repTimer) return;
   _repTimer = setTimeout(() => { _repTimer = null; loadReports(REPORT_PERIOD); }, 800);
@@ -2218,8 +2240,11 @@ function scheduleReportsRefresh() {
 function loadReports(period) {
   REPORT_PERIOD = period || REPORT_PERIOD;
   fetch('/api/reports?period=' + encodeURIComponent(REPORT_PERIOD))
-    .then(r => r.json())
-    .then(data => {
+    .then(r => r.text())
+    .then(text => {
+      if (text === _repLastText) return;      // nothing changed: keep the DOM as is
+      _repLastText = text;
+      const data = JSON.parse(text);
       renderReports(data);
       const w = document.getElementById('rep-window');
       if (w) {
@@ -2268,7 +2293,7 @@ function decisionBadge(dec, reason) {
 function renderReports(data) {
   if (!data) return;
   const closed = data.trades || [];                              // already newest-first
-  const total = closed.length;
+  const total = data.trades_total != null ? data.trades_total : closed.length;
   const wins = closed.filter(t => t.pnl > 0).length;
   const gross = closed.reduce((a, t) => a + (t.pnl || 0), 0);
   const cash = closed.filter(t => (t.product || 'cash') === 'cash').length;
@@ -2299,7 +2324,8 @@ function renderReports(data) {
   }
 
   const sigs = data.signals || [];
-  setTxt('rep-sig-ct', sigs.length);
+  const sigTotal = data.signals_total != null ? data.signals_total : sigs.length;
+  setTxt('rep-sig-ct', sigTotal > sigs.length ? sigs.length + ' of ' + sigTotal : sigTotal);
   const sb = document.getElementById('rep-sig-body');
   if (sb) {
     sb.innerHTML = sigs.length ? sigs.map(s =>

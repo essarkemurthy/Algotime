@@ -3096,11 +3096,16 @@ async def strategy_signals(strategy: str = "", days: int = 5, limit: int = 200):
 
 @app.get("/api/reports")
 async def get_reports(period: str = "1m", fy: Optional[int] = None,
-                      frm: Optional[str] = None, to: Optional[str] = None):
+                      frm: Optional[str] = None, to: Optional[str] = None,
+                      trades_limit: int = 2000, signals_limit: int = 500):
     """Period-filtered paper-trading report. When the DB is configured the trades
     and signal-decisions are read from the persisted tables for the requested
     window (1m/3m/6m/1y/ytd/fy/all, or explicit frm/to); otherwise it falls back
-    to the in-memory current session."""
+    to the in-memory current session.
+
+    Rows come newest-first and are capped (trades_limit / signals_limit, 0 = all);
+    *_total carries the uncapped count. A financial year holds 10k+ signal rows
+    (~4 MB) which the page cannot usefully render as one table."""
     if _db_store is not None:
         try:
             f, t = period_range(period, fy, frm, to)
@@ -3110,7 +3115,10 @@ async def get_reports(period: str = "1m", fy: Optional[int] = None,
                 "source": "db", "period": period,
                 "from": f.isoformat() if f else None,
                 "to":   t.isoformat() if t else None,
-                "stats": _report_stats(trades), "trades": trades, "signals": signals,
+                "stats": _report_stats(trades),
+                "trades_total": len(trades), "signals_total": len(signals),
+                "trades": trades[:trades_limit] if trades_limit > 0 else trades,
+                "signals": signals[:signals_limit] if signals_limit > 0 else signals,
             }
         except Exception as exc:
             log.warning("DB reports failed, falling back to memory: %s", exc)
