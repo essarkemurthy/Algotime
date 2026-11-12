@@ -44,12 +44,12 @@ class FakeStore:
 
 class Funds:
     """Callable funds getter with a mutable balance and a call counter."""
-    def __init__(self, fno=100000.0, unallocated=0.0):
-        self.fno, self.unallocated, self.calls = fno, unallocated, 0
+    def __init__(self, fno=100000.0, unallocated=0.0, blocked=0.0):
+        self.fno, self.unallocated, self.blocked, self.calls = fno, unallocated, blocked, 0
 
     def __call__(self):
         self.calls += 1
-        return {"allocated_fno": self.fno, "unallocated": self.unallocated}
+        return {"allocated_fno": self.fno, "unallocated": self.unallocated, "blocked": self.blocked}
 
 
 def bridge(api=None, env=True, funds=None, **cfg):
@@ -143,6 +143,13 @@ class TestSizing(unittest.TestCase):
         b = bridge(api, funds=lambda: None); b.arm(L.CONFIRM_PHRASE, dry_run=False)
         b.on_paper_entry(pos(), 200.0)
         self.assertEqual(api.orders, []); self.assertIn("capital unknown", b.store.rows[-1]["reason"])
+
+    def test_blocked_margin_is_not_capital(self):
+        # the account as seen on 2026-11-12: F&O 10,214.75 + unallocated 1,461.65 - blocked 3,774.84
+        b = bridge(FakeApi(), funds=Funds(fno=10214.75, unallocated=1461.65, blocked=3774.84)); b.arm(L.CONFIRM_PHRASE)
+        self.assertAlmostEqual(b.capital(), 7901.56)
+        sz = b.size("SENSEX", 300.0)                                 # risk 158 vs 1,800 per lot -> nothing
+        self.assertEqual(sz.lots, 0); self.assertIn("one lot needs", sz.reason)
 
     def test_capital_override_caps_funds(self):
         b = bridge(FakeApi(), funds=Funds(fno=1000000), capital_override_inr=20000); b.arm(L.CONFIRM_PHRASE)

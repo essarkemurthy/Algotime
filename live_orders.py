@@ -17,8 +17,8 @@ Gates (both must hold before a single real order goes out):
      `dry_run` is explicitly false.
 
 Position sizing (per entry, from the broker's get_funds, refreshed ≤ 60 s old):
-  capital        = F&O allocation + unallocated bank balance (capped by
-                   LIVE_CAPITAL when set)
+  capital        = F&O allocation + unallocated bank balance - margin blocked
+                   by open trades (capped by LIVE_CAPITAL when set)
   lots = min( max_lots,
               risk budget      / risk per lot       (risk_pct % of capital at the
                                                      paper stop, sl_frac of premium)
@@ -59,6 +59,13 @@ def _env_on() -> bool:
 
 def _breeze_dt(d: date) -> str:
     return datetime(d.year, d.month, d.day, 6).isoformat(timespec="milliseconds") + "Z"
+
+
+def _usable(funds: dict) -> float:
+    """Spendable capital from a get_funds row: F&O allocation + unallocated bank
+    balance, less the margin the broker already blocks for open trades."""
+    return max(0.0, float(funds.get("allocated_fno") or 0) + float(funds.get("unallocated") or 0)
+               - float(funds.get("blocked") or 0))
 
 
 def _inr(x: float) -> str:
@@ -225,9 +232,9 @@ class LiveOrderBridge:
 
     def capital(self, force: bool = False) -> float:
         """Capital the sizer works against: F&O allocation + unallocated bank
-        balance, capped by capital_override_inr when set. 0 when unknown."""
+        balance - blocked margin, capped by capital_override_inr when set. 0 when unknown."""
         f = self.refresh_funds(force) or {}
-        cap = float(f.get("allocated_fno") or 0) + float(f.get("unallocated") or 0)
+        cap = _usable(f)
         if self.cfg.capital_override_inr > 0:
             cap = min(cap, self.cfg.capital_override_inr)
         return max(cap, 0.0)
@@ -473,7 +480,7 @@ class LiveOrderBridge:
                           "entry": p.entry, "paper_entry": p.paper_entry, "order_id": p.order_id,
                           "opened_at": p.opened_at.strftime("%H:%M:%S"), "dry_run": p.dry_run}
                          for p in self.open.values()]
-            cap = float(funds.get("allocated_fno") or 0) + float(funds.get("unallocated") or 0)
+            cap = _usable(funds)
             if c.capital_override_inr > 0:
                 cap = min(cap, c.capital_override_inr)
             return {
