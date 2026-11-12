@@ -673,13 +673,55 @@ def _live_broadcast(msg: dict) -> None:
         asyncio.run_coroutine_threadsafe(broadcast(msg), _main_loop)
 
 
+def _live_funds() -> Optional[dict]:
+    """Synchronous broker funds read for the live bridge's position sizer (runs
+    on the bridge's worker thread, counted by _limiter). None when offline."""
+    if not (_session and _session._api):
+        return None
+    _limiter.acquire("get_funds")
+    fr = _session.api.get_funds()
+    fs = (fr or {}).get("Success") or {}
+    if not (fr and fr.get("Status") == 200 and fs):
+        raise RuntimeError(str((fr or {}).get("Error") or "get_funds rejected"))
+
+    def _num(key: str) -> float:
+        try:
+            return float(fs.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    out = {"allocated_fno": _num("allocated_fno"), "unallocated": _num("unallocated_balance"),
+           "allocated_equity": _num("allocated_equity"), "blocked": _num("block_by_trade_balance"),
+           "total_balance": _num("total_bank_balance")}
+    if _account.get("funds"):
+        _account["funds"].update(out)
+    return out
+
+
+def _env_num(key: str, default: str, cast=float):
+    try:
+        return cast(os.getenv(key, default) or default)
+    except (TypeError, ValueError):
+        return cast(default)
+
+
 _live: LiveOrderBridge = LiveOrderBridge(
     api_getter=lambda: _session.api if (_session and _session._api) else None,
+    funds_getter=_live_funds,
     cfg=LiveConfig(
-        lots=int(os.getenv("LIVE_LOTS", "1")),
-        max_open=int(os.getenv("LIVE_MAX_OPEN", "1")),
-        daily_loss_cap_inr=float(os.getenv("LIVE_DAILY_LOSS_CAP", "3000")),
-        max_premium_inr=float(os.getenv("LIVE_MAX_PREMIUM", "20000"))),
+        lots=_env_num("LIVE_LOTS", "0", int),                      # 0 = size from funds
+        max_lots=_env_num("LIVE_MAX_LOTS", "5", int),
+        max_open=_env_num("LIVE_MAX_OPEN", "1", int),
+        risk_pct=_env_num("LIVE_RISK_PCT", "2"),
+        sl_frac=float(_algo.cfg.option_sl_pct),                    # the paper engine's option stop
+        exposure_pct=_env_num("LIVE_EXPOSURE_PCT", "25"),
+        total_exposure_pct=_env_num("LIVE_TOTAL_EXPOSURE_PCT", "50"),
+        cash_buffer_pct=_env_num("LIVE_CASH_BUFFER_PCT", "5"),
+        daily_loss_cap_inr=_env_num("LIVE_DAILY_LOSS_CAP", "3000"),
+        daily_loss_pct=_env_num("LIVE_DAILY_LOSS_PCT", "3"),
+        max_premium_inr=_env_num("LIVE_MAX_PREMIUM", "20000"),
+        max_trades_per_day=_env_num("LIVE_MAX_TRADES", "3", int),
+        max_consec_losses=_env_num("LIVE_MAX_CONSEC_LOSSES", "2", int),
+        capital_override_inr=_env_num("LIVE_CAPITAL", "0")),
     broadcast=_live_broadcast,
     code_of=lambda s: (_CHAIN_META.get(s) or {}).get("code", s))
 _algo.live_bridge = _live
@@ -2337,7 +2379,8 @@ async def live_state():
 async def live_arm(body: dict):
     """Arm for today. body: {"confirm": "<phrase>", "dry_run": true|false}.
     Refused unless LIVE_ORDERS_ENABLED=1 is set and the phrase matches."""
-    res = _live.arm(str(body.get("confirm") or ""), dry_run=bool(body.get("dry_run", True)))
+    # arm() reads the broker funds (REST) to fix the day's capital — off the loop
+    res = await asyncio.to_thread(_live.arm, str(body.get("confirm") or ""), bool(body.get("dry_run", True)))
     if not res.get("ok"):
         raise HTTPException(400, res.get("error", "refused"))
     return res
