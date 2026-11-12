@@ -364,6 +364,26 @@ class DataStore:
                 ON paper_signal_decisions (trade_date DESC, signal_ts DESC);
         """)
 
+    def ensure_live_tables(self) -> None:
+        """Journal of every real / dry-run order the live bridge sent or skipped."""
+        self._exec("""
+            CREATE TABLE IF NOT EXISTS live_orders (
+                id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL,
+                trade_date DATE NOT NULL, dry_run BOOLEAN NOT NULL,
+                symbol TEXT NOT NULL, instrument TEXT, action TEXT NOT NULL,
+                qty INTEGER, order_id TEXT, status TEXT, price NUMERIC(14,2),
+                paper_price NUMERIC(14,2), reason TEXT, pnl NUMERIC(14,2));
+            CREATE INDEX IF NOT EXISTS idx_live_orders_date ON live_orders (trade_date DESC, ts DESC);
+        """)
+
+    def insert_live_order(self, row: Dict) -> None:
+        self._exec("""
+            INSERT INTO live_orders (ts, trade_date, dry_run, symbol, instrument, action, qty,
+                order_id, status, price, paper_price, reason, pnl)
+            VALUES (%(ts)s, %(ts)s::date, %(dry_run)s, %(symbol)s, %(instrument)s, %(action)s,
+                %(qty)s, %(order_id)s, %(status)s, %(price)s, %(paper_price)s, %(reason)s, %(pnl)s)
+        """, row)
+
     def insert_paper_trade(self, row: Dict) -> None:
         self._exec(
             """INSERT INTO paper_trades

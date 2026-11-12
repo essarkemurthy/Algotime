@@ -123,6 +123,9 @@ class AlgoPaperTrader:
         # Every signal the algo sees, with its decision + timing — powers the
         # signals report (generation time → execution time → lag).
         self._signals: Deque[dict] = deque(maxlen=500)
+        # Optional live_orders.LiveOrderBridge: follows option entries/exits on
+        # the real account. Hooks never raise into the paper flow.
+        self.live_bridge = None
 
     # ── controls ──────────────────────────────────────────────────────────────
 
@@ -383,8 +386,22 @@ class AlgoPaperTrader:
                 exec_lag_sec=round(lag, 1) if lag is not None else None)
             log.info("ALGO OPT ENTRY %s %s %s qty=%d @ %.2f (SL %.2f TP %.2f)",
                      strat, sig.direction, label, qty, fill, sl, tp)
+            live_pos = self._open[key]
+        self._live("entry", live_pos, fill)
         self._emit()
         return True
+
+    def _live(self, event: str, pos, price: float, reason: str = "") -> None:
+        bridge = self.live_bridge
+        if bridge is None or pos.product != "options":
+            return
+        try:
+            if event == "entry":
+                bridge.on_paper_entry(pos, price)
+            else:
+                bridge.on_paper_exit(pos, price, reason)
+        except Exception as exc:
+            log.error("live bridge %s hook failed for %s: %s", event, pos.symbol, exc)
 
     # ── exit management: every tick ───────────────────────────────────────────
 
@@ -454,6 +471,7 @@ class AlgoPaperTrader:
                  pos.strategy, pos.direction, pos.instrument or pos.symbol,
                  pos.qty, exit_price, reason, pnl)
         self._persist_trade(pos, exit_price, pnl, reason)
+        self._live("exit", pos, exit_price, reason)
         self._emit()
 
     def _persist_trade(self, pos, exit_price: float, pnl: float, reason: str) -> None:

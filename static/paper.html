@@ -1069,6 +1069,13 @@
             <span class="switch"><input type="checkbox" id="algo-intraday-toggle"><span class="slider"></span></span>
             <span class="launch-state" id="algo-intraday-state">Off</span>
           </label>
+          <label class="launch-toggle" id="live-launch" title="Follow the options paper engine on the REAL broker account, one lot. Needs LIVE_ORDERS_ENABLED=1 in .env and the confirmation phrase each day.">
+            <span class="launch-label">Live orders</span>
+            <span class="switch"><input type="checkbox" id="live-toggle"><span class="slider"></span></span>
+            <span class="launch-state" id="live-state">Off</span>
+          </label>
+          <button class="btn btn-sm" id="live-real-btn" type="button" style="display:none;" title="Switch from dry-run to real money">Go real</button>
+          <button class="btn btn-sm" id="live-kill-btn" type="button" style="display:none;color:var(--tu-danger);" title="Sell every live position at market and disarm">Kill</button>
           <label class="launch-toggle" title="Launch options auto-trading — index signals (NIFTY, BANKNIFTY, SENSEX, FINNIFTY, MIDCPNIFTY) buy the ATM CE/PE with premium-based SL/TP.">
             <span class="launch-label">Options algo</span>
             <span class="switch"><input type="checkbox" id="algo-opt-toggle"><span class="slider"></span></span>
@@ -1076,6 +1083,7 @@
           </label>
         </div>
       </div>
+      <div class="meta" id="live-status" style="padding:4px 0 8px;color:var(--fg-3);">Live orders: off</div>
       <div style="overflow:auto;">
         <table class="table" id="algo-pos-table">
           <thead><tr><th>Strategy</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Entry</th><th class="right">LTP</th><th class="right">SL</th><th class="right">TP</th><th class="right">uP&amp;L</th><th>Since</th></tr></thead>
@@ -1901,6 +1909,8 @@ let _wsLive = false;    // socket open and streaming (init received)
       } else if (msg.type === 'signal') {
         // Live strategy signal (VWAP Reversal / ORB) pushed the moment it fires
         prependSignal(msg);
+      } else if (msg.type === 'live_update') {
+        renderLive(msg.data);
       } else if (msg.type === 'algo_update') {
         renderAlgo(msg.data);
       } else if (msg.type === 'paper_update') {
@@ -2486,6 +2496,49 @@ function renderOptionFeed(snap) {
   const chip = document.getElementById('sig-status-opt');
   if (chip) chip.textContent = rows.length + ' today';
 }
+
+// ── Live (real-money) order bridge controls ────────────────────────────────
+let _liveState = null;
+function renderLive(st) {
+  _liveState = st;
+  const on = !!st.active;
+  syncLaunch('live-toggle', on);
+  const lab = document.getElementById('live-state');
+  if (lab) lab.textContent = !st.env_enabled ? 'Locked' : (on ? (st.dry_run ? 'DRY-RUN' : 'LIVE') : 'Off');
+  const real = document.getElementById('live-real-btn'); if (real) real.style.display = (on && st.dry_run) ? '' : 'none';
+  const kill = document.getElementById('live-kill-btn'); if (kill) kill.style.display = (on || (st.open || []).length) ? '' : 'none';
+  const s = document.getElementById('live-status');
+  if (s) {
+    const openTxt = (st.open || []).map(p => p.instrument + ' x' + p.qty + ' @ ' + fmtIN(p.entry, 2) + (p.dry_run ? ' (dry)' : '')).join(' · ');
+    s.textContent = 'Live orders: ' + (!st.env_enabled ? 'locked (LIVE_ORDERS_ENABLED not set in .env)'
+      : on ? ((st.dry_run ? 'DRY-RUN' : 'REAL MONEY') + ' armed ' + st.armed_at + ' · ' + st.lots + ' lot · max open ' + st.max_open
+              + ' · day P&L ' + fmtSigned(st.realised_pnl) + ' / cap −₹' + fmtIN(st.daily_loss_cap_inr, 0))
+      : ('off' + (st.disarm_reason ? ' (' + st.disarm_reason + ')' : '')))
+      + ((st.open || []).length ? ' · open: ' + openTxt : '') + ' · orders today ' + (st.orders || []).length;
+  }
+}
+function loadLive() { fetch('/api/live').then(r => r.json()).then(renderLive).catch(() => {}); }
+async function liveArm(dryRun) {
+  const phrase = _liveState ? _liveState.confirm_phrase : 'I APPROVE LIVE ORDERS';
+  const typed = prompt((dryRun ? 'Arm live orders in DRY-RUN (orders are logged, not sent).'
+    : 'Switch to REAL MONEY: one lot per option entry on the broker account.') + '\n\nType exactly: ' + phrase);
+  if (typed === null) { loadLive(); return; }
+  const r = await fetch('/api/live/arm', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: typed, dry_run: dryRun }) });
+  if (!r.ok) { alert('Refused: ' + ((await r.json()).detail || r.status)); }
+  loadLive();
+}
+document.getElementById('live-toggle')?.addEventListener('change', (e) => {
+  if (e.target.checked) liveArm(true);
+  else fetch('/api/live/disarm', { method: 'POST' }).then(loadLive);
+});
+document.getElementById('live-real-btn')?.addEventListener('click', () => liveArm(false));
+document.getElementById('live-kill-btn')?.addEventListener('click', () => {
+  if (!confirm('KILL: sell every live position at market and disarm?')) return;
+  fetch('/api/live/kill', { method: 'POST' }).then(loadLive);
+});
+loadLive();
+setInterval(loadLive, 10000);
 
 function toggleStrategy(strat, enabled) {
   fetch('/api/algo/paper/toggle', {

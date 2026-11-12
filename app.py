@@ -176,6 +176,8 @@ def _init_db_store() -> None:
         _db_store = DataStore(db_url)
         try:
             _db_store.ensure_paper_tables()      # paper_trades + paper_signal_decisions
+            _db_store.ensure_live_tables()       # live_orders journal
+            _live.store = _db_store
         except Exception as exc:
             log.warning("ensure_paper_tables failed: %s", exc)
         if _algo is not None:
@@ -658,6 +660,29 @@ def _algo_broadcast(payload: dict) -> None:
 
 # Auto-executes enabled intraday signals on the paper account (see paper_algo.py).
 _algo: AlgoPaperTrader = AlgoPaperTrader(_paper, _ltp_cache, broadcast=_algo_broadcast)
+
+
+# Real-money follower for the options paper engine (see live_orders.py). Two
+# gates: LIVE_ORDERS_ENABLED=1 in the environment, and a per-day arming call
+# with the confirmation phrase. Starts disarmed on every restart.
+from live_orders import LiveOrderBridge, LiveConfig    # noqa: E402
+
+
+def _live_broadcast(msg: dict) -> None:
+    if _main_loop is not None:
+        asyncio.run_coroutine_threadsafe(broadcast(msg), _main_loop)
+
+
+_live: LiveOrderBridge = LiveOrderBridge(
+    api_getter=lambda: _session.api if (_session and _session._api) else None,
+    cfg=LiveConfig(
+        lots=int(os.getenv("LIVE_LOTS", "1")),
+        max_open=int(os.getenv("LIVE_MAX_OPEN", "1")),
+        daily_loss_cap_inr=float(os.getenv("LIVE_DAILY_LOSS_CAP", "3000")),
+        max_premium_inr=float(os.getenv("LIVE_MAX_PREMIUM", "20000"))),
+    broadcast=_live_broadcast,
+    code_of=lambda s: (_CHAIN_META.get(s) or {}).get("code", s))
+_algo.live_bridge = _live
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -1332,6 +1357,9 @@ async def _broadcast_loop() -> None:
             _algo.check_square_off()
             if _tick % 2 == 0:
                 await broadcast({"type": "algo_update", "data": _algo.snapshot()})
+        if _live.open and datetime.now().time() >= _LIVE_FLATTEN_AT:
+            log.warning("Live positions still open at %s — flattening", _LIVE_FLATTEN_AT)
+            _live.flatten_all("EOD")
         if _tick % 10 == 0:
             await broadcast({"type": "quota", "data": _limiter.stats})
         if pnl_data["total_pnl"] < -(_MAX_DAILY_LOSS * 0.80):
@@ -2294,6 +2322,36 @@ async def stop_algo():
 @app.get("/api/positions")
 async def get_positions():
     return _compute_pnl()
+
+
+# ── Live (real-money) order bridge ────────────────────────────────────────────
+_LIVE_FLATTEN_AT = dt_time(15, 20)
+
+
+@app.get("/api/live")
+async def live_state():
+    return _live.state()
+
+
+@app.post("/api/live/arm")
+async def live_arm(body: dict):
+    """Arm for today. body: {"confirm": "<phrase>", "dry_run": true|false}.
+    Refused unless LIVE_ORDERS_ENABLED=1 is set and the phrase matches."""
+    res = _live.arm(str(body.get("confirm") or ""), dry_run=bool(body.get("dry_run", True)))
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("error", "refused"))
+    return res
+
+
+@app.post("/api/live/disarm")
+async def live_disarm():
+    return _live.disarm("manual")
+
+
+@app.post("/api/live/kill")
+async def live_kill():
+    """Sell every live position at market and disarm."""
+    return await asyncio.to_thread(_live.kill)
 
 
 @app.get("/api/orders")
