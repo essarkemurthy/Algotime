@@ -56,6 +56,11 @@ ALL_STRATEGIES = ("ORB", "VWAP_REV", "VWAP_ORB", "EMA_X", "SUPERTREND", "VWAP_TR
                   "RSI2", "BB_REV", "DONCHIAN")
 
 
+def is_option_leg(symbol: str) -> bool:
+    """True for the paper engine's option contract keys, e.g. NIFTY_CE_25350_2026-11-17."""
+    return "_CE_" in symbol or "_PE_" in symbol
+
+
 @dataclass
 class AlgoConfig:
     capital_per_trade: float = 100_000.0   # ₹ notional deployed per entry
@@ -261,6 +266,11 @@ class AlgoPaperTrader:
         # Master routing: NO index trades on the cash engine. An optionable index
         # routes to the options engine (ATM CE/PE); any other index is skipped.
         # Only equities reach the intraday cash engine below.
+        if is_option_leg(sig.symbol):
+            # Subscribed option contracts (NIFTY_CE_25350_2026-11-17) also reach
+            # the detectors; they are never traded as cash stocks.
+            self._log_decision(sig, base, "SKIPPED", "option_leg", product="options")
+            return
         if sig.symbol in self.cfg.index_symbols:
             if sig.symbol in self.cfg.option_underlyings and self.cfg.trade_options:
                 # app.py finalises the entry (async chain resolve + subscribe).

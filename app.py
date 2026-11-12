@@ -666,6 +666,7 @@ _algo: AlgoPaperTrader = AlgoPaperTrader(_paper, _ltp_cache, broadcast=_algo_bro
 # gates: LIVE_ORDERS_ENABLED=1 in the environment, and a per-day arming call
 # with the confirmation phrase. Starts disarmed on every restart.
 from live_orders import LiveOrderBridge, LiveConfig    # noqa: E402
+from paper_algo import is_option_leg                     # noqa: E402
 
 
 def _live_broadcast(msg: dict) -> None:
@@ -1027,7 +1028,9 @@ def _on_tick(tick: dict) -> None:
 
     # ── Feed the signal engine: aggregate to interval bars, detect on bar close ─
     # Read-only alerting path — runs in this SDK thread; never touches order APIs.
-    if _signal_engine is not None and _signal_agg is not None:
+    # Option legs subscribed for the options engine are priced here but never
+    # fed to the detectors: a signal on a contract would be traded as cash.
+    if _signal_engine is not None and _signal_agg is not None and not is_option_leg(cache_key):
         cum_vol = tick.get("ttq", tick.get("total_traded_volume"))
         try:
             cum_vol = float(cum_vol) if cum_vol is not None else None

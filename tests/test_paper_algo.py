@@ -107,6 +107,16 @@ class DecisionLogTests(unittest.TestCase):
         self.assertEqual((rec["decision"], rec["reason"]), ("SKIPPED", "index_no_cash"))
         self.assertEqual(len(algo._open), 0)
 
+    def test_option_leg_signal_never_trades_cash(self):
+        # 2026-11-12: subscribed option contracts reached the detectors and were
+        # bought/sold as cash stocks (BANKNIFTY_CE_61300 x146 short, -10.6k).
+        algo, _, ltp = make_algo(trade_intraday=True, trade_options=True)
+        ltp["BANKNIFTY_CE_61300_2026-11-23"] = 683.15
+        algo.on_signal(mk_signal(symbol="BANKNIFTY_CE_61300_2026-11-23", direction="SHORT"))
+        rec = self._last(algo)
+        self.assertEqual((rec["decision"], rec["reason"]), ("SKIPPED", "option_leg"))
+        self.assertEqual(len(algo._open), 0)
+
     def test_index_signal_options_off_skips(self):
         algo, _, ltp = make_algo(trade_options=False)   # options engine off
         ltp["NIFTY"] = 24000.0
