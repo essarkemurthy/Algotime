@@ -667,6 +667,13 @@ _algo: AlgoPaperTrader = AlgoPaperTrader(_paper, _ltp_cache, broadcast=_algo_bro
 # with the confirmation phrase. Starts disarmed on every restart.
 from live_orders import LiveOrderBridge, LiveConfig    # noqa: E402
 from paper_algo import is_option_leg                     # noqa: E402
+from feed_guard import TickGuard, is_derivative_tick, option_key_from_tick    # noqa: E402
+
+# Plausibility filter for index/equity ticks and the set of tokens whose ticks
+# are dropped on purpose (orphan option contracts still streaming after a
+# reconnect) — see feed_guard.py.
+_tick_guard = TickGuard(max_jump=0.15, confirm_after=5)
+_ignored_tokens: Set[str] = set()
 
 
 def _live_broadcast(msg: dict) -> None:
@@ -953,6 +960,19 @@ def _auto_learn_token(token: str, tick: dict) -> Optional[str]:
     tick_exchange = tick.get("exchange_code", "")
     tick_name     = tick.get("stock_name", "")
 
+    # 0. Option/future contracts are stamped with the UNDERLYING's display name
+    #    ("NIFTY 50"), so they must never be learned as the index itself — that
+    #    put an option premium into the NIFTY tile on 2026-11-19. Map the tick to
+    #    the app's option key when that contract is one we price; else drop it.
+    if is_derivative_tick(token, tick, index_names=_BREEZE_NAME_TO_LABEL):
+        label = _BREEZE_NAME_TO_LABEL.get(tick_name) or tick_stock or tick_name
+        for lbl, meta in _CHAIN_META.items():
+            if meta.get("code") == label:
+                label = lbl
+                break
+        key = option_key_from_tick(tick, label)
+        return key if key and key in _ltp_cache else None
+
     # 1. stock_code exact match (works for equities when Breeze populates it)
     if tick_stock:
         for w in WATCHLIST:
@@ -1002,16 +1022,26 @@ def _on_tick(tick: dict) -> None:
         _last_tick_sym[cache_key] = _last_tick_at
 
     if cache_key is None:
+        if token in _ignored_tokens:
+            return
         cache_key = _auto_learn_token(token, tick)
         if cache_key is not None:
             _token_to_symbol[token] = cache_key
             log.info("Auto-learned token: %s → %s (stock_code=%r stock_name=%r)",
                      token, cache_key, tick.get("stock_code", ""), tick.get("stock_name", ""))
         else:
-            log.info("Unknown tick: token=%s stock_name=%r ltp=%s",
-                     token, tick.get("stock_name", ""), ltp)
+            _ignored_tokens.add(token)        # log once, then drop silently
+            log.info("Unknown tick ignored from now on: token=%s stock_name=%r strike=%r right=%r expiry=%r ltp=%s",
+                     token, tick.get("stock_name", ""), tick.get("strike_price", ""),
+                     tick.get("right", ""), tick.get("expiry_date", ""), ltp)
             return
     ltp_f     = float(ltp)
+    if not is_option_leg(cache_key):
+        ok, note = _tick_guard.check(cache_key, ltp_f)
+        if note:
+            log.warning("Tick guard %s", note)
+        if not ok:
+            return
     _ltp_cache[cache_key] = ltp_f
 
     now = datetime.now()
