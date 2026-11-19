@@ -1012,7 +1012,16 @@
   // Now: remember the latest price per symbol, paint once per animation frame.
   let _pend = new Map(), _raf = 0;
   const _paintedOk = {};
+  // Client-side plausibility guard (see feed_guard.py): an index/equity price
+  // more than 20% off the previous close is a stray option premium, not painted.
+  function plausibleLtp(sym, ltp) {
+    if (sym.indexOf('_CE_') >= 0 || sym.indexOf('_PE_') >= 0) return true;
+    const pc = prevClose[sym];
+    if (!(pc > 0) || !(ltp > 0)) return ltp > 0;
+    return Math.abs(ltp / pc - 1) <= 0.20;
+  }
   function applySingle(sym, ltp) {
+    if (!plausibleLtp(sym, ltp)) return;
     _pend.set(sym, ltp);
     if (!_raf) _raf = requestAnimationFrame(_flushPend);
   }

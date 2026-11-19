@@ -1794,7 +1794,17 @@ setInterval(() => {
 let _ltpPending = new Map();
 let _ltpRaf = 0;
 const _ltpPainted = {};     // symbol -> true once a DOM element has shown it
+// Client-side plausibility guard (defence in depth for feed_guard.py on the
+// server): an index/equity price more than 20% away from the previous close is
+// a stray option premium (2026-11-19: NIFTY tile showed 160.95), never painted.
+function plausibleLtp(symbol, ltp) {
+  if (symbol.indexOf('_CE_') >= 0 || symbol.indexOf('_PE_') >= 0) return true;
+  const pc = prevCloseCache[symbol];
+  if (!(pc > 0) || !(ltp > 0)) return ltp > 0;
+  return Math.abs(ltp / pc - 1) <= 0.20;
+}
 function applyLtp(symbol, ltp, change, live) {
+  if (!plausibleLtp(symbol, ltp)) return;
   const prev = _ltpPending.get(symbol);
   _ltpPending.set(symbol, { ltp, change, live: !!live || !!(prev && prev.live) });
   if (!_ltpRaf) _ltpRaf = requestAnimationFrame(_flushLtp);
