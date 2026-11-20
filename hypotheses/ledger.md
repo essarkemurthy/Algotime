@@ -27,4 +27,15 @@ the final arbiter (gate 4).
 |---|---|---|---|---|---|
 | ORB-CPR NIFTY | ORB-CPR-15 (spec of 2026-11-12) | **FAIL**, frozen | nifty_1m 2022-01-03 .. 2026-11-11 (full sample: baseline, 81-cell grid, 16 walk-forward windows, 23 slices) | 1 (spec params; the grid was examined for robustness only) | reports/orb_cpr_nifty_verdict_2026-11-12.md |
 
+| NIFTY intraday long premium | LSTR-0920 (2026-11-20) | DRAFT, awaiting owner approval | none yet (NIFTY ATM weekly option 1m bars, earliest Breeze date .. 2026-11-19, reserved) | 0 | — |
+| NIFTY overnight short premium | SOVN-1520 (2026-11-20) | DRAFT, PARKED (margin, short-side engine) | none (shares the LSTR-0920 fetch) | 0 | — |
+
 No further ORB-CPR variant may be validated on 2022-2026 NIFTY data.
+
+## Evidence reviews
+
+- 2026-11-20 `evidence_options_2026-11-20.md`: SEBI FY25/FY26 loss studies, Bhat-Pandey-Rao (2024) and
+  Muravyev-Ni (2020) day/night option-return asymmetry, retail 920-straddle claims, expiry calendar and
+  Jan-2026 lot sizes. Conclusion: directional intraday option buying on an unvalidated signal (the
+  current engine) and intraday short premium are both ruled out; the two hypotheses above are what the
+  evidence leaves standing.
