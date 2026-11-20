@@ -158,7 +158,7 @@ class OptionRoutingTests(unittest.TestCase):
         self.assertEqual(len(algo._open), 1)
         pos = next(iter(algo._open.values()))
         self.assertEqual(pos.product, "options")
-        # lot 75, capital 100k, premium 100 → lots = 100000//(100*75)=13, qty=975
+        # lot 65, capital 100k, premium 100 → lots = 100000//(100*65)=15, qty=975
         self.assertEqual(pos.qty, 975)
         self.assertAlmostEqual(pos.sl, 70.0, places=2)   # 100 * (1-0.30)
         self.assertAlmostEqual(pos.tp, 150.0, places=2)  # 100 * (1+0.50)

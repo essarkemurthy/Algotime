@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Callable, Dict, List, Optional
 
+from paper_algo import OPTION_LOT_SIZE      # single source of truth for contract lot sizes
+
 log = logging.getLogger("live")
 
 CONFIRM_PHRASE = "I APPROVE LIVE ORDERS"
@@ -89,8 +91,7 @@ class LiveConfig:
     max_consec_losses: int = 2                # disarm after this many losing live exits in a row
     capital_override_inr: float = 0.0         # >0: never size against more than this much capital
     underlyings: frozenset = frozenset({"NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"})
-    lot_size: Dict[str, int] = field(default_factory=lambda: {
-        "NIFTY": 75, "BANKNIFTY": 35, "FINNIFTY": 65, "MIDCPNIFTY": 120, "SENSEX": 20})
+    lot_size: Dict[str, int] = field(default_factory=lambda: dict(OPTION_LOT_SIZE))
     fill_poll_sec: float = 1.0
     fill_poll_tries: int = 8
     funds_ttl_sec: float = 60.0

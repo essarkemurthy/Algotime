@@ -770,7 +770,7 @@ class AlgoStartReq(BaseModel):
     expiry_type: str   = "weekly"
     underlying:  str   = "NIFTY"
     num_lots:    int   = 1
-    lot_size:    int   = 75
+    lot_size:    int   = 65                 # NIFTY lot since the Jan-2026 series
     spread_width: int  = 100
     delta:       float = 0.25
     min_iv_rank: float = 40.0

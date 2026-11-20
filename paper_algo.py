@@ -31,7 +31,10 @@ INDEX_SYMBOLS = frozenset(OPTION_UNDERLYINGS | {
     "NIFTYINFRA", "NIFTYPSE", "INDIAVIX", "BANKEX",
 })
 # Contract lot sizes — one place to edit if the exchange revises them.
-OPTION_LOT_SIZE = {"NIFTY": 75, "BANKNIFTY": 35, "FINNIFTY": 65,
+# NSE revision effective the January 2026 series (weekly from the 06-Jan-2026
+# expiry): NIFTY 75→65, BANKNIFTY 35→30, FINNIFTY 65→60, MIDCPNIFTY 140→120.
+# BSE SENSEX stays 20. live_orders.LiveConfig reads this table.
+OPTION_LOT_SIZE = {"NIFTY": 65, "BANKNIFTY": 30, "FINNIFTY": 60,
                    "MIDCPNIFTY": 120, "SENSEX": 20}
 
 log = logging.getLogger(__name__)
