@@ -62,6 +62,10 @@ CHUNK_DAYS = {"1minute": 2, "5minute": 10, "30minute": 25, "1day": 365}
 # their last candle looks "current") so that a capped prior fill or a collector
 # that died mid-session gets its same-day hole refilled.  1d is skipped when current.
 RESWEEP_DAYS = {"1m": 9, "5m": 5, "30m": 5}
+# --delta: a pair counts as current when its last bar is within this much of the
+# newest bar held for that interval (1d compares calendar days via the 20 h cutoff).
+FRONTIER_TOL = {"1m": timedelta(minutes=5), "5m": timedelta(minutes=10),
+                "30m": timedelta(minutes=30), "1d": timedelta(hours=20)}
 # Symbols that Breeze's historical endpoint can no longer serve (dead / renamed /
 # live-feed-only index).  Forward-filling them only burns calls.
 SKIP_SYMBOLS = {"NIFTYJR", "ZOMATO", "NIFTYMIDSELECT", "INDIAVIX"}
@@ -333,7 +337,12 @@ def main():
         iv_api = IV_API.get(iv_db)
         if args.delta and last_ts and frontier_current.get(iv_db):
             fr = max(t for s, i, t in cov if i == iv_db and t)
-            if last_ts.date() >= fr.date():
+            # On the frontier = within a short tolerance of the newest bar any
+            # symbol holds (an illiquid name may lack a few traded minutes).  A
+            # date-level test hid intraday lag: one symbol at 10:40 made every
+            # symbol stuck at 10:05 look current for the rest of the session.
+            tol = FRONTIER_TOL.get(iv_db, timedelta(0))
+            if last_ts >= fr - tol:
                 skipped += 1
                 continue
         if iv_api is None or symbol in SKIP_SYMBOLS:
@@ -344,9 +353,12 @@ def main():
             continue
         # Intraday intervals are always re-swept over a bounded trailing window
         # (RESWEEP_DAYS) so a capped prior fill or a collector that died
-        # mid-session gets refilled; 1d is skipped when current.
+        # mid-session gets refilled; 1d is skipped when current.  Only 1d uses
+        # the 20-hour "current" cutoff: under --delta the floor is empty, and an
+        # intraday pair whose last bar is from today is exactly the one that
+        # must advance (the frontier probe above already said new bars exist).
         resweep = RESWEEP_DAYS.get(iv_db)
-        if resweep is None and last_ts and last_ts >= up_to_date_cutoff:
+        if iv_db == "1d" and last_ts and last_ts >= up_to_date_cutoff:
             skipped += 1
             continue
         bcode, exch = _code(symbol)
@@ -410,7 +422,7 @@ def main():
                 f_skipped += 1
                 continue
             resweep = RESWEEP_DAYS.get(iv_db)
-            if resweep is None and last_ts and last_ts >= up_to_date_cutoff:
+            if iv_db == "1d" and last_ts and last_ts >= up_to_date_cutoff:
                 f_skipped += 1
                 continue
             bcode, _exch = _code(symbol)
