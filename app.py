@@ -667,6 +667,7 @@ _algo: AlgoPaperTrader = AlgoPaperTrader(_paper, _ltp_cache, broadcast=_algo_bro
 # with the confirmation phrase. Starts disarmed on every restart.
 from live_orders import LiveOrderBridge, LiveConfig    # noqa: E402
 from paper_algo import is_option_leg                     # noqa: E402
+import chat_agent                                        # noqa: E402
 from feed_guard import TickGuard, is_derivative_tick, option_key_from_tick    # noqa: E402
 
 # Plausibility filter for index/equity ticks and the set of tokens whose ticks
@@ -2406,6 +2407,73 @@ _LIVE_FLATTEN_AT = dt_time(15, 20)
 @app.get("/api/live")
 async def live_state():
     return _live.state()
+
+
+# ── Desk chatbot: "what is my position right now?" ───────────────────────────
+# Read-only. The browser keeps the conversation; every request carries the
+# question plus a fresh snapshot of the app's state (chat_agent.build_snapshot).
+_chat_client = None
+
+
+def _chat_client_get():
+    global _chat_client
+    if _chat_client is None:
+        _chat_client = chat_agent.make_client()
+    return _chat_client
+
+
+class ChatReq(BaseModel):
+    question: str
+    history: List[dict] = []
+
+
+async def _chat_snapshot() -> dict:
+    status = await get_status()
+    ltp = dict(_ltp_cache)
+    prev_close = {s: d.get("prev_close") for s, d in _day_stats.items() if d.get("prev_close")}
+    trades_today: list = []
+    alltime = None
+    if _db_store is not None:
+        try:
+            today = date.today()
+            trades_today = await asyncio.to_thread(_db_store.get_paper_trades, today, today)
+            all_rows = await asyncio.to_thread(_db_store.get_paper_trades, None, None)
+            alltime = chat_agent.alltime_totals(all_rows)
+        except Exception as exc:
+            log.warning("chat snapshot: paper journal unavailable: %s", exc)
+    return chat_agent.build_snapshot(
+        status=status, funds=_account.get("funds"), ltp=ltp, prev_close=prev_close,
+        algo=_algo.snapshot(), paper_summary=_paper.summary(ltp),
+        manual_positions=_compute_pnl(), live=_live.state(),
+        trades_today=trades_today, alltime=alltime)
+
+
+@app.get("/api/chat/status")
+async def chat_status():
+    return {"available": chat_agent.api_key_present(), "model": chat_agent.MODEL}
+
+
+@app.post("/api/chat")
+async def chat_ask(req: ChatReq):
+    client = _chat_client_get()
+    if client is None:
+        raise HTTPException(503, "Chat is not configured: put ANTHROPIC_API_KEY in .env and "
+                                 "restart the app.")
+    snapshot = await _chat_snapshot()
+    try:
+        return await asyncio.to_thread(chat_agent.ask, client, req.history, req.question, snapshot)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        import anthropic
+        if isinstance(exc, anthropic.AuthenticationError):
+            raise HTTPException(503, "ANTHROPIC_API_KEY was rejected by the Claude API.")
+        if isinstance(exc, anthropic.RateLimitError):
+            raise HTTPException(429, "Claude API rate limit; try again in a minute.")
+        if isinstance(exc, anthropic.APIConnectionError):
+            raise HTTPException(502, "Could not reach the Claude API.")
+        log.warning("chat failed: %s", exc)
+        raise HTTPException(502, f"chat failed: {type(exc).__name__}: {str(exc)[:200]}")
 
 
 @app.post("/api/live/arm")
