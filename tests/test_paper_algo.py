@@ -278,5 +278,28 @@ class PeriodRangeTests(unittest.TestCase):
         self.assertEqual((f, t), (date(2026, 1, 1), date(2026, 6, 30)))
 
 
+class UnderlyingRestrictionTests(unittest.TestCase):
+    """2026-11-26: operator restricted the options engine to NIFTY only."""
+
+    def test_unselected_index_is_skipped_not_traded(self):
+        algo, _, ltp = make_algo(trade_options=True, option_underlyings=frozenset({"NIFTY"}))
+        ltp["BANKNIFTY"] = 58000.0
+        sig = mk_signal(symbol="BANKNIFTY", direction=LONG)
+        self.assertFalse(algo.wants_option(sig))
+        algo.on_signal(sig)
+        rec = algo._signals[0]
+        self.assertEqual((rec["decision"], rec["reason"]), ("SKIPPED", "underlying_not_selected"))
+        self.assertEqual(len(algo._open), 0)
+
+    def test_selected_index_still_routes(self):
+        algo, _, ltp = make_algo(trade_options=True, option_underlyings=frozenset({"NIFTY"}))
+        ltp["NIFTY"] = 25500.0
+        sig = mk_signal(symbol="NIFTY", direction=LONG)
+        self.assertTrue(algo.wants_option(sig))
+        algo.on_signal(sig)
+        self.assertEqual(algo._signals[0]["reason"], "routed_option")
+        self.assertEqual(algo.snapshot()["config"]["option_underlyings"], ["NIFTY"])
+
+
 if __name__ == "__main__":
     unittest.main()

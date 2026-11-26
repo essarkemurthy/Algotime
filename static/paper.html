@@ -1076,7 +1076,7 @@
           </label>
           <button class="btn btn-sm" id="live-real-btn" type="button" style="display:none;" title="Switch from dry-run to real money">Go real</button>
           <button class="btn btn-sm" id="live-kill-btn" type="button" style="display:none;color:var(--tu-danger);" title="Sell every live position at market and disarm">Kill</button>
-          <label class="launch-toggle" title="Launch options auto-trading — index signals (NIFTY, BANKNIFTY, SENSEX, FINNIFTY, MIDCPNIFTY) buy the ATM CE/PE with premium-based SL/TP.">
+          <label class="launch-toggle" title="Launch options auto-trading — signals on the selected index underlyings buy the ATM CE/PE with premium-based SL/TP.">
             <span class="launch-label">Options algo</span>
             <span class="switch"><input type="checkbox" id="algo-opt-toggle"><span class="slider"></span></span>
             <span class="launch-state" id="algo-opt-state">Off</span>
@@ -1084,6 +1084,9 @@
         </div>
       </div>
       <div class="meta" id="live-status" style="padding:4px 0 8px;color:var(--fg-3);">Live orders: off</div>
+      <div class="meta" id="algo-underlyings" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 0 8px;color:var(--fg-3);" title="Index underlyings the options engine may trade. Signals on an unselected index are skipped.">
+        <span>Options underlyings:</span><span id="algo-underlying-chips" style="display:inline-flex;gap:6px;flex-wrap:wrap;"></span>
+      </div>
       <div style="overflow:auto;">
         <table class="table" id="algo-pos-table">
           <thead><tr><th>Strategy</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Entry</th><th class="right">LTP</th><th class="right">SL</th><th class="right">TP</th><th class="right">uP&amp;L</th><th>Since</th></tr></thead>
@@ -2288,6 +2291,7 @@ function renderAlgo(snap) {
   if (snap.config) {
     syncLaunch('algo-intraday-toggle', !!snap.config.trade_intraday);
     syncLaunch('algo-opt-toggle', !!snap.config.trade_options);
+    renderUnderlyings(snap.config.option_underlyings);
   }
   // Reload the (DB-backed) period report only when a fill or signal decision
   // actually changed. It used to reload on every 2 s snapshot: a ~4 MB fetch
@@ -2583,6 +2587,27 @@ function syncLaunch(inputId, on) {
     const st = wrap.querySelector('.launch-state');
     if (st) st.textContent = on ? 'On' : 'Off';
   }
+}
+
+const OPTION_UNDERLYINGS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX'];
+let algoUnderlyings = null;
+// Chips for the indices the options engine may trade; click toggles, at least one stays on.
+function renderUnderlyings(list) {
+  const host = document.getElementById('algo-underlying-chips');
+  if (!host || !Array.isArray(list)) return;
+  algoUnderlyings = list.slice();
+  host.innerHTML = '';
+  OPTION_UNDERLYINGS.forEach(sym => {
+    const on = algoUnderlyings.includes(sym);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip' + (on ? ' on' : ''); b.textContent = sym;
+    b.addEventListener('click', () => {
+      const next = on ? algoUnderlyings.filter(s => s !== sym) : algoUnderlyings.concat([sym]);
+      if (!next.length) return;                       // the engine needs at least one underlying
+      setAlgoConfig({ option_underlyings: next });
+    });
+    host.appendChild(b);
+  });
 }
 
 function setAlgoConfig(patch) {

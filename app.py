@@ -61,7 +61,7 @@ from trade_engine.symbols import (SymbolBuilder, expiry_candidates_after,
 
 from suggestions import SuggestionEngine
 from paper_engine import PaperTrader
-from paper_algo import AlgoPaperTrader, ALL_STRATEGIES
+from paper_algo import AlgoPaperTrader, ALL_STRATEGIES, OPTION_UNDERLYINGS
 from report_periods import period_range
 
 from signals import SignalConfig, SignalEngine, BarAggregator
@@ -465,6 +465,7 @@ def _save_algo_state() -> None:
         _ALGO_STATE_FILE.write_text(json.dumps({
             "trade_intraday": bool(_algo.cfg.trade_intraday),
             "trade_options":  bool(_algo.cfg.trade_options),
+            "option_underlyings": sorted(_algo.cfg.option_underlyings),
             "enabled":        sorted(_algo.enabled),
         }, indent=2))
     except Exception as exc:
@@ -480,9 +481,14 @@ def _load_algo_state() -> None:
         _algo.cfg.trade_options  = bool(st.get("trade_options", False))
         if isinstance(st.get("enabled"), list):
             _algo.enabled = {s for s in st["enabled"] if s in ALL_STRATEGIES}
-        log.info("Algo state restored: intraday=%s options=%s enabled=%s",
+        if isinstance(st.get("option_underlyings"), list):
+            kept = {u for u in st["option_underlyings"] if u in OPTION_UNDERLYINGS}
+            if kept:
+                _algo.cfg.option_underlyings = frozenset(kept)
+        log.info("Algo state restored: intraday=%s options=%s enabled=%s underlyings=%s",
                  _algo.cfg.trade_intraday, _algo.cfg.trade_options,
-                 ",".join(sorted(_algo.enabled)) or "-")
+                 ",".join(sorted(_algo.enabled)) or "-",
+                 ",".join(sorted(_algo.cfg.option_underlyings)))
     except Exception as exc:
         log.warning("Could not load algo state: %s", exc)
 
@@ -3412,6 +3418,9 @@ async def algo_paper_squareoff():
 class AlgoConfigReq(BaseModel):
     trade_intraday: Optional[bool] = None
     trade_options:  Optional[bool] = None
+    # Which index underlyings the options engine may trade (subset of
+    # paper_algo.OPTION_UNDERLYINGS). Signals on any other index are skipped.
+    option_underlyings: Optional[List[str]] = None
 
 
 @app.post("/api/algo/paper/config")
@@ -3426,6 +3435,14 @@ async def algo_paper_config(req: AlgoConfigReq):
         _algo.cfg.trade_options = bool(req.trade_options)
         log.info("Algo options engine %s",
                  "LAUNCHED" if _algo.cfg.trade_options else "stopped")
+    if req.option_underlyings is not None:
+        wanted = {str(u).strip().upper() for u in req.option_underlyings if str(u).strip()}
+        bad = wanted - set(OPTION_UNDERLYINGS)
+        if not wanted or bad:
+            raise HTTPException(400, "option_underlyings must be a non-empty subset of "
+                                     f"{sorted(OPTION_UNDERLYINGS)}; got {sorted(bad) or 'nothing'}")
+        _algo.cfg.option_underlyings = frozenset(wanted)
+        log.info("Algo options engine underlyings: %s", ",".join(sorted(wanted)))
     _save_algo_state()
     snap = _algo.snapshot()
     await broadcast({"type": "algo_update", "data": snap})

@@ -280,6 +280,9 @@ class AlgoPaperTrader:
                 self._log_decision(sig, base, "PENDING", "routed_option", product="options")
             elif sig.symbol in self.cfg.option_underlyings:
                 self._log_decision(sig, base, "SKIPPED", "options_algo_off", product="options")
+            elif sig.symbol in OPTION_UNDERLYINGS:
+                # Optionable, but the operator restricted the engine to other indices.
+                self._log_decision(sig, base, "SKIPPED", "underlying_not_selected", product="options")
             else:
                 self._log_decision(sig, base, "SKIPPED", "index_no_cash", product="index")
             return
@@ -573,7 +576,8 @@ class AlgoPaperTrader:
                            "trade_intraday": self.cfg.trade_intraday,
                            "trade_options": self.cfg.trade_options,
                            "option_sl_pct": self.cfg.option_sl_pct,
-                           "option_tp_pct": self.cfg.option_tp_pct},
+                           "option_tp_pct": self.cfg.option_tp_pct,
+                           "option_underlyings": sorted(self.cfg.option_underlyings)},
                 "strategies": list(per.values()),
                 "open_positions": open_list,
                 "closed_trades": self._closed[-100:],
