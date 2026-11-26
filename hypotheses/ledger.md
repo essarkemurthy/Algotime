@@ -30,6 +30,7 @@ the final arbiter (gate 4).
 | NIFTY intraday long premium | LSTR-0920 (2026-11-20) | DRAFT, awaiting owner approval | none yet (NIFTY ATM weekly option 1m bars, earliest Breeze date .. 2026-11-19, reserved) | 0 | — |
 | NIFTY overnight short premium | SOVN-1520 (2026-11-20) | DRAFT, PARKED (margin, short-side engine) | none (shares the LSTR-0920 fetch) | 0 | — |
 | NIFTY intraday level system (pivots, CPR, Camarilla) | PCL-15 (owner spec of 2026-11-26) | DRAFT, awaiting owner approval | none yet (nifty_1m 2015-01-05 .. 2021-12-31 reserved as the fresh test set; 2022-2026 confirmation-only because it shares the ORB-CPR gap/OR filters) | 0 | — |
+| NIFTY opening-range breakout (variant 2) | ORBX-15 (2026-11-26): ORB + ADX ≥ 20 + RSI side, same exits as ORB-CPR-15 | DRAFT, awaiting owner approval; bar raised to CI lower bound > 0.02 R | none yet (nifty_1m 2015-01-05 .. 2021-12-31 reserved, shared fetch with PCL-15; 2022-2026 confirmation-only) | 0 (family total 1) | — |
 
 No further ORB-CPR variant may be validated on 2022-2026 NIFTY data.
 
