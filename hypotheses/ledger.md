@@ -29,10 +29,12 @@ the final arbiter (gate 4).
 
 | NIFTY intraday long premium | LSTR-0920 (2026-11-20) | DRAFT, awaiting owner approval | none yet (NIFTY ATM weekly option 1m bars, earliest Breeze date .. 2026-11-19, reserved) | 0 | — |
 | NIFTY overnight short premium | SOVN-1520 (2026-11-20) | DRAFT, PARKED (margin, short-side engine) | none (shares the LSTR-0920 fetch) | 0 | — |
-| NIFTY intraday level system (pivots, CPR, Camarilla) | PCL-15 (owner spec of 2026-11-26) | APPROVED 2026-11-26, running | none yet (nifty_1m 2015-01-05 .. 2021-12-31 reserved as the fresh test set; 2022-2026 confirmation-only because it shares the ORB-CPR gap/OR filters) | 0 | — |
-| NIFTY opening-range breakout (variant 2) | ORBX-15 (2026-11-26): ORB + ADX ≥ 20 + RSI side, same exits as ORB-CPR-15 | APPROVED 2026-11-26, running; bar raised to CI lower bound > 0.02 R | none yet (nifty_1m 2015-01-05 .. 2021-12-31 reserved, shared fetch with PCL-15; 2022-2026 confirmation-only) | 0 (family total 1) | — |
+| NIFTY intraday level system (pivots, CPR, Camarilla) | PCL-15 (owner spec of 2026-11-26) | **FAIL**, frozen (2026-11-26) | nifty_1m 2015-01-01 .. 2021-12-31 (gates) + 2022-01-03 .. 2026-11-25 (confirmation) | 1 | reports/pcl_nifty_verdict_2026-11-26.md |
+| NIFTY opening-range breakout (variant 2) | ORBX-15 (2026-11-26): ORB + ADX ≥ 20 + RSI side, same exits as ORB-CPR-15 | **FAIL**, frozen (2026-11-26); bar was CI lower bound > 0.02 R | nifty_1m 2015-01-01 .. 2021-12-31 (gates) + 2022-01-03 .. 2026-11-25 (confirmation) | 1 (family total 2) | reports/orbx_nifty_verdict_2026-11-26.md |
 
-No further ORB-CPR variant may be validated on 2022-2026 NIFTY data.
+No further ORB-CPR variant may be validated on 2022-2026 NIFTY data. After 2026-11-26, NIFTY 1-minute data
+2015-2026 is consumed for the opening-range-breakout family (ORB-CPR-15, ORBX-15) and the pivot/Camarilla
+level family (PCL-15): no breakout-filter, level-set, ADX/RSI or exit variant may be validated on it.
 
 ## Evidence reviews
 

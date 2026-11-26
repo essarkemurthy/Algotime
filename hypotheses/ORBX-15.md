@@ -1,6 +1,7 @@
 # Hypothesis ORBX-15 — NIFTY 15-minute opening-range breakout confirmed by ADX and RSI
 
-Status: APPROVED 2026-11-26 — data fetch and build in progress; verdict pending
+Status: **FAIL** (2026-11-26, commit 2d71f38) — all three backtest gates failed on the fresh 2015-2021
+set and again on the 2022-2026 confirmation set. Family frozen at variants = 2. See "Verdict" below.
 
 Family: NIFTY opening-range breakout. Variants tried in family: 1 (ORB-CPR-15, FAIL, 2022-2026).
 So the ledger's rising bar applies: OOS CI lower bound must exceed 0 + 0.02 R × 1 = **0.02 R**.
@@ -91,3 +92,27 @@ terciles; gap sign vs side; day-of-week; expiry day; first-hour vs later signal.
 
 ## Approval
 - Owner: [x] approved on 2026-11-26 (owner's "yes go ahead" in chat; ticked by the agent on that instruction)
+
+## Verdict (2026-11-26, `python -m strategies.backtest orbx_nifty --from 2015-01-01 --to 2021-12-31 --gates`)
+Data: `nifty_1m` 2015-01-01 .. 2021-12-31 fetched 2026-11-26 (1,701 of 1,734 NSE sessions; 33 sessions
+Breeze does not serve, mostly 2016-2017, listed in `reports/nifty_1m_coverage_2015_2021.md`; 5 special
+sessions dropped). 1,690 valid sessions, 1,676 with features.
+
+| set | n | avg R net 3 pts | win % | max DD R | PF |
+|---|---|---|---|---|---|
+| full sample, fixed params | 1186 | -0.037 | 41.7% | 59.5 | 0.93 |
+| walk-forward OOS (gate 1) | 877 | **-0.044**, CI95 [-0.112, 0.024] | 41.6% | 56.1 | 0.91 |
+| confirmation 2022-2026 OOS | 588 | -0.018, CI95 [-0.100, 0.065] | — | 23.9 | — |
+
+- Gate 1 FAIL (needs avg R >= 0.10 and CI low > 0.02). Gate 2 FAIL: 0 of 8 grid cells positive, avg R at
+  6 pts -0.123. Gate 3 FAIL: max drawdown 56 R.
+- Gross of costs the breakout earns +0.056 R per trade; 3 points of cost per trade removes it entirely.
+  ADX >= 20 and RSI side removed 301 of 1,487 breakout days and did not change the sign.
+- Every year 2015-2021 is negative or flat net of costs; exits: stop 507 (avg -1.10 R), target 328
+  (+1.40 R), time 249 (+0.25 R). No slice significant after Holm (0 of 30). No regime change supported.
+- Walk-forward parameter selection added nothing (difference CI includes zero).
+- Confirmation on 2022-2026 (ORB-CPR's consumed data, reported only): also negative, 2 of 8 cells positive.
+
+Consequence: NIFTY opening-range breakout family is frozen at variants = 2; 2015-2026 NIFTY 1-minute data
+is consumed for this family. ADX/RSI confirmation is not the missing ingredient. Reports:
+`reports/orbx_nifty_report.md`, `reports/orbx_nifty_verdict_2026-11-26.md`, `reports/orbx_nifty_confirm_*`.

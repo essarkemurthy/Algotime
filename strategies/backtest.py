@@ -390,9 +390,9 @@ def main() -> int:
         say("## Go-live gates")
         say("| gate | result | detail |\n|---|---|---|")
         gres = gates(oos_trades, grid_results, wf_rows)
-        for name, ok, detail in gres:
+        for gname, ok, detail in gres:
             res = "PENDING" if ok is None else ("PASS" if ok else "FAIL")
-            say(f"| {name} | **{res}** | {detail} |")
+            say(f"| {gname} | **{res}** | {detail} |")
         verdict = "FAIL" if any(ok is False for _, ok, _ in gres) else "PASS (gates 1-3)"
         say("")
         say(f"## Verdict: **{verdict}**")

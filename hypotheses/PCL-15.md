@@ -1,6 +1,7 @@
 # Hypothesis PCL-15 — NIFTY intraday pivot / Camarilla level signals (15-minute)
 
-Status: APPROVED 2026-11-26 — data fetch and build in progress; verdict pending
+Status: **FAIL** (2026-11-26, commit 2d71f38) — all three backtest gates failed on the fresh 2015-2021
+set and again on the 2022-2026 confirmation set. Family frozen at variants = 1. See "Verdict" below.
 
 Family: NIFTY intraday level system (floor pivots + CPR + Camarilla). Variants tried in family: 0.
 Source: owner-supplied spec "Intraday Nifty Level Signals" (pasted 2026-11-26). This file pins down
@@ -145,3 +146,27 @@ scope: level-based stops and targets in index points do not map onto an option's
 
 ## Approval
 - Owner: [x] approved on 2026-11-26 (owner's "yes go ahead" in chat; ticked by the agent on that instruction)
+
+## Verdict (2026-11-26, `python -m strategies.backtest pcl_nifty --from 2015-01-01 --to 2021-12-31 --gates`)
+Data: `nifty_1m` 2015-01-01 .. 2021-12-31 fetched 2026-11-26 (1,701 of 1,734 NSE sessions; 33 sessions
+Breeze does not serve, listed in `reports/nifty_1m_coverage_2015_2021.md`). 1,692 valid sessions (15-minute
+bars), 1,678 with features.
+
+| set | n | avg R net 3 pts | win % | max DD R | PF |
+|---|---|---|---|---|---|
+| full sample, fixed params | 419 | -0.105 | 41.5% | 57.8 | 0.78 |
+| walk-forward OOS (gate 1) | 311 | **-0.087**, CI95 [-0.202, 0.034] | 43.1% | 30.7 | 0.81 |
+| confirmation 2022-2026 OOS | 235 | +0.037, CI95 [-0.089, 0.180] | 48.9% | 16.8 | 1.09 |
+
+- Gate 1 FAIL (avg R <= 0, CI includes zero). Gate 2 FAIL: 0 of 36 grid cells positive, avg R at 6 pts
+  -0.204. Gate 3 FAIL: max drawdown 31 R.
+- Funnel: of 1,678 evaluable sessions, 767 produced no qualifying signal, 775 signals were skipped for
+  reward:risk below 2:1 and 603 for no second target, leaving 419 trades on 1,692 days. 92% of trades were
+  trend-day breaks (384 vs 35 range-day fades); both are negative net of costs.
+- Exits: stop/stop 154 (avg -1.13 R), T1/trail 127 (+0.17 R), T1/time 68 (+0.76 R), time/time 41
+  (+0.16 R). Only 2015 was positive. No slice significant after Holm (0 of 31). No regime change.
+- Confirmation on 2022-2026: slightly positive at 3 points, negative at 6 points, 16 of 36 cells positive;
+  not a pass and not gating.
+
+Consequence: family frozen at variants = 1; 2015-2026 NIFTY 1-minute data consumed for this family.
+Reports: `reports/pcl_nifty_report.md`, `reports/pcl_nifty_verdict_2026-11-26.md`, `reports/pcl_nifty_confirm_*`.
