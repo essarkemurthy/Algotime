@@ -25,6 +25,14 @@ from strategies import orb_cpr_nifty as S
 ALPHA = 0.05
 
 
+def use(module) -> None:
+    """Point the analyses at another pure strategy module (same protocol as
+    orb_cpr_nifty: Params, run, r_series, summarize, Trade.r_net; optional
+    slice_dims(trades) and funnel(...) hooks)."""
+    global S
+    S = module
+
+
 # ── multiplicity ──────────────────────────────────────────────────────────────
 
 def holm(pvals: Sequence[float]) -> List[float]:
@@ -49,6 +57,13 @@ def welch_p(a: Sequence[float], b: Sequence[float]) -> float:
 def build_slices(trades: Sequence[S.Trade]) -> "OrderedDict[str, Dict[str, List[int]]]":
     """{dimension: {label: [trade indexes]}} for every slice we look at."""
     out: "OrderedDict[str, Dict[str, List[int]]]" = OrderedDict()
+    if hasattr(S, "slice_dims"):                     # module-declared, pre-registered slices
+        for dim, labels in S.slice_dims(trades).items():
+            d: Dict[str, List[int]] = {}
+            for i, lab in enumerate(labels):
+                d.setdefault(str(lab), []).append(i)
+            out[dim] = dict(sorted(d.items()))
+        return out
 
     def add(dim: str, key_fn):
         d: Dict[str, List[int]] = {}
@@ -198,6 +213,8 @@ def day_flags(bars: Sequence[S.Bar], f: S.DayFeatures, p: S.Params) -> Dict[str,
 def funnel(df_1m, sessions: Dict[date, List[S.Bar]], feats: Dict[date, S.DayFeatures],
            params: S.Params, trades: Sequence[S.Trade]) -> dict:
     """Session funnel from raw 1-minute data down to trades, plus sanity checks."""
+    if hasattr(S, "funnel"):
+        return S.funnel(df_1m, sessions, feats, params, trades)
     import pandas as pd
     ts = pd.to_datetime(df_1m["ts"])
     if getattr(ts.dt, "tz", None) is not None:

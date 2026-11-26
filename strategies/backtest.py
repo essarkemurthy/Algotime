@@ -44,18 +44,20 @@ from dotenv import load_dotenv                       # noqa: E402
 load_dotenv(ROOT / ".env")
 
 from strategies import analysis as A                 # noqa: E402
-from strategies import orb_cpr_nifty as S            # noqa: E402
+from strategies import orb_cpr_nifty as S            # noqa: E402  (default; replaced per `name`)
 
 REPORT_DIR = ROOT / "reports"
 COSTS = (0.0, 3.0, 6.0, 10.0)
 BASE_COST = 3.0
 ROBUST_COST = 6.0
-GRID = {                                              # 81 cells
+GRID = {                                              # 81 cells (orb_cpr_nifty; other modules set S.GRID)
     "or_min_atr": (0.15, 0.20, 0.25),
     "or_max_atr": (0.50, 0.60, 0.70),
     "target_r": (1.0, 1.5, 2.0),
     "cpr_max_pct": (0.4, 0.6, 0.8),
 }
+CI_LOWER_FLOOR = 0.0                                  # ledger rising bar; modules set S.CI_LOWER_FLOOR
+STRATEGIES = ("orb_cpr_nifty", "orbx_nifty", "pcl_nifty")
 WF_IS_MONTHS = 12
 WF_OOS_MONTHS = 3
 WF_MIN_IS_TRADES = 20
@@ -77,7 +79,10 @@ def load_sessions(d0: date, d1: date, params: S.Params):
                      "WHERE ts >= %s AND ts < %s + INTERVAL '1 day' ORDER BY ts",
                      conn, params=(d0, d1))
     conn.close()
-    sessions = S.split_sessions(S.resample_5m(df, params), params)
+    if hasattr(S, "prepare"):
+        sessions = S.prepare(df, params)
+    else:
+        sessions = S.split_sessions(S.resample_5m(df, params), params)
     return df, sessions
 
 
@@ -179,11 +184,11 @@ def gates(oos_trades, grid_results, wf_rows) -> List[Tuple[str, Optional[bool], 
     share = pos / len(grid_results) if grid_results else 0.0
     distinct = len({r["params"] for r in wf_rows})
     dd_inr = s3["max_dd_r"] * RUPEES_PER_R
-    g1 = s3["n"] >= GATE_MIN_OOS and s3["avg_r"] >= GATE_MIN_AVG_R and lo > 0
+    g1 = s3["n"] >= GATE_MIN_OOS and s3["avg_r"] >= GATE_MIN_AVG_R and lo > CI_LOWER_FLOOR
     g2 = (s6["n"] > 0 and s6["avg_r"] > 0) and share >= GATE_GRID_POSITIVE
     g3 = s3["max_dd_r"] <= GATE_MAX_DD_R
     return [
-        ("1 walk-forward OOS net 3 pts: n>=100, avg R>=0.10, CI low>0", g1,
+        (f"1 walk-forward OOS net 3 pts: n>=100, avg R>=0.10, CI low>{CI_LOWER_FLOOR:g}", g1,
          f"n={s3['n']} avgR={fmt(s3['avg_r'], 3)} CI95=[{fmt(lo, 3)}, {fmt(hi, 3)}]"),
         ("2 robustness: avg R>0 at 6 pts; >=60% grid cells positive; stable params", g2,
          f"avgR@6pts={fmt(s6['avg_r'], 3)} grid positive={pos}/{len(grid_results)} ({share:.0%}) "
@@ -200,6 +205,8 @@ def gates(oos_trades, grid_results, wf_rows) -> List[Tuple[str, Optional[bool], 
 # ── Report ────────────────────────────────────────────────────────────────────
 
 def trades_frame(trades: Sequence[S.Trade]) -> pd.DataFrame:
+    if hasattr(S, "trade_row"):
+        return pd.DataFrame([S.trade_row(t) for t in trades])
     rows = []
     for t in trades:
         rows.append({"trade_date": t.trade_date, "direction": t.direction, "signal_ts": t.signal_ts,
@@ -212,7 +219,8 @@ def trades_frame(trades: Sequence[S.Trade]) -> pd.DataFrame:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("name", choices=["orb_cpr_nifty"])
+    ap.add_argument("name", choices=list(STRATEGIES))
+    ap.add_argument("--tag", default="", help="suffix for report file names (e.g. _confirm)")
     ap.add_argument("--from", dest="d0", default="2022-01-01")
     ap.add_argument("--to", dest="d1", default=date.today().isoformat())
     ap.add_argument("--gates", action="store_true")
@@ -221,6 +229,14 @@ def main() -> int:
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):          # Windows console defaults to cp1252
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    global S, GRID, CI_LOWER_FLOOR
+    if args.name != "orb_cpr_nifty":
+        import importlib
+        S = importlib.import_module(f"strategies.{args.name}")
+    A.use(S)
+    GRID = getattr(S, "GRID", GRID)
+    CI_LOWER_FLOOR = float(getattr(S, "CI_LOWER_FLOOR", 0.0))
+    name = args.name + args.tag
     d0, d1 = date.fromisoformat(args.d0), date.fromisoformat(args.d1)
     t0 = _time.time()
     base = S.Params()
@@ -230,8 +246,10 @@ def main() -> int:
     df, sessions = load_sessions(d0, d1, base)
     feats = S.daily_features(sessions, base)
     days = sorted(sessions)
-    say(f"# {args.name} backtest  {d0} -> {d1}  (generated {datetime.now():%Y-%m-%d %H:%M} IST, "
+    say(f"# {name} backtest  {d0} -> {d1}  (generated {datetime.now():%Y-%m-%d %H:%M} IST, "
         f"commit {git_rev()})")
+    if CI_LOWER_FLOOR:
+        say(f"- ledger rising bar: OOS CI lower bound must exceed {CI_LOWER_FLOOR:g} R")
     say("")
     say(f"- 1-minute rows: {len(df):,}; valid sessions (>= {base.min_session_bars} five-minute bars, "
         f"weekdays): {len(sessions)} ({days[0]} .. {days[-1]}); sessions with features: {len(feats)}")
@@ -384,21 +402,21 @@ def main() -> int:
                 f"{'yes' if lfl['selection_added'] else 'no'}")
         say(f"- slices significant after multiplicity: {len(flagged)} of {n_slices}")
         say(f"- regime change supported: {'not ruled out' if rg['outside'] else 'no'}")
-        say("- data 2022-01 .. 2026-11 is CONSUMED for this strategy family (see hypotheses/ledger.md)")
+        say(f"- data {d0} .. {d1} is CONSUMED for this strategy family (see hypotheses/ledger.md)")
         say("")
 
     # files
     REPORT_DIR.mkdir(exist_ok=True)
-    trades_frame(trades).to_csv(REPORT_DIR / f"{args.name}_trades.csv", index=False)
-    trades_frame(oos_trades).to_csv(REPORT_DIR / f"{args.name}_oos_trades.csv", index=False)
-    say(f"- wrote reports/{args.name}_trades.csv ({len(trades)} rows), "
-        f"reports/{args.name}_oos_trades.csv ({len(oos_trades)} rows); elapsed {_time.time() - t0:.0f}s")
-    (REPORT_DIR / f"{args.name}_report.md").write_text("\n".join(out) + "\n", encoding="utf-8")
-    print(f"report: reports/{args.name}_report.md")
+    trades_frame(trades).to_csv(REPORT_DIR / f"{name}_trades.csv", index=False)
+    trades_frame(oos_trades).to_csv(REPORT_DIR / f"{name}_oos_trades.csv", index=False)
+    say(f"- wrote reports/{name}_trades.csv ({len(trades)} rows), "
+        f"reports/{name}_oos_trades.csv ({len(oos_trades)} rows); elapsed {_time.time() - t0:.0f}s")
+    (REPORT_DIR / f"{name}_report.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"report: reports/{name}_report.md")
     if verdict is not None:
-        vfile = REPORT_DIR / f"{args.name}_verdict_{date.today().isoformat()}.md"
+        vfile = REPORT_DIR / f"{name}_verdict_{date.today().isoformat()}.md"
         head = out.index("## Go-live gates")
-        vfile.write_text(f"# {args.name} verdict {date.today()} (commit {git_rev()})\n\n"
+        vfile.write_text(f"# {name} verdict {date.today()} (commit {git_rev()})\n\n"
                          + "\n".join(out[head:]) + "\n", encoding="utf-8")
         print(f"verdict: {vfile.relative_to(ROOT)}")
     return 0
