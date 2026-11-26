@@ -1,7 +1,9 @@
 # scripts/restart_app.ps1
 # Restart the dashboard so it picks up a refreshed BREEZE_SESSION_TOKEN, then
-# re-arm the paper algo engines (trade_intraday / trade_options reset to false
-# on every start, so they must be turned back on explicitly).
+# report the paper algo engine state the app restored from data/algo_paper.json
+# (engine gates, enabled strategies, option underlyings). The script no longer
+# posts a config of its own: on 2026-11-26 a hardcoded re-arm switched the cash
+# engine back on minutes after the operator had turned it off.
 #
 # Intended to run when the market is CLOSED and paper positions are flat —
 # a mid-session restart drops open in-memory positions without recording exits.
@@ -102,14 +104,14 @@ if (-not $connected) {
 }
 Say "connected to Breeze"
 
-# --- 5. Re-arm the paper algo ------------------------------------------------
+# --- 5. Report the restored paper-algo state (app.py restores it itself) -------
 try {
-    $body = '{"trade_intraday": true, "trade_options": true}'
-    $r = Invoke-RestMethod "http://localhost:$Port/api/algo/paper/config" -Method Post `
-                           -ContentType "application/json" -Body $body -TimeoutSec 15
-    Say ("algo re-armed: intraday={0} options={1}" -f $r.config.trade_intraday, $r.config.trade_options)
+    $r = Invoke-RestMethod "http://localhost:$Port/api/algo/paper" -TimeoutSec 15
+    Say ("algo state restored: intraday={0} options={1} underlyings={2} enabled={3}" -f `
+        $r.config.trade_intraday, $r.config.trade_options, ($r.config.option_underlyings -join ','), `
+        (($r.strategies | Where-Object enabled | ForEach-Object strategy) -join ','))
 } catch {
-    Say "ERROR could not re-arm the paper algo: $_"
+    Say "ERROR could not read the paper algo state: $_"
     exit 1
 }
 
