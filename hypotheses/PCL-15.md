@@ -1,6 +1,6 @@
 # Hypothesis PCL-15 — NIFTY intraday pivot / Camarilla level signals (15-minute)
 
-Status: DRAFT (not approved; nothing may be run until the owner approves this file)
+Status: APPROVED 2026-11-26 — data fetch and build in progress; verdict pending
 
 Family: NIFTY intraday level system (floor pivots + CPR + Camarilla). Variants tried in family: 0.
 Source: owner-supplied spec "Intraday Nifty Level Signals" (pasted 2026-11-26). This file pins down
@@ -144,4 +144,4 @@ scope: level-based stops and targets in index points do not map onto an option's
 5. Only on PASS: signals-only runner (alerts + journal), gate 4.
 
 ## Approval
-- Owner: [ ] approved on <date>
+- Owner: [x] approved on 2026-11-26 (owner's "yes go ahead" in chat; ticked by the agent on that instruction)

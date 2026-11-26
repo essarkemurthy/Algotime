@@ -1,6 +1,6 @@
 # Hypothesis ORBX-15 — NIFTY 15-minute opening-range breakout confirmed by ADX and RSI
 
-Status: DRAFT (not approved; nothing may be run until the owner approves this file)
+Status: APPROVED 2026-11-26 — data fetch and build in progress; verdict pending
 
 Family: NIFTY opening-range breakout. Variants tried in family: 1 (ORB-CPR-15, FAIL, 2022-2026).
 So the ledger's rising bar applies: OOS CI lower bound must exceed 0 + 0.02 R × 1 = **0.02 R**.
@@ -90,4 +90,4 @@ terciles; gap sign vs side; day-of-week; expiry day; first-hour vs later signal.
 4. Verdict file, ledger row, this file marked PASS or FAIL.
 
 ## Approval
-- Owner: [ ] approved on <date>
+- Owner: [x] approved on 2026-11-26 (owner's "yes go ahead" in chat; ticked by the agent on that instruction)
