@@ -1,7 +1,7 @@
 // chat-widget.js — floating "Ask" panel that talks to POST /api/chat.
 // The page keeps the conversation (sessionStorage); each request sends the
 // question plus the recent turns, and the server attaches a fresh snapshot of
-// the app's state. Read-only: the bot explains, it never trades.
+// the app's state and NIFTY market context. Analysis only: the bot explains, it never trades.
 (function () {
   'use strict';
   if (document.getElementById('desk-chat')) return;
@@ -9,10 +9,12 @@
   var STORE_KEY = 'deskChatHistory';
   var MAX_TURNS = 20;
   var QUICK = [
+    'What is the trend right now?',
+    'Where are today’s key levels?',
+    'CE or PE: give me entry, stop and target',
     'What is my position right now?',
     'How is the algo doing today?',
-    'Is live trading armed?',
-    'What is the paper P&L overall?'
+    'Is live trading armed?'
   ];
 
   var css = '' +
@@ -49,12 +51,12 @@
     '<button class="dc-fab" type="button" title="Ask about the current position">' +
       '<span>&#9679;</span><span>Ask</span></button>' +
     '<div class="dc-panel" role="dialog" aria-label="Desk assistant">' +
-      '<div class="dc-head"><div><div class="dc-title">Desk assistant</div><div class="dc-sub">Read-only. Answers from the live app state.</div></div>' +
+      '<div class="dc-head"><div><div class="dc-title">Desk analyst</div><div class="dc-sub">Analysis only. Never places orders.</div></div>' +
         '<div><button class="dc-clear" type="button" title="Clear conversation">clear</button>' +
         '<button class="dc-x" type="button" title="Close">&#10005;</button></div></div>' +
       '<div class="dc-log"></div>' +
       '<div class="dc-quick"></div>' +
-      '<form><textarea placeholder="Ask about positions, P&amp;L, the algo, live arming…" rows="1"></textarea>' +
+      '<form><textarea placeholder="Ask about the trend, levels, a CE/PE plan, positions, P&amp;L…" rows="1"></textarea>' +
         '<button class="dc-send" type="submit">Send</button></form>' +
     '</div>';
   document.body.appendChild(root);
@@ -73,7 +75,7 @@
   }
   function render() {
     panelLog.innerHTML = '';
-    if (!history.length) bubble('bot', 'Ask me what is open, how the day is going, or whether live trading is armed. I answer from the app’s current state and never place orders.');
+    if (!history.length) bubble('bot', 'Ask me for the trend, today’s levels, a CE/PE plan with entry, stop and target, or what is open and how the day is going. I answer from the app’s live state and stored NIFTY bars. Analysis for you to judge; I never place orders.');
     history.forEach(function (m) { bubble(m.role === 'user' ? 'user' : 'bot', m.content); });
   }
   QUICK.forEach(function (q) {
@@ -103,7 +105,7 @@
         }
         var a = (res.body && res.body.answer) || '(no answer)';
         history.push({ role: 'assistant', content: a }); save(); bubble('bot', a);
-        if (res.body && res.body.model) sub.textContent = 'Read-only. ' + res.body.model;
+        if (res.body && res.body.model) sub.textContent = 'Analysis only. ' + res.body.model;
       })
       .catch(function (e) { wait.remove(); bubble('err', 'Request failed: ' + e); history.pop(); save(); })
       .then(function () { busy = false; sendBtn.disabled = false; input.focus(); });
@@ -117,7 +119,7 @@
     root.classList.add('open'); render(); input.focus();
     fetch('/api/chat/status').then(function (r) { return r.json(); }).then(function (s) {
       if (s && s.available === false) bubble('err', 'Chat is not configured: add ANTHROPIC_API_KEY to .env and restart the app.');
-      else if (s && s.model) sub.textContent = 'Read-only. ' + s.model;
+      else if (s && s.model) sub.textContent = 'Analysis only. ' + s.model;
     }).catch(function () {});
   });
   root.querySelector('.dc-x').addEventListener('click', function () { root.classList.remove('open'); });

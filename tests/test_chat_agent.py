@@ -145,11 +145,11 @@ class AskTests(unittest.TestCase):
         self.assertEqual(out["usage"]["cache_read"], 900)
         kw = fm.calls[0]
         self.assertEqual(kw["model"], C.MODEL)
-        self.assertEqual(kw["output_config"], {"effort": "low"})
+        self.assertEqual(kw["output_config"], {"effort": C.EFFORT})
         self.assertEqual(kw["system"][0]["cache_control"], {"type": "ephemeral"})
         self.assertEqual(kw["extra_body"], {"fallbacks": "default"})
         self.assertIn("server-side-fallback-2026-07-01", kw["betas"])
-        self.assertNotIn("thinking", kw)            # Opus 5.5: thinking is always on; effort steers it
+        self.assertEqual(kw["thinking"], {"type": "adaptive"})   # no budget_tokens on Opus 5.5
         self.assertNotIn("temperature", kw)
 
     def test_retries_without_fallback_when_beta_rejected(self):
@@ -171,6 +171,119 @@ class AskTests(unittest.TestCase):
         self.assertIn("can't answer", C.ask(client, [], "q", {})["answer"])
         client, _ = _client(_resp("partial", stop="max_tokens"))
         self.assertIn("token limit", C.ask(client, [], "q", {})["answer"])
+
+
+def _daily(n=70, start=25000.0):
+    import random
+    from datetime import timedelta
+    rnd = random.Random(7)
+    rows, p, t = [], start, datetime(2026, 8, 1)
+    while len(rows) < n:
+        t += timedelta(days=1)
+        if t.weekday() > 4:
+            continue
+        o = p
+        c = p + rnd.uniform(-150, 150)
+        rows.append({"ts": t, "open": o, "high": max(o, c) + rnd.uniform(0, 80),
+                     "low": min(o, c) - rnd.uniform(0, 80), "close": c, "volume": 0})
+        p = c
+    return rows
+
+
+def _intraday(day, start, bars, step=5):
+    from datetime import timedelta
+    rows, p = [], start
+    t = datetime.combine(day, datetime.min.time()).replace(hour=9, minute=15)
+    for k in range(bars):
+        c = p + (3 if k % 2 else -2)
+        rows.append({"ts": t, "open": p, "high": max(p, c) + 4, "low": min(p, c) - 4, "close": c})
+        p, t = c, t + timedelta(minutes=step)
+    return rows
+
+
+class MarketContextTests(unittest.TestCase):
+    def setUp(self):
+        from datetime import timedelta
+        self.daily = _daily()
+        self.now = (self.daily[-1]["ts"] + timedelta(days=1)).replace(hour=10, minute=20)
+        prev = self.daily[-1]
+        self.prev = prev
+        last_close = prev["close"]
+        self.intraday = (_intraday(self.now.date() - timedelta(days=1), last_close - 50, 75)
+                         + _intraday(self.now.date(), last_close + 40, 13))
+        self.chain = {"expiry": self.now.date().isoformat(), "atm": 25000, "pcr": 0.85, "spot": 25010.0,
+                      "lot_size": 65,
+                      "rows": [{"strike": s, "ce": {"ltp": 100.0, "oi": 5000 if s == 25200 else 1000, "iv": 12.1},
+                                "pe": {"ltp": 90.0, "oi": 7000 if s == 24800 else 900, "iv": 13.0}}
+                               for s in range(24500, 25550, 50)]}
+
+    def test_levels_match_pivot_arithmetic_and_today_is_derived_from_intraday(self):
+        h, l, c = self.prev["high"], self.prev["low"], self.prev["close"]
+        ref = round(c + 5.0, 2)
+        m = C.market_context(daily=self.daily, intraday=self.intraday, chain=self.chain,
+                             vix={"value": 13.2, "ts": self.now}, ltp=ref, now=self.now)
+        p = (h + l + c) / 3
+        lv = m["levels_from_prev_session"]
+        self.assertAlmostEqual(lv["P"], round(p, 2), places=2)
+        self.assertAlmostEqual(lv["R1"], round(2 * p - l, 2), places=2)
+        self.assertAlmostEqual(lv["S1"], round(2 * p - h, 2), places=2)
+        self.assertAlmostEqual(lv["H4"], round(c + 1.1 * (h - l) / 2, 2), places=2)
+        self.assertEqual(m["daily"]["prev_session"]["date"], self.prev["ts"].date().isoformat())
+        self.assertEqual(len(m["daily"]["recent_sessions"]), C.DAILY_ROWS_KEPT)
+        self.assertIsNotNone(m["daily"]["atr14"])
+        self.assertIsNotNone(m["daily"]["adx14"])
+        self.assertIsNotNone(m["daily"]["sma50"])
+        it = m["intraday"]
+        self.assertEqual(it["bars_today"], 13)
+        self.assertAlmostEqual(it["today_open"], round(c + 40, 2), places=2)
+        orb = it["opening_range_0915_0930"]
+        today = [b for b in self.intraday if b["ts"].date() == self.now.date()][:3]
+        self.assertAlmostEqual(orb["high"], round(max(b["high"] for b in today), 2), places=2)
+        self.assertAlmostEqual(orb["low"], round(min(b["low"] for b in today), 2), places=2)
+        self.assertAlmostEqual(it["gap_points"], round(40.0, 2), places=1)
+        self.assertEqual(len(it["last_bars"]), C.INTRADAY_BARS_KEPT)
+        self.assertIsNotNone(it["rsi14"])
+        self.assertIn("mean_price_no_volume", it)
+        self.assertEqual(m["reference_price"], ref)
+        self.assertIn("above", m["nearest_levels"])
+        self.assertIn("below", m["nearest_levels"])
+        self.assertLess(m["nearest_levels"]["below"]["level"], ref)
+        self.assertGreater(m["nearest_levels"]["above"]["level"], ref)
+
+    def test_chain_trimmed_to_atm_window_with_oi_walls(self):
+        m = C.market_context(daily=self.daily, intraday=self.intraday, chain=self.chain, now=self.now)
+        ch = m["option_chain"]
+        self.assertEqual(ch["atm"], 25000)
+        self.assertEqual(ch["max_ce_oi_strike"], 25200)
+        self.assertEqual(ch["max_pe_oi_strike"], 24800)
+        self.assertEqual(ch["lot_size"], 65)
+        strikes = [r["strike"] for r in ch["strikes_near_atm"]]
+        self.assertEqual(strikes, list(range(24800, 25250, 50)))
+        self.assertEqual(ch["strikes_near_atm"][0]["ce"]["ltp"], 100.0)
+        self.assertTrue(m["session_clock"]["is_expiry_day"])
+        self.assertEqual(m["session_clock"]["minutes_to_1515_squareoff"], 295)
+
+    def test_stale_vix_dropped_and_partial_inputs_tolerated(self):
+        from datetime import timedelta
+        m = C.market_context(daily=self.daily, vix={"value": 13.0, "ts": self.now - timedelta(days=30)},
+                             now=self.now)
+        self.assertNotIn("india_vix", m)
+        self.assertNotIn("intraday", m)
+        self.assertIn("levels_from_prev_session", m)
+        m2 = C.market_context(intraday=self.intraday, now=self.now)
+        self.assertNotIn("daily", m2)
+        self.assertNotIn("gap_pct", m2["intraday"])
+        m3 = C.market_context(now=self.now)
+        self.assertEqual(set(m3), {"symbol", "bar_minutes", "session_clock"})
+
+    def test_snapshot_carries_market_and_prompt_allows_analysis(self):
+        m = C.market_context(daily=self.daily, intraday=self.intraday, now=self.now)
+        snap = C.build_snapshot(market=m, now=self.now)
+        self.assertIs(snap["nifty_market"], m)
+        body = json.dumps(snap, default=str)
+        self.assertIn("levels_from_prev_session", body)
+        self.assertIn("CE/PE", C.SYSTEM_PROMPT)
+        self.assertIn("cannot place, exit, arm or toggle", C.SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

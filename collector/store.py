@@ -162,6 +162,22 @@ class DataStore:
             rows,
         )
 
+    def get_candles(self, symbol: str, interval: str, since: Optional[datetime] = None,
+                    limit: int = 2000) -> List[Dict]:
+        """Stored bars (ascending ts) for one symbol/interval, optionally from `since`."""
+        where = 'symbol=%s AND "interval"=%s'
+        params: list = [symbol, interval]
+        if since is not None:
+            where += " AND ts >= %s"
+            params.append(since)
+        rows = self._queryall(
+            f"""SELECT ts, open, high, low, close, volume FROM candles
+                WHERE {where} ORDER BY ts DESC LIMIT %s""", (*params, int(limit)))
+        out = [{"ts": r[0], "open": float(r[1]), "high": float(r[2]), "low": float(r[3]),
+                "close": float(r[4]), "volume": float(r[5] or 0)} for r in rows]
+        out.reverse()
+        return out
+
     def get_candle_last_ts(self, symbol: str, interval: str) -> Optional[datetime]:
         row = self._queryone(
             'SELECT MAX(ts) FROM candles WHERE symbol=%s AND "interval"=%s',

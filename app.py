@@ -2422,10 +2422,76 @@ _chat_client = None
 
 
 def _chat_client_get():
+    """Build the Claude client on first use. Re-reads .env each time there is no
+    client yet, so adding ANTHROPIC_API_KEY to .env works without a restart."""
     global _chat_client
     if _chat_client is None:
+        if not chat_agent.api_key_present():
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(override=False)
+            except Exception:
+                pass
         _chat_client = chat_agent.make_client()
     return _chat_client
+
+
+# NIFTY market context for the analyst: stored bars + the live chain (cached
+# briefly: the chain costs two Breeze REST calls).
+_chat_chain_cache: Dict[str, tuple] = {}     # symbol -> (monotonic ts, chain dict)
+_CHAT_CHAIN_TTL = 90.0
+
+
+def _chat_lot_size(symbol: str) -> Optional[int]:
+    from paper_algo import OPTION_LOT_SIZE      # single source of truth for lot sizes
+    try:
+        return int(OPTION_LOT_SIZE[symbol]) if OPTION_LOT_SIZE.get(symbol) else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def _chat_market(symbol: str = "NIFTY") -> Optional[dict]:
+    daily = intraday = []
+    if _db_store is not None:
+        try:
+            now = datetime.now()
+            daily = await asyncio.to_thread(_db_store.get_candles, symbol, "1d",
+                                            now - timedelta(days=150), 120)
+            intraday = await asyncio.to_thread(_db_store.get_candles, symbol, "5m",
+                                               now - timedelta(days=6), 400)
+        except Exception as exc:
+            log.warning("chat market: bars unavailable: %s", exc)
+    chain = None
+    if _session and _session._api:
+        import time as _t
+        hit = _chat_chain_cache.get(symbol)
+        if hit and _t.monotonic() - hit[0] < _CHAT_CHAIN_TTL:
+            chain = hit[1]
+        else:
+            try:
+                chain = await get_chain_live(symbol)
+                if chain and chain.get("rows"):
+                    chain = dict(chain, lot_size=_chat_lot_size(symbol))
+                    _chat_chain_cache[symbol] = (_t.monotonic(), chain)
+            except Exception as exc:
+                log.warning("chat market: option chain unavailable: %s", exc)
+                chain = hit[1] if hit else None
+    vix = None
+    for key in ("INDIAVIX", "VIX"):
+        if _ltp_cache.get(key):
+            vix = {"value": _ltp_cache[key], "ts": datetime.now()}
+            break
+    if vix is None and _db_store is not None:
+        try:
+            rows = await asyncio.to_thread(_db_store.get_candles, "INDIAVIX", "1d", None, 1)
+            if rows:
+                vix = {"value": rows[-1]["close"], "ts": rows[-1]["ts"]}
+        except Exception:
+            pass
+    if not daily and not intraday and chain is None:
+        return None
+    return chat_agent.market_context(daily=daily, intraday=intraday, bar_minutes=5, chain=chain,
+                                     vix=vix, ltp=_ltp_cache.get(symbol))
 
 
 class ChatReq(BaseModel):
@@ -2447,16 +2513,27 @@ async def _chat_snapshot() -> dict:
             alltime = chat_agent.alltime_totals(all_rows)
         except Exception as exc:
             log.warning("chat snapshot: paper journal unavailable: %s", exc)
+    market = None
+    try:
+        market = await _chat_market("NIFTY")
+    except Exception as exc:
+        log.warning("chat snapshot: market context failed: %s", exc)
     return chat_agent.build_snapshot(
         status=status, funds=_account.get("funds"), ltp=ltp, prev_close=prev_close,
         algo=_algo.snapshot(), paper_summary=_paper.summary(ltp),
         manual_positions=_compute_pnl(), live=_live.state(),
-        trades_today=trades_today, alltime=alltime)
+        trades_today=trades_today, alltime=alltime, market=market)
 
 
 @app.get("/api/chat/status")
 async def chat_status():
     return {"available": chat_agent.api_key_present(), "model": chat_agent.MODEL}
+
+
+@app.get("/api/chat/context")
+async def chat_context():
+    """The snapshot the analyst would be given right now (for checking what it sees)."""
+    return await _chat_snapshot()
 
 
 @app.post("/api/chat")
